@@ -29,13 +29,15 @@ if __name__ == "__main__":
     current_date_str = previous_date.strftime('%Y-%m-%d')
     print("Processing :", current_date_str)
 
+
     # # For debugging
     # # --------------
     # current_date_str = "1980-03-26"
 
-    # print("*****************************\n")
-    # print("using a manual set Date: " + current_date_str)
-    # print("*****************************\n")
+
+    #  print("*****************************\n")
+    #  print("using a manual set Date: " + current_date_str)
+    #  print("*****************************\n")
 
 
     # For CLI

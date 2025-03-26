@@ -38,14 +38,15 @@ jobs:
       run: |
         sudo add-apt-repository ppa:ubuntugis/ppa
         sudo apt-get update
-        sudo apt-get install gdal-bin
-        sudo apt-get install libgdal-dev
+        # sudo apt-get install gdal-bin
+        # sudo apt-get install libgdal-dev
     
     - name: Run Python script
       run: |
         python satromo_processor.py prod_config.py
       env: # Set the secrets as env var
         GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        S3_SECRETS: ${{ secrets.S3_SECRETS }}
       
     - name: Push tools files to repo
       uses: github-actions-x/commit@v2.9
