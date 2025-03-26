@@ -83,7 +83,6 @@ def initialize_gee():
         s3_secrets_str = os.environ.get('S3_SECRETS')
         aws_creds = json.loads(s3_secrets_str)
 
-
     # Initialize Google Earth Engine
     credentials = ee.ServiceAccountCredentials(
         gauth.service_account_email, gauth.service_account_file

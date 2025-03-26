@@ -22,20 +22,22 @@ if __name__ == "__main__":
     current_date = datetime.datetime.today()
 
     # Subtract X day back from the current date to procoess not todays but the  date in the past: This is to overcome the delay
-    delay = 3  # in days
+    delay = 1  # in days
     previous_date = current_date - datetime.timedelta(days=delay)
 
     # Convert the previous date to a string in the format 'YYYY-MM-DD' and set it to current date
     current_date_str = previous_date.strftime('%Y-%m-%d')
     print("Processing :", current_date_str)
 
-    # For debugging
-    # --------------
-    current_date_str = "1980-03-26"
 
-    print("*****************************\n")
-    print("using a manual set Date: " + current_date_str)
-    print("*****************************\n")
+    # # For debugging
+    # # --------------
+    # current_date_str = "1980-03-26"
+
+
+    #  print("*****************************\n")
+    #  print("using a manual set Date: " + current_date_str)
+    #  print("*****************************\n")
 
 
     # For CLI
