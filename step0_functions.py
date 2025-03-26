@@ -2,10 +2,9 @@ import os
 import pandas as pd
 import configuration as config
 import csv
-import boto3
-import json
 import ee
 from datetime import datetime, timedelta
+from main_functions import main_utils
 from step0_processors import *
 
 def write_file(input_dict, output_file):
@@ -56,19 +55,22 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         bucket_name = s3_path.split("/")[0]
         prefix = "/".join(s3_path.split("/")[1:])
 
+
+
         # Load AWS credentials from config.S3_SECRETS
-        with open(config.S3_SECRETS, 'r') as f:
-            aws_credentials = json.load(f)
+        # with open(config.S3_SECRETS, 'r') as f:
+        #     aws_credentials = json.load(f)
 
-        # Initialize S3 client with credentials from the JSON file
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=aws_credentials['aws_access_key_id'],
-            aws_secret_access_key=aws_credentials['aws_secret_access_key']
-        )
-
+        # # Initialize S3 client with credentials from the JSON file
+        # s3_client = boto3.client(
+        #     's3',
+        #     aws_access_key_id=aws_credentials['aws_access_key_id'],
+        #     aws_secret_access_key=aws_credentials['aws_secret_access_key']
+        # )
+        # initialized S3
+        main_utils.initialize_gee()
         # List all objects in the S3 bucket with the specific prefix
-        response = s3_client.list_objects_v2(
+        response = main_utils.s3.list_objects_v2(
             Bucket=bucket_name,
             Prefix=prefix
         )

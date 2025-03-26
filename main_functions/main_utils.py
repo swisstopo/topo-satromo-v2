@@ -1,6 +1,7 @@
 import configuration as config
 from pydrive.auth import GoogleAuth
 from oauth2client.service_account import ServiceAccountCredentials
+import boto3
 import requests
 import ee
 import datetime
@@ -57,6 +58,10 @@ def initialize_gee():
         gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
             gauth.service_account_file, scopes=scopes
         )
+        # Load AWS credentials from JSON
+        with open(config.S3_SECRETS, "r") as f:
+            aws_creds = json.load(f)
+
     else:
         # Run other code using secrets from GitHub Action
         # This script is running on GitHub
@@ -74,6 +79,16 @@ def initialize_gee():
         gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
             gauth.service_account_file, scopes=scopes
         )
+        # Write S3 secret config to a file
+        s3_secret = os.environ.get('S3_SECRETS')
+        s3_secret_file = "s3.json"
+        with open(s3_secret_file, "w") as f:
+            f.write(s3_secret)
+
+        # Load AWS credentials from JSON
+        with open(s3_secret_file, "r") as f:
+            aws_creds = json.load(f)
+
 
     # Initialize Google Earth Engine
     credentials = ee.ServiceAccountCredentials(
@@ -89,6 +104,15 @@ def initialize_gee():
         print("GEE initialization successful")
     else:
         print("GEE initialization FAILED")
+
+    # Initialize S3 client with credentials
+    global s3
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=aws_creds["aws_access_key_id"],
+        aws_secret_access_key=aws_creds["aws_secret_access_key"],
+    )
+    print("S3 initialization successful")
 
 def is_date_in_empty_asset_list(collection, check_date_str):
     """
