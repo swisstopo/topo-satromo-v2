@@ -30,6 +30,7 @@ import csv
 # The script is set up to export one mosaic image per day.
 
 
+
 def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str, task_description: str) -> None:
     ##############################
     # SWITCHES
