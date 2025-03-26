@@ -55,18 +55,6 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         bucket_name = s3_path.split("/")[0]
         prefix = "/".join(s3_path.split("/")[1:])
 
-
-
-        # Load AWS credentials from config.S3_SECRETS
-        # with open(config.S3_SECRETS, 'r') as f:
-        #     aws_credentials = json.load(f)
-
-        # # Initialize S3 client with credentials from the JSON file
-        # s3_client = boto3.client(
-        #     's3',
-        #     aws_access_key_id=aws_credentials['aws_access_key_id'],
-        #     aws_secret_access_key=aws_credentials['aws_secret_access_key']
-        # )
         # initialized S3
         main_utils.initialize_gee()
         # List all objects in the S3 bucket with the specific prefix
