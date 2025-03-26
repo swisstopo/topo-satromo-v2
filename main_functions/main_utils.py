@@ -10,6 +10,7 @@ import os
 import json
 import pandas as pd
 import dateutil
+from google.cloud import storage
 
 def determine_run_type():
     """
@@ -79,9 +80,15 @@ def initialize_gee():
         gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
             gauth.service_account_file, scopes=scopes
         )
-        # Write S3 
+        # Write S3
         s3_secrets_str = os.environ.get('S3_SECRETS')
         aws_creds = json.loads(s3_secrets_str)
+
+
+    # Create the GCS client
+    global storage_client
+    storage_client = storage.Client.from_service_account_json(
+            gauth.service_account_file)
 
     # Initialize Google Earth Engine
     credentials = ee.ServiceAccountCredentials(
