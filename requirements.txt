@@ -35,4 +35,4 @@ s3transfer==0.11.4
 six==1.17.0
 tzdata==2025.2
 uritemplate==4.1.1
-urllib3==2.3.0
+urllib3
