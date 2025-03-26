@@ -84,6 +84,7 @@ def initialize_gee():
         s3_secrets_str = os.environ.get('S3_SECRETS')
         aws_creds = json.loads(s3_secrets_str)
 
+
     # Create the GCS client
     global storage_client
     storage_client = storage.Client.from_service_account_json(
