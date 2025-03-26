@@ -43,6 +43,7 @@ jobs:
     
     - name: Run Python script
       run: |
+        python main_functions/csplus_publish.py prod_config.py
         python satromo_processor.py prod_config.py
       env: # Set the secrets as env var
         GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
