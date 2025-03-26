@@ -81,13 +81,14 @@ def initialize_gee():
         )
         # Write S3 secret config to a file
         s3_secret = os.environ.get('S3_SECRETS')
-        s3_secret_file = "s3.json"
-        with open(s3_secret_file, "w") as f:
-            f.write(s3_secret)
+        aws_creds=json.loads(s3_secret)
+        # s3_secret_file = "s3.json"
+        # with open(s3_secret_file, "w") as f:
+        #     f.write(s3_secret)
 
-        # Load AWS credentials from JSON
-        with open(s3_secret_file, "r") as f:
-            aws_creds = json.load(f)
+        # # Load AWS credentials from JSON
+        # with open(s3_secret_file, "r") as f:
+        #     aws_creds = json.load(f)
 
 
     # Initialize Google Earth Engine
