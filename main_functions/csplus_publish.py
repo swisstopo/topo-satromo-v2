@@ -100,7 +100,7 @@ def initialize_gee():
             f.write(google_secret)
 
         # Write S3 secret config to a file
-        s3_secret = os.environ.get('S3_SECRET')
+        s3_secret = os.environ.get('S3_SECRETS')
         s3_secret_file = "s3.json"
         with open(s3_secret_file, "w") as f:
             f.write(s3_secret)

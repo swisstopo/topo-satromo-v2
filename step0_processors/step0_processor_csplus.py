@@ -81,6 +81,11 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
     # List to store task IDs
     task_ids = []
 
+    # Check if we have data at all
+    if len(unique_orbits) == 0:
+        write_asset_as_empty(collection, day_to_process, 'No candidate scene')
+        return
+
     # Loop over all orbits
     for orbit in unique_orbits:
 
@@ -147,7 +152,7 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
                                 'Cloud probability data missing')
             return
 
-        breakpoint()
+
         # Get the list of all images in the collection
         #image_list = S2_csp.toList(image_list_size_cloud)
         # Get the list of linked S2_csp images with their full properties
@@ -182,6 +187,9 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
 
             # Get Task ID
             task_id = task.status()["id"]
+
+            # Add task_id to task_ids list
+            task_ids.append(task_id)
 
             # Save Task ID and filename to a text file
             header = ["Task ID", "Filename"]
