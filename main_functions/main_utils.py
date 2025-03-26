@@ -79,15 +79,10 @@ def initialize_gee():
         gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
             gauth.service_account_file, scopes=scopes
         )
-        # Write S3 secret config to a file
-        s3_secret = os.environ.get('S3_SECRETS')
-        s3_secret_file = "s3.json"
-        with open(s3_secret_file, "w") as f:
-            f.write(s3_secret)
+        # Write S3 
+        s3_secrets_str = os.environ.get('S3_SECRETS')
+        aws_creds = json.loads(s3_secrets_str)
 
-        # Load AWS credentials from JSON
-        with open(s3_secret_file, "r") as f:
-            aws_creds = json.load(f)
 
 
     # Initialize Google Earth Engine
