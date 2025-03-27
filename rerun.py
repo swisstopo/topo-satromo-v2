@@ -106,6 +106,8 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
             return True
 
         print(f"No dates to reprocess for {collection_basename}")
+        #remove backup
+        os.remove(config.EMPTY_ASSET_LIST + '.bak')
         return False
 
     except Exception as e:
@@ -127,11 +129,9 @@ def main():
 
 
     # Rerun CloudScore+
-    days_back = 7
+    days_back = 14
     result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
 
-    # Exit with appropriate status
-    sys.exit(0 if result else 1)
 
 if __name__ == "__main__":
     main()
