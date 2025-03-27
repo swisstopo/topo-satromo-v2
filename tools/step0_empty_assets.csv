@@ -1,6 +1,5 @@
 collection,date,remark
 VHI_SWISS,2021-08-01,No S2 SR data available
-CLOUD_SCORE_PLUS,2025-03-23,No candidate scene
-CLOUD_SCORE_PLUS,2025-03-24,No candidate scene
+CLOUD_SCORE_PLUS,2025-03-23,Tile upload incomplete
+CLOUD_SCORE_PLUS,2025-03-24,Tile upload incomplete
 CLOUD_SCORE_PLUS,2025-03-25,Tile upload incomplete
-CLOUD_SCORE_PLUS,2025-03-26,Tile upload incomplete
