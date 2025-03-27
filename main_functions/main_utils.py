@@ -89,6 +89,11 @@ def initialize_gee():
     storage_client = storage.Client.from_service_account_json(
             gauth.service_account_file)
 
+    # Create the GCS client
+    global storage_client
+    storage_client = storage.Client.from_service_account_json(
+            gauth.service_account_file)
+
     # Initialize Google Earth Engine
     credentials = ee.ServiceAccountCredentials(
         gauth.service_account_email, gauth.service_account_file

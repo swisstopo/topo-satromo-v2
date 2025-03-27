@@ -1,8 +1,8 @@
-name: Run processor
+name: Run rerun
 
 on:
   schedule:
-  - cron:  '0 14 * * *'
+  - cron:  '33 * * * *'
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -48,9 +48,9 @@ jobs:
         GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         S3_SECRETS: ${{ secrets.S3_SECRETS }}
         
-    - name: Run Python script PROCESSOR
+    - name: Run Python script RERUN PROCESSOR
       run: |
-        python satromo_processor.py prod_config.py
+        python rerun.py prod_config.py
       env: # Set the secrets as env var
         GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         S3_SECRETS: ${{ secrets.S3_SECRETS }}
