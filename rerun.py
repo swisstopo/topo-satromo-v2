@@ -129,7 +129,7 @@ def main():
 
 
     # Rerun CloudScore+
-    days_back = 7
+    days_back = 14
     result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
 
 
