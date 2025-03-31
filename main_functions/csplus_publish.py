@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 from pydrive.auth import GoogleAuth
 from oauth2client.service_account import ServiceAccountCredentials
-import boto3
-import json
 import os
 import ee
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
-import platform
-from google.cloud import storage
 from main_functions import main_utils
 
 
@@ -66,6 +62,7 @@ if __name__ == "__main__":
                         blob.download_to_filename(local_tmp_file)
                         print(f"Downloaded {tif_file} from GCS.")
 
+
                         # Upload to S3
                         main_utils.s3.upload_file(local_tmp_file, config.S3_BUCKET_NAME, s3_key)
                         s3_key = os.path.join(s3_key_path, filename+"_metadata.json").replace("\\", "/")
@@ -86,6 +83,10 @@ if __name__ == "__main__":
                         # Overwrite the file with filtered content
                         with open(config.GEE_RUNNING_TASKS, "w", encoding="utf-8") as f:
                             f.writelines(updated_lines)
+
+                        # Delete file from GCS after successful download
+                        blob.delete()
+                        print(f"Deleted {tif_file} from GCS.")
 
 
                     except Exception as e:
