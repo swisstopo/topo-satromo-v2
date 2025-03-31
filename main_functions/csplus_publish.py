@@ -1,15 +1,9 @@
 # -*- coding: utf-8 -*-
-from pydrive.auth import GoogleAuth
-from oauth2client.service_account import ServiceAccountCredentials
-import boto3
-import json
 import os
 import ee
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
-import platform
-from google.cloud import storage
 from main_functions import main_utils
 
 
