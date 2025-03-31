@@ -86,6 +86,9 @@ if __name__ == "__main__":
                         # Overwrite the file with filtered content
                         with open(config.GEE_RUNNING_TASKS, "w", encoding="utf-8") as f:
                             f.writelines(updated_lines)
+                        # Delete file from GCS after successful download
+                        blob.delete()
+                        print(f"Deleted {tif_file} from GCS.")
 
 
                     except Exception as e:
