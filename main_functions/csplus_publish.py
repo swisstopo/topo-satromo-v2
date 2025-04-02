@@ -1,15 +1,9 @@
 # -*- coding: utf-8 -*-
-from pydrive.auth import GoogleAuth
-from oauth2client.service_account import ServiceAccountCredentials
-import boto3
-import json
 import os
 import ee
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
-import platform
-from google.cloud import storage
 from main_functions import main_utils
 
 
@@ -97,5 +91,43 @@ if __name__ == "__main__":
                     print(f"Task {task_id} ({filename}) not yet ready.......")
             except Exception as e:
                 print(f"Error checking task {task_id}: {e}")
+
+    # Delete files older than 25 days from GCS bucket
+    print("Cleaning up old files from GCS bucket...")
+    try:
+        import datetime
+
+        # Get current time
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        # 25 days ago
+        cutoff_time = now - datetime.timedelta(days=25)
+
+        # List all blobs in the bucket
+        bucket = gcs_client.bucket(config.GCLOUD_BUCKET)
+        blobs = bucket.list_blobs()
+
+        # Counter for deleted files
+        deleted_count = 0
+
+        # Check each blob's age
+        for blob in blobs:
+            # Skip if blob doesn't have a time_created (shouldn't happen, but as precaution)
+            if not blob.time_created:
+                continue
+
+            # Convert to UTC for proper comparison
+            blob_time = blob.time_created.replace(tzinfo=datetime.timezone.utc)
+
+            # Delete if older than cutoff
+            if blob_time < cutoff_time:
+                blob_name = blob.name
+                blob.delete()
+                deleted_count += 1
+                print(f"Deleted old file: {blob_name} (created on {blob_time.strftime('%Y-%m-%d')})")
+
+        print(f"Cleanup complete. Removed {deleted_count} files older than 25 days.")
+    except Exception as e:
+        print(f"Error during GCS cleanup: {e}")
 
     print("PUBLISH Process done.")
