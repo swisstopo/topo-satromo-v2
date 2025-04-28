@@ -39,11 +39,11 @@ if __name__ == "__main__":
         debug_mode = True
 
     # Check for debug override (second priority)
-    if debug_mode:
-        current_date_str = "2025-04-01"
-        print("*****************************")
-        print("Using manually set date:", current_date_str)
-        print("*****************************")
+    #if debug_mode:
+    #    current_date_str = "2025-04-01"
+    #    print("*****************************")
+    #    print("Using manually set date:", current_date_str)
+    #    print("*****************************")
 
 
     # Define date to be used
