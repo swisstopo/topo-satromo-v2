@@ -99,19 +99,20 @@ def initialize_gee():
     image = ee.Image("NASA/NASADEM_HGT/001")
     title = image.get("title").getInfo()
 
-    if title == "NASADEM: NASA NASADEM Digital Elevation 30m":
-        print("GEE initialization successful")
-    else:
+    if title != "NASADEM: NASA NASADEM Digital Elevation 30m":
         print("GEE initialization FAILED")
 
     # Initialize S3 client with credentials
     global s3
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=aws_creds["aws_access_key_id"],
-        aws_secret_access_key=aws_creds["aws_secret_access_key"],
-    )
-    print("S3 initialization successful")
+    try:
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=aws_creds["aws_access_key_id"],
+            aws_secret_access_key=aws_creds["aws_secret_access_key"],
+        )
+
+    except Exception as e:
+        print(f"Warning: S3 initialization failed - {e}")
 
 def is_date_in_empty_asset_list(collection, check_date_str):
     """

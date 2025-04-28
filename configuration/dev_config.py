@@ -11,7 +11,7 @@ GITHUB_REPO = "topo-satromo-v2"
 # Secrets
 GOOGLE_SECRETS = os.path.join("secrets", "geetest-credentials-int.secret")
 FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-int.json")
-S3_SECRETS = os.path.join("secrets", "s3_int.json")
+S3_SECRETS = os.path.join("secrets", "s3_prod.json")
 
 
 # File and directory paths
@@ -25,7 +25,8 @@ LAST_PRODUCT_UPDATES = os.path.join("tools", "last_updates.csv")
 GCLOUD_BUCKET = "s2_sr_registration_swiss"
 
 # set S3 path
-S3_BUCKET_NAME = "satromoint"
+#S3_BUCKET_NAME = "satromoint"
+S3_BUCKET_NAME = "s3-topo-satromo-prod"
 S3_BUCKET_PATH="data"
 
 
@@ -60,13 +61,13 @@ NODATA = 9999
 PRODUCT_S2_LEVEL_CSPLUS = {
     "image_collection": "GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED",
     "temporal_coverage": 1,  # Days
-    "step0_collection": "s3://satromoint/data/CLOUD_SCORE_PLUS"
+    "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
 #  ch.swisstopo.swisseo_s2-sr
 PRODUCT_S2_LEVEL_2A = {
     # "prefix": "S2_L2A_SR",
     # TODO: check if needed in context with step0
-    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
+    "image_collection": "GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED",
     "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
     "temporal_coverage": 1,  # Days
     "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with step0
@@ -74,7 +75,8 @@ PRODUCT_S2_LEVEL_2A = {
     "spatial_scale_export_mask": 10,
     "product_name": "ch.swisstopo.swisseo_s2-sr_v100",
     "no_data": 9999,
-    #"step0_collection": "projects/satromo-prod/assets/col/S2_SR_HARMONIZED_SWISS"
+    "product_name": "ch.swisstopo.swisseo_s2-sr_v100",
+    #"step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v100
@@ -119,15 +121,15 @@ PRODUCT_MSG_CLIMA = {
 # Make sure that the products above use the corresponding custom collection (assets)
 
 step0 = {
-    # 'projects/satromo-exolabs/assets/col_s2_toa': {
-    #    'step0_function': 'step0_processor_s2_toa.generate_s2_toa_mosaic_for_single_date',
+    # 'sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v10a': {
+    #    'step0_function': 'step0_processor_s2_toa.generate_s2_sr_mosaic_for_single_date',
     #    # cleaning_older_than: 2 # entry used to clean assets
     # },
     # 'projects/satromo-int/assets/LST_SWISS': {
     #     'step0_function': 'step0_processor_msg_lst.generate_msg_lst_mosaic_for_single_date'
     #     # cleaning_older_than: 2 # entry used to clean assets
     # },
-    's3://satromoint/data/CLOUD_SCORE_PLUS': {
+    f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
         'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
         # cleaning_older_than: 2 # entry used to clean assets
     }
