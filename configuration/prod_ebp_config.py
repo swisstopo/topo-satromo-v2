@@ -11,7 +11,7 @@ GITHUB_REPO = "topo-satromo-v2"
 # Secrets
 GOOGLE_SECRETS = os.path.join("secrets", "geetest-credentials-int.secret")
 FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-int.json")
-S3_SECRETS = os.path.join("secrets", "s3_prod.json")
+S3_SECRETS = os.path.join("secrets", "s3_prod_ebp.json")
 
 
 # File and directory paths

@@ -3,7 +3,7 @@ import datetime
 import ee
 import configuration as config
 from step0_functions import get_step0_dict, step0_main
-#from step1_processors import step1_processor_l57_sr, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi, step1_processor_vhi_hist
+from step1_processors import step1_processor_s2_sr#, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi, step1_processor_vhi_hist
 from main_functions import main_utils
 
 
@@ -27,30 +27,24 @@ if __name__ == "__main__":
 
     # Convert the previous date to a string in the format 'YYYY-MM-DD' and set it to current date
     current_date_str = previous_date.strftime('%Y-%m-%d')
-    print("Processing :", current_date_str)
 
-
-    # # For debugging
-    # # --------------
-    # current_date_str = "1980-03-26"
-
-
-    #  print("*****************************\n")
-    #  print("using a manual set Date: " + current_date_str)
-    #  print("*****************************\n")
-
-
-    # For CLI
-    # --------------
-    # satromo_processor.py
+    # Check for command line argument (highest priority)
     from configuration import arg_date_str
-
-    # Check if current_date_str is set by the command line
     if arg_date_str:
-
-        # Use the default date
         current_date_str = arg_date_str
-        print(f'Using command line set date: {arg_date_str}')
+        print(f'Using command line date: {arg_date_str}')
+        debug_mode = False
+    else:
+        # Enable debug mode if no command line argument is given
+        debug_mode = True
+
+    # Check for debug override (second priority)
+    if debug_mode:
+        current_date_str = "2025-04-01"
+        print("*****************************")
+        print("Using manually set date:", current_date_str)
+        print("*****************************")
+
 
     # Define date to be used
     current_date = ee.Date(current_date_str)
@@ -89,7 +83,8 @@ if __name__ == "__main__":
                 #     [8.10, 47.18, 8.20, 47.25])  # 6221 Rickenbach
                 # roi = ee.Geometry.Rectangle(
                 #     [7.938447, 47.514378, 8.127522, 47.610846])
-                result = process_S2_LEVEL_2A(roi)
+                result = step1_processor_s2_sr.process_product_s2_sr(
+                      current_date_str,collection_ready)
 
             elif product_to_be_processed == 'PRODUCT_VHI':
                 roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE)
