@@ -63,6 +63,10 @@ def initialize_gee():
         with open(config.S3_SECRETS, "r") as f:
             aws_creds = json.load(f)
 
+        # Load COPERNICUS credentials from JSON
+        with open(config.COPERNICUS_SECRETS, "r") as f:
+            copernicus_creds = json.load(f)
+
     else:
         # Run other code using secrets from GitHub Action
         # This script is running on GitHub
@@ -83,6 +87,10 @@ def initialize_gee():
         # Write S3
         s3_secrets_str = os.environ.get('S3_SECRETS')
         aws_creds = json.loads(s3_secrets_str)
+
+        # copernicus S3
+        copernicus_secrets_str = os.environ.get('COPERNICUS_S3_SECRETS')
+        copernicus_creds = json.loads(copernicus_secrets_str)
 
     # Create the GCS client
     global storage_client
@@ -113,6 +121,22 @@ def initialize_gee():
 
     except Exception as e:
         print(f"Warning: S3 initialization failed - {e}")
+
+
+    # Initialize COPERNICUS S3 client with credentials
+    global copernicus_s3
+    try:
+        session = boto3.session.Session()
+        copernicus_s3 = boto3.resource(
+            "s3",
+            endpoint_url='https://eodata.dataspace.copernicus.eu',
+            aws_access_key_id=copernicus_creds["access_key"],
+            aws_secret_access_key=copernicus_creds["secret_key"],
+            region_name='default'
+        )
+
+    except Exception as e:
+        print(f"Warning: COPERNICUS S3 initialization failed - {e}")
 
 def is_date_in_empty_asset_list(collection, check_date_str):
     """

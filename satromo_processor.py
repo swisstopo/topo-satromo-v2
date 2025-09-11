@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2025-04-01"
+        current_date_str = "2025-04-23"
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print("*****************************")
@@ -111,42 +111,6 @@ if __name__ == "__main__":
                     roi, current_date_str)
 
 
-            elif product_to_be_processed == 'PRODUCT_S2_LEVEL_1C':
-                border = ee.FeatureCollection(
-                    "USDOS/LSIB_SIMPLE/2017").filter(ee.Filter.eq("country_co", "SZ"))
-                roi = border.geometry().buffer(config.ROI_BORDER_BUFFER)
-                # roi = ee.Geometry.Rectangle( [ 7.075402, 46.107098, 7.100894, 46.123639])
-                result = process_S2_LEVEL_1C(roi)
-
-            elif product_to_be_processed == 'PRODUCT_L57_LEVEL_2':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                result = step1_processor_l57_sr.process_L57_LEVEL_2(
-                    roi, current_date)
-
-            elif product_to_be_processed == 'PRODUCT_L57_LEVEL_1':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                result = step1_processor_l57_toa.process_L57_LEVEL_1(
-                    roi, current_date)
-
-            elif product_to_be_processed == 'PRODUCT_L89_LEVEL_2':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                result = step1_processor_l89_sr.process_L89_LEVEL_2(
-                    roi, current_date)
-
-            elif product_to_be_processed == 'PRODUCT_L89_LEVEL_1':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                result = step1_processor_l89_toa.process_L89_LEVEL_1(
-                    roi, current_date)
-
-            elif product_to_be_processed == 'PRODUCT_S3_LEVEL_1':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                result = step1_processor_s3_toa.process_S3_LEVEL_1(
-                    roi, current_date)
 
             elif product_to_be_processed == 'PRODUCT_MSG_CLIMA':
                 # roi = ee.Geometry.Rectangle(

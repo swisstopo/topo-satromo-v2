@@ -106,6 +106,7 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
             # Is a scene available for this date -> Yes: continue / No: abort ('No candidate scene')
             image_list_size = S2_sr.size().getInfo()
 
+
             if image_list_size == 0:
                 write_asset_as_empty(collection, day_to_process, 'No candidate scene')
                 return
