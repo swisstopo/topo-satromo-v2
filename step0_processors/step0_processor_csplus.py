@@ -36,7 +36,7 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
     # SWITCHES
     # The switches enable / disable the execution of individual steps in this script
 
-    # options: True, False - defines if the CloudScore+ dataset should be used (if False': s2cloudless)
+    # options: True, False - defines if the CloudScore+ dataset should be used (if False': s2cloudless, bu then remove all corresponding uncomented code below)
     cloudScorePlus = True
 
 
@@ -59,25 +59,41 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
     # SATELLITE DATA
     # MULTIPLE ORBITS per day: For 2025 starting in March, ESA runs S2A and S2C in parallel resulting in multiple orbits per day
 
+    ## For s2cloudless uncomment below
     # Sentinel-2
-    S2_sr_orbits= ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-        .filter(ee.Filter.bounds(aoi_CH)) \
-        .filter(ee.Filter.date(start_date, end_date))
+    # S2_sr_orbits= ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+    #     .filter(ee.Filter.bounds(aoi_CH)) \
+    #     .filter(ee.Filter.date(start_date, end_date))
 
-    # unique SENSING_ORBIT_NUMBER
-    unique_orbits = S2_sr_orbits.aggregate_array('SENSING_ORBIT_NUMBER') \
-        .distinct() \
-        .getInfo()
+    # # unique SENSING_ORBIT_NUMBER
+    # unique_orbits = S2_sr_orbits.aggregate_array('SENSING_ORBIT_NUMBER') \
+    #     .distinct() \
+    #     .getInfo()
 
     # S2 CloudScore+
     S2_csp = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED') \
         .filter(ee.Filter.bounds(aoi_CH)) \
         .filter(ee.Filter.date(start_date, end_date))
 
+    # Extract the "Rxxx" part from SOURCE_PRODUCT_ID and keep only the digits.
+    def add_orbit_match_nozero(img):
+        sid = ee.String(img.get('SOURCE_PRODUCT_ID'))                                  # full ID [web:31]
+        digits = ee.String(sid.match('.*_R(\\d{3})_.*').get(1))                        # '022' [web:51]
+        orbit_str = ee.Number.parse(digits).format('%d')                               # '22' as string [web:59][web:60]
+        return img.set('orbit', orbit_str)
+
+    unique_orbits = (S2_csp.map(add_orbit_match_nozero)
+                    .aggregate_array('orbit')    # list of strings like '22' [web:26]
+                    .distinct()
+                    .sort()
+                    .getInfo())                  # ['6','22','118', ...] [web:26]
+    #print(unique_orbits)
+
+    ## For s2cloudless uncomment below
     # S2cloudless
-    S2_clouds = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY') \
-        .filter(ee.Filter.bounds(aoi_CH)) \
-        .filter(ee.Filter.date(start_date, end_date))
+    # S2_clouds = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY') \
+    #     .filter(ee.Filter.bounds(aoi_CH)) \
+    #     .filter(ee.Filter.date(start_date, end_date))
 
     # List to store task IDs
     task_ids = []
@@ -94,47 +110,58 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
             if len(unique_orbits) > 1:
                 print(f"Processing orbit: {orbit} of {day_to_process}")
 
+            ## For s2cloudless uncomment below
+            # # Sentinel-2
+            # S2_sr = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+            #     .filter(ee.Filter.bounds(aoi_CH)) \
+            #     .filter(ee.Filter.date(start_date, end_date)) \
+            #     .filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', orbit)) \
+            #     .linkCollection(S2_csp, ['cs', 'cs_cdf']) \
+            #     .linkCollection(S2_clouds, ['probability'])
 
-            # Sentinel-2
-            S2_sr = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-                .filter(ee.Filter.bounds(aoi_CH)) \
-                .filter(ee.Filter.date(start_date, end_date)) \
-                .filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', orbit)) \
-                .linkCollection(S2_csp, ['cs', 'cs_cdf']) \
-                .linkCollection(S2_clouds, ['probability'])
+
 
             # Is a scene available for this date -> Yes: continue / No: abort ('No candidate scene')
-            image_list_size = S2_sr.size().getInfo()
+            ## For s2cloudless uncomment below
+            #image_list_size = S2_sr.size().getInfo()
+
+            filtered = S2_csp.map(add_orbit_match_nozero).filter(ee.Filter.eq('orbit', ee.String(orbit)))  # '22'
+            image_list_size_cloud = filtered.size().getInfo()
 
 
-            if image_list_size == 0:
+
+            if image_list_size_cloud == 0:
                 write_asset_as_empty(collection, day_to_process, 'No candidate scene')
                 return
 
             # Are all tiles for the overpass available -> Yes: continue / No: abort ('Tile upload incomplete')
-            SENSING_ORBIT_NUMBER = S2_sr.first().get('SENSING_ORBIT_NUMBER').getInfo()
-            if image_list_size < 4 and SENSING_ORBIT_NUMBER == 8:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Tile upload incomplete')
-                return  # exit if condition met
-            if image_list_size < 11 and SENSING_ORBIT_NUMBER == 108:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Tile upload incomplete')
-                return
-            if image_list_size < 11 and SENSING_ORBIT_NUMBER == 65:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Tile upload incomplete')
-                return
-            if image_list_size < 4 and SENSING_ORBIT_NUMBER == 22:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Tile upload incomplete')
-                return
+            ## For s2cloudless uncomment below
+            #SENSING_ORBIT_NUMBER = S2_sr.first().get('SENSING_ORBIT_NUMBER').getInfo()
+            SENSING_ORBIT_NUMBER = int(orbit)
+
+            ## For s2cloudless uncomment below
+            # if image_list_size < 4 and SENSING_ORBIT_NUMBER == 8:
+            #     write_asset_as_empty(collection, day_to_process,
+            #                         'Tile upload incomplete')
+            #     return  # exit if condition met
+            # if image_list_size < 11 and SENSING_ORBIT_NUMBER == 108:
+            #     write_asset_as_empty(collection, day_to_process,
+            #                         'Tile upload incomplete')
+            #     return
+            # if image_list_size < 11 and SENSING_ORBIT_NUMBER == 65:
+            #     write_asset_as_empty(collection, day_to_process,
+            #                         'Tile upload incomplete')
+            #     return
+            # if image_list_size < 4 and SENSING_ORBIT_NUMBER == 22:
+            #     write_asset_as_empty(collection, day_to_process,
+            #                         'Tile upload incomplete')
+            #     return
 
             # Get image_list_size for the cloud probability dataset
-            if cloudScorePlus is True:
-                image_list_size_cloud = S2_sr.select('cs').size().getInfo()
-            else:
-                image_list_size_cloud = S2_sr.select('probability').size().getInfo()
+            # if cloudScorePlus is True:
+            #     image_list_size_cloud = S2_sr.select('cs').size().getInfo()
+            # else:
+            #     image_list_size_cloud = S2_sr.select('probability').size().getInfo()
 
             # Are CloudScore+ datasets for all tiles available -> Yes: continue / No: abort ('Cloud probability data missing')
             if image_list_size_cloud < 4 and SENSING_ORBIT_NUMBER == 8:
@@ -156,9 +183,13 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
 
 
             # Get the list of all images in the collection
+            ## For s2cloudless uncomment below
             #image_list = S2_csp.toList(image_list_size_cloud)
+
             # Get the list of linked S2_csp images with their full properties
-            image_list = S2_sr.select('cs').map(lambda image: image.copyProperties(S2_csp.filter(ee.Filter.eq('system:index', image.get('system:index'))).first())).toList(image_list_size_cloud)
+            image_list = S2_csp.map(add_orbit_match_nozero).filter(ee.Filter.eq('orbit', ee.String(orbit))).toList(image_list_size_cloud)
+            #image_list = S2_sr.toList(image_list_size)
+
 
 
             # Loop through each image and export it
