@@ -22,7 +22,7 @@ PROCESSING_DIR = "processing"
 LAST_PRODUCT_UPDATES = os.path.join("tools", "last_updates.csv")
 
 # Set GCS Bucket name of Google Cloud Storage
-GCLOUD_BUCKET = "s2_sr_registration_swiss"
+GCLOUD_BUCKET = "s2_sr_registration_swiss" # TODO chnage to EBP
 
 # set S3 path
 S3_BUCKET_NAME = "s3-topo-satromo-prod"
