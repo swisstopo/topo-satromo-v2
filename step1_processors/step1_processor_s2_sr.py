@@ -272,7 +272,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # continue processing the valid orbits
 
 
-    breakpoint()
+
 
     ##############################
     # IMAGE DOWNLOAD
@@ -712,7 +712,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             # Download matching files
             if matching_files:
-                # print(f"Found {len(matching_files)} CloudScore+ files")
+                print(f"Dwonloading {len(matching_files)} CloudScore+ files")
                 os.makedirs(source_directory, exist_ok=True)
 
                 for key in matching_files:
@@ -735,7 +735,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         return
 
     ##############################
-    # TODO add cs+ metadata to metadata
     # Add CS+ metadata to each orbit's metadata JSON file
 
     for orbit_num, timestamp in orbit_timestamp.items():
