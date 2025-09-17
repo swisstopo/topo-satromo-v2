@@ -232,9 +232,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         return search_result
 
-    # TODO clean searchresult as in https://github.com/SARcycle/AROSICS/blob/7d09c7b511ba775c9876b987b4ed58389546d301/copernicus_api.py#L264 and check if they are already on S3 and or stac and check if online is a new processor version and check if  every orbit has enough tiles if not save it empty files list and with ORBIT number to overcome issue if only  onne orbit per day i incomplete
-
-
     # Perform the scene search
     search_result = copernicus_image_search(date=day_to_process, copernicus_collection =copernicus_collection,  aoi=aoi_CH_simplified, processing_level=processing_level, baseline_version=baseline_version)
 
@@ -243,6 +240,39 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         write_asset_as_empty(collection, day_to_process, 'No candidate scene')
         return
 
+    # TODO check if already in  stac and check if online is a new processor / baseline
+
+    ##############################
+    # TILE Completness check
+
+    # in the List Search_result we check if we have all tiles for each orbit, if realiveOrbitnUmber is  8 ist ahs to be < 4 unqieue tileID, if realiveOrbitnUmber is  108 ist ahs to be < 11 unqieue tileID
+    orbit_to_tiles = defaultdict(set)
+    for item in search_result:
+        orbit_num = item['properties']['relativeOrbitNumber']
+        tile_id = item['properties']['tileId']
+        orbit_to_tiles[orbit_num].add(tile_id)
+    # Define expected tile counts for specific orbits
+    expected_tile_counts = {8: 4, 108: 11, 65: 11, 22: 4}  # Add more orbits and their expected counts as needed
+    # Filter orbits based on expected tile counts
+    valid_orbits = {orbit for orbit, tiles in orbit_to_tiles.items()
+                    if orbit not in expected_tile_counts or len(tiles) >= expected_tile_counts[orbit]}
+    # Filter non orbits based on expected tile counts
+    non_valid_orbits = {orbit for orbit, tiles in orbit_to_tiles.items()
+                if orbit in expected_tile_counts and len(tiles) < expected_tile_counts[orbit]}
+    # Filter search_result to include only items from valid orbits
+    search_result = [item for item in search_result if item['properties']['relativeOrbitNumber'] in valid_orbits]
+
+    # If no valid orbits remain, write an empty asset and return
+    if len(search_result) == 0:
+        write_asset_as_empty(collection, day_to_process, 'Tile upload incomplete')
+        return
+    # If we have at least one valid orbit remain, write an empty asset entry
+    if len(non_valid_orbits) > 0:
+        write_asset_as_empty(collection, day_to_process, f'Tile upload incomplete: {sorted(non_valid_orbits)}')
+        # continue processing the valid orbits
+
+
+    breakpoint()
 
     ##############################
     # IMAGE DOWNLOAD
@@ -318,7 +348,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     dl_stats=copernicus_download(main_utils.copernicus_s3.Bucket(copernicus_bucket), search_result=search_result, target="temp")
-    breakpoint()
+
 
     # Check if we have a failed download
     if dl_stats[1] != 0:
