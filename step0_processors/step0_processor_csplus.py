@@ -128,6 +128,10 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
             filtered = S2_csp.map(add_orbit_match_nozero).filter(ee.Filter.eq('orbit', ee.String(orbit)))  # '22'
             image_list_size_cloud = filtered.size().getInfo()
 
+            #Distinct  count of unique MGRS_TILE
+            unique_MGRS_TILE_cloud = (filtered.aggregate_count_distinct('MGRS_TILE')  # server-side count
+                   .getInfo())
+
 
 
             if image_list_size_cloud == 0:
@@ -164,19 +168,19 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
             #     image_list_size_cloud = S2_sr.select('probability').size().getInfo()
 
             # Are CloudScore+ datasets for all tiles available -> Yes: continue / No: abort ('Cloud probability data missing')
-            if image_list_size_cloud < 4 and SENSING_ORBIT_NUMBER == 8:
+            if unique_MGRS_TILE_cloud < 4 and SENSING_ORBIT_NUMBER == 8:
                 write_asset_as_empty(collection, day_to_process,
                                     'Cloud probability data missing')
                 return
-            if image_list_size_cloud < 11 and SENSING_ORBIT_NUMBER == 108:
+            if unique_MGRS_TILE_cloud < 11 and SENSING_ORBIT_NUMBER == 108:
                 write_asset_as_empty(collection, day_to_process,
                                     'Cloud probability data missing')
                 return
-            if image_list_size_cloud < 11 and SENSING_ORBIT_NUMBER == 65:
+            if unique_MGRS_TILE_cloud < 11 and SENSING_ORBIT_NUMBER == 65:
                 write_asset_as_empty(collection, day_to_process,
                                     'Cloud probability data missing')
                 return
-            if image_list_size_cloud < 4 and SENSING_ORBIT_NUMBER == 22:
+            if unique_MGRS_TILE_cloud < 4 and SENSING_ORBIT_NUMBER == 22:
                 write_asset_as_empty(collection, day_to_process,
                                     'Cloud probability data missing')
                 return
