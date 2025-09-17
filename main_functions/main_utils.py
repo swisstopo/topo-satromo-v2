@@ -117,6 +117,7 @@ def initialize_gee():
             "s3",
             aws_access_key_id=aws_creds["aws_access_key_id"],
             aws_secret_access_key=aws_creds["aws_secret_access_key"],
+            region_name=aws_creds["aws_region_name"],
         )
 
     except Exception as e:
