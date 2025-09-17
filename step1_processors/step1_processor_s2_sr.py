@@ -268,12 +268,16 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # Initialize download statistics
         dl_stats = [0, 0]  # 0: success, 1: failed
 
+        # Define which file we want to download based on the Band configs
+        target_endings = [f'{band}_{res}m.jp2' for res, bands in config.SENTINEL2_BAND_CONFIG.items() for band in bands]
+
         # Create the target dir
         os.makedirs(target, exist_ok=True)
 
+        print(f"Downloading {len(search_result)} tiles from {bucket}...")
         # Loop over the search results
         for i, item in enumerate(search_result):
-            print(f"Downloading tile {i+1} of {len(search_result)} ...")
+            #print(f"Downloading tile {i+1} of {len(search_result)} ...")
             product_all = item['assets']['PRODUCT']['alternate']['s3']['href']+"/"
             product = product_all.lstrip("/").split("/", 1)[1]
             files = bucket.objects.filter(Prefix=product)
@@ -284,14 +288,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 if os.path.isdir(file.key):
                     continue
 
-                # Create directory structure
-                os.makedirs(os.path.dirname(file.key), exist_ok=True)
+                # Filter for only files with target endings
+                if not any(file.key.endswith(ending) for ending in target_endings):
+                    continue
 
                 # Retry logic for each file
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        bucket.download_file(file.key, f"{target}{file.key}")
+                        target_path = os.path.join(target, file.key)
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        bucket.download_file(file.key, target_path)
                         #print(f"Downloaded: {file.key}")
                         dl_stats[0] += 1
                         break  # Success, exit retry loop
@@ -311,6 +318,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     dl_stats=copernicus_download(main_utils.copernicus_s3.Bucket(copernicus_bucket), search_result=search_result, target="temp")
+    breakpoint()
 
     # Check if we have a failed download
     if dl_stats[1] != 0:
@@ -476,7 +484,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                             return 0
 
             #print(f"  Total files copied: {copied_count}")
-            return 1
+        return 1
 
     move_stats= move_copernicus_data("temp", copernicus_collection)
 
@@ -564,7 +572,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     def group_search_results_by_orbit(search_result):
         """
         Groups search results by relativeOrbitNumber and creates JSON structure
-        with BANDS groups and SOURCE information.
+        with SOURCE information.
 
         Args:
             search_result: List of dictionaries with 'id' and 'properties' keys
@@ -612,6 +620,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     ##############################
     # Copy corresponding CS+ to local
+    # TODO maybe to reduce cost: Check if the URL exists before copying with requests and not with boto: this is to reduce the costs of s3 access. keep in mind that we want in this case access the CF distribution on int and not on prod
 
     # S3 config
     s3_path_info = config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection']
@@ -645,7 +654,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                     if tile_key not in tile_to_directory_map:
                         tile_to_directory_map[tile_key] = root
-                        print(f"Found tile {tile_id}, timestamp {timestamp}")
+                        # print(f"Found tile {tile_id}, timestamp {timestamp}")
 
     # Process each tile and download CloudScore+ files
     if tile_to_directory_map:
@@ -694,6 +703,48 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         print("No valid JP2 files found")
         write_asset_as_empty(collection, day_to_process, 'No valid local tiles files found')
         return
+
+    ##############################
+    # TODO add cs+ metadata to metadata
+    # Add CS+ metadata to each orbit's metadata JSON file
+
+    for orbit_num, timestamp in orbit_timestamp.items():
+        ts=timestamp.replace('-', '')[:8]
+        orbit_dir = os.path.join(copernicus_collection, f"R{int(orbit_num):03d}", ts)
+        metadata_filename = f"swisseo_s2-sr_v100_mosaic_{timestamp}_metadata.json"
+        metadata_path =  metadata_filename
+
+        # Find all _metadata.json files for CloudScore+ in the orbit directory
+        csplus_metadata_files = []
+        if os.path.exists(orbit_dir):
+            csplus_metadata_files = [os.path.join(orbit_dir, f)
+                                   for f in os.listdir(orbit_dir)
+                                   if f.endswith("_metadata.json")]
+
+        # Build the SOURCE_CLOUDSCOREPLUS structure
+        source_csplus = {"GRANULES": {}}
+        for cs_file in csplus_metadata_files:
+            try:
+                with open(cs_file, "r") as f:
+                    csplus_data = json.load(f)
+                # Extract granule ID from filename without _metadata.json and path
+                granule_id = os.path.basename(cs_file).split("_metadata.json")[0]
+                source_csplus["GRANULES"][granule_id] = csplus_data
+            except Exception as e:
+                print(f"Error reading CS+ metadata {cs_file}: {e}")
+
+        # Update the orbit metadata with CloudScore+ data
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, "r") as f:
+                    orbit_metadata = json.load(f)
+                orbit_metadata["SOURCE_CLOUDSCOREPLUS"] = source_csplus
+                with open(metadata_path, "w") as f:
+                    json.dump(orbit_metadata, f, indent=2)
+            except Exception as e:
+                print(f"Error updating metadata file {metadata_path}: {e}")
+
+    breakpoint()
 
     ##############################
     # TODO COREGISTRATION AROSICS
