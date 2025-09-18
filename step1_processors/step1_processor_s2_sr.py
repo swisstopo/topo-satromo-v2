@@ -356,7 +356,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         return
 
 
-    # TODO check if tile is mostly no data and if we have multiple same tilID check if they merged are not full of no data
+    # TODO check if tile is mostly no data and in case of multiple identical tileIDs verify if their merge is not full of no data: to solve this with A B and C: Download all tiles, check with a 60m band if the orbit covers Switzerland and no area is "empty": meaning that the area in the orbit intersection with Switzerland has no/little no data
 
     ##############################
     # Backup data to S3

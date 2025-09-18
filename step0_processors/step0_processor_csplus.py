@@ -161,28 +161,43 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
             #                         'Tile upload incomplete')
             #     return
 
-            # Get image_list_size for the cloud probability dataset
-            # if cloudScorePlus is True:
-            #     image_list_size_cloud = S2_sr.select('cs').size().getInfo()
-            # else:
-            #     image_list_size_cloud = S2_sr.select('probability').size().getInfo()
 
-            # Are CloudScore+ datasets for all tiles available -> Yes: continue / No: abort ('Cloud probability data missing')
-            if unique_MGRS_TILE_cloud < 4 and SENSING_ORBIT_NUMBER == 8:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Cloud probability data missing')
-                return
-            if unique_MGRS_TILE_cloud < 11 and SENSING_ORBIT_NUMBER == 108:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Cloud probability data missing')
-                return
-            if unique_MGRS_TILE_cloud < 11 and SENSING_ORBIT_NUMBER == 65:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Cloud probability data missing')
-                return
-            if unique_MGRS_TILE_cloud < 4 and SENSING_ORBIT_NUMBER == 22:
-                write_asset_as_empty(collection, day_to_process,
-                                    'Cloud probability data missing')
+            # Configure per-orbit minimum required CloudScore+ tile counts
+            MIN_TILES_BY_ORBIT = {
+                8: 4,
+                22: 4,
+                65: 11,
+                108: 11,
+            }
+            def handle_cloudscore_missing(collection, day_to_process, unique_MGRS_TILE_cloud,
+                              SENSING_ORBIT_NUMBER, unique_orbits, orbit):
+                """
+                Returns:
+                'continue' -> caller should continue
+                'return'   -> caller should return
+                None       -> nothing to do
+                """
+                required = MIN_TILES_BY_ORBIT.get(SENSING_ORBIT_NUMBER)
+                if required is None:
+                    return None  # orbit not controlled here
+                if unique_MGRS_TILE_cloud >= required:
+                    return None  # sufficient tiles
+
+                # Not enough tiles -> write and decide continue/return like original code
+                msg = f'Cloud probability data missing: Orbit {orbit}' if len(unique_orbits) > 1 else 'Cloud probability data missing'
+                if len(unique_orbits) > 1 and orbit != unique_orbits[-1]:
+                    write_asset_as_empty(collection, day_to_process, msg)
+                    return 'continue'
+                else:
+                    write_asset_as_empty(collection, day_to_process, msg)
+                    return 'return'
+
+            #Check for CloudScore+ data missing
+            action = handle_cloudscore_missing(collection, day_to_process, unique_MGRS_TILE_cloud,
+                                   SENSING_ORBIT_NUMBER, unique_orbits, orbit)
+            if action == 'continue':
+                continue
+            if action == 'return':
                 return
 
 
