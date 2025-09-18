@@ -69,13 +69,13 @@ SENTINEL2_BAND_CONFIG ={
 
 #  ch.swisstopo.swisseo_s2-sr
 PRODUCT_S2_LEVEL_CSPLUS = {
-    "image_collection": "GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED",
+    "image_collection": "S2_SR_HARMONIZED_SWISS",
     "temporal_coverage": 1,  # Days
     "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
 #  ch.swisstopo.swisseo_s2-sr
 PRODUCT_S2_LEVEL_2A = {
-    "image_collection": "GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED",
+    "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
     "temporal_coverage": 1,  # Days
     "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with step0
