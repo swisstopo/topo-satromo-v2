@@ -181,16 +181,12 @@ def generate_csplus_mosaic_for_single_date(day_to_process: str, collection: str,
                 if required is None:
                     return None  # orbit not controlled here
                 if unique_MGRS_TILE_cloud >= required:
-                    return None  # sufficient tiles
+                    return 'continue' # sufficient tiles
 
-                # Not enough tiles -> write and decide continue/return like original code
+                # Not enough tiles -> return
                 msg = f'Cloud probability data missing: Orbit {orbit}' if len(unique_orbits) > 1 else 'Cloud probability data missing'
-                if len(unique_orbits) > 1 and orbit != unique_orbits[-1]:
-                    write_asset_as_empty(collection, day_to_process, msg)
-                    return 'continue'
-                else:
-                    write_asset_as_empty(collection, day_to_process, msg)
-                    return 'return'
+                write_asset_as_empty(collection, day_to_process, msg)
+                return 'return'
 
             #Check for CloudScore+ data missing
             action = handle_cloudscore_missing(collection, day_to_process, unique_MGRS_TILE_cloud,

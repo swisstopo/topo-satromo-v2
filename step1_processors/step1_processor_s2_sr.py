@@ -143,7 +143,19 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     copernicus_bucket = "eodata"
 
     ##############################
+    # Test if corresponing Cloudscope+ data is in  empty asset list
+    no_csplus=main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'], day_to_process)
+
+    if no_csplus:
+        if main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process) is False:
+            write_asset_as_empty(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process, 'No CloudScore+ data available')
+        return
+
+
+    ##############################
     #IMAGE SEARCH
+
+
 
     def copernicus_image_search(date, copernicus_collection , aoi, processing_level, baseline_version):
 
@@ -346,7 +358,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # Print download statistics
         return dl_stats
 
-
+    breakpoint()
     dl_stats=copernicus_download(main_utils.copernicus_s3.Bucket(copernicus_bucket), search_result=search_result, target="temp")
 
 
@@ -668,6 +680,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # Find JP2 directories and extract tile info
     tile_to_directory_map = {}
 
+    # Print
+    print(f"Downloading {bucket_name} CloudScore+ files")
     for root, dirs, files in os.walk(copernicus_collection):
         jp2_files = [f for f in files if f.lower().endswith('.jp2')]
 
@@ -712,7 +726,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             # Download matching files
             if matching_files:
-                print(f"Dwonloading {len(matching_files)} CloudScore+ files")
+                #print(f"Downloading {len(matching_files)} CloudScore+ files")
                 os.makedirs(source_directory, exist_ok=True)
 
                 for key in matching_files:
