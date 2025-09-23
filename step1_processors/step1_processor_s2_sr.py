@@ -34,8 +34,8 @@ from step0_processors.step0_utils import write_asset_as_empty
 # 4. Organize files by orbit and date
 # 5. Integrate corresponding CloudScore+ data
 # 6. Generate and update metadata files
-# 7. [TODO] Co-registration with AROSICS
-# 8. [TODO] Terrain shadow masking
+# 7. [TODO] Terrain shadow masking
+# 8. [TODO] Co-registration with AROSICS
 # 9. [TODO] STAC catalog generation
 #
 # The script processes one mosaic image per day with automated quality checks and error handling.
@@ -738,11 +738,12 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     breakpoint()
 
-    ##############################
-    # TODO COREGISTRATION AROSICS
 
     ##############################
     # TODO TERRAINSHADOWMASK
+
+    ##############################
+    # TODO COREGISTRATION AROSICS
 
     ##############################
     # TODO Update METADATA json
