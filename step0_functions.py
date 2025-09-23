@@ -31,7 +31,8 @@ def write_file(input_dict, output_file):
 
 def step0_main(step0_product_dict, current_date_str):
     collections_ready = list()
-
+    
+    # Determine which collections are ready for processing
     # We check every step0 collection independently
     # The collection is ready if all assets are present for the interval [date-temporal_coverage; date]
     for step0_collection, (products, temporal_coverage, base_collection) in step0_product_dict.items():
@@ -48,7 +49,7 @@ def step0_main(step0_product_dict, current_date_str):
 def step0_check_collection(collection, temporal_coverage, current_date_str):
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
-   
+
     # Check if the collection is stored on S3
     if collection.startswith("s3://"):
         # Parse the S3 bucket and prefix from the collection path
@@ -121,6 +122,7 @@ def check_if_asset_prepared(collection, assets, check_date, tasks):
         task_description = collection_basename + '_' + check_date_str
 
     for task in tasks:
+
         if task_description not in task['metadata']['description']:
             continue
         if task['metadata']['state'] in ['PENDING', 'RUNNING']:
@@ -134,6 +136,7 @@ def check_if_asset_prepared(collection, assets, check_date, tasks):
     # 1. check if in asset list
 
     if collection_basename == "CLOUD_SCORE_PLUS":
+
         for asset in assets:
 
             if check_date.strftime('%Y%m%dT') in asset:
@@ -155,6 +158,7 @@ def check_if_asset_prepared(collection, assets, check_date, tasks):
 
     df_selection = df[(df.collection == collection_basename)
                       & (df.date == check_date_str)]
+
     if len(df_selection) > 0:
         print('Date found in empty_asset_list, skipping date')
         return True
