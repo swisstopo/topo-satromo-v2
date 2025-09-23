@@ -1,7 +1,7 @@
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils
+from main_functions import main_utils, main_publish_stac_fsdi
 from collections import defaultdict
 import requests
 import os
@@ -307,7 +307,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # Print download statistics
         return dl_stats
 
-    breakpoint()
+
     dl_stats=copernicus_download(main_utils.copernicus_s3.Bucket(copernicus_bucket), search_result=search_result, target="temp")
 
 
@@ -493,7 +493,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     def export_orbits_to_json_files(grouped_results, earliest_datetimes, output_dir="./"):
         """
         Export each orbit group to a separate JSON file with naming format:
-        swisseo_s2-sr_v100_mosaic_{earliest_timestamp}_metadata.json
+        swisseo_s2-sr_v200_mosaic_{earliest_timestamp}_metadata.json
 
         Args:
             grouped_results: Dictionary from group_search_results_by_orbit function
@@ -515,7 +515,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             if earliest_timestamp:
                 # Create filename with format: swisseo_s2-sr_v100_mosaic_{timestamp}_metadata.json
-                filename = f"swisseo_s2-sr_v100_mosaic_{earliest_timestamp}_metadata.json"
+                filename = f"swisseo_s2-sr_v200_mosaic_{earliest_timestamp}_metadata.json"
                 file_path = os.path.join(output_dir, filename)
 
                 # Write the orbit data to JSON file
@@ -703,7 +703,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     for orbit_num, timestamp in orbit_timestamp.items():
         ts=timestamp.replace('-', '')[:8]
         orbit_dir = os.path.join(copernicus_collection, f"R{int(orbit_num):03d}", ts)
-        metadata_filename = f"swisseo_s2-sr_v100_mosaic_{timestamp}_metadata.json"
+        metadata_filename = f"swisseo_s2-sr_v200_mosaic_{timestamp}_metadata.json"
         metadata_path =  metadata_filename
 
         # Find all _metadata.json files for CloudScore+ in the orbit directory
@@ -748,7 +748,16 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # TODO Update METADATA json
 
+    print("end of function")
     ##############################
     # TODO Upload to STAC
+    #upload the  file swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif to STAC: collection swisseo_s2-sr_v200 raw_asset is swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif raw_item is 2025-06-10t103641 colelction is swisseo_s2-sr_v200 geocat_id is 6e8f3f3e-1d4e-11ee-be56-0242ac120002, current is none
+    # main_publish_stac_fsdi.publish_to_stac("swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif",
+    #     "2025-06-10t103641",
+    #     "swisseo_s2-sr_v200",
+    #     config.PRODUCT_S2_LEVEL_2A['geocat_id'],
+    #     None
+    # )
+    print("end of function")
 
 
