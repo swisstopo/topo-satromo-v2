@@ -171,4 +171,5 @@ rclone/
 */SI_SPOT5_WGS84_UTM32N_10m_RED_COG.tif
 
 # Downloaded assets (e.g. S2 tiles)
-temp
+temp/
+SENTINEL-2/
