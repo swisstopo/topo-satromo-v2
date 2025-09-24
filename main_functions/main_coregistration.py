@@ -22,8 +22,8 @@ from scipy.interpolate import interp2d
 # Specific SATROMO libraries/modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from configuration import dev_config as config
-import main_reprojection, main_mosaicing
-from main_utils import run_gdal_command, ensure_directory, ensure_path, get_extent_and_dimensions, parse_date, get_pixel_spacing
+from main_functions import main_reprojection, main_mosaicing
+from main_functions import main_utils
 
 # Configure logging
 logging.basicConfig(
@@ -52,10 +52,10 @@ def resample_raster(
     Raises:
         RuntimeError: If resampling fails.
     """
-    src_filename = ensure_path(src_filename)
-    match_filename = ensure_path(match_filename)
-    dst_filename = ensure_path(dst_filename)
-    ensure_directory(dst_filename.parent)
+    src_filename = main_utils.ensure_path(src_filename)
+    match_filename = main_utils.ensure_path(match_filename)
+    dst_filename = main_utils.ensure_path(dst_filename)
+    main_utils.ensure_directory(dst_filename.parent)
     
     logger.info(f"Resampling {os.path.basename(src_filename)} to match {os.path.basename(match_filename)}")
     
@@ -87,7 +87,7 @@ def resample_raster(
             temp_filename
         ]
         
-        success, _, stderr = run_gdal_command(command)
+        success, _, stderr = main_utils.run_gdal_command(command)
         if not success:
             logger.error(f"Failed to resample raster (step 1): {stderr}")
             raise RuntimeError(f"Failed to resample raster (step 1): {stderr}")
@@ -108,7 +108,7 @@ def resample_raster(
             str(dst_filename)
         ]
         
-        success, _, stderr = run_gdal_command(command)
+        success, _, stderr = main_utils.run_gdal_command(command)
         if not success:
             logger.error(f"Failed to resample raster (step 2): {stderr}")
             raise RuntimeError(f"Failed to resample raster (step 2): {stderr}")
@@ -143,23 +143,23 @@ def equalize_extents(
     Raises:
         RuntimeError: If equalization fails.
     """
-    im_reference = ensure_path(im_reference)
-    im_target = ensure_path(im_target)
+    im_reference = main_utils.ensure_path(im_reference)
+    im_target = main_utils.ensure_path(im_target)
     
     # Define the output file name
     outputFile = str(im_reference).replace('.tif', '_masked.tif')
-    ensure_directory(Path(outputFile).parent)
+    main_utils.ensure_directory(Path(outputFile).parent)
     
     logger.info(f"Equalizing extents between reference and target images")
     
     try:
         # Get the extent and dimensions of the target image
-        minx_target, maxx_target, miny_target, maxy_target, x_size_target, y_size_target = get_extent_and_dimensions(im_target)
+        minx_target, maxx_target, miny_target, maxy_target, x_size_target, y_size_target = main_utils.get_extent_and_dimensions(im_target)
         
         # If the output file already exists
         if os.path.exists(outputFile):
             # Get the extent and dimensions of the reference image
-            minx_ref, maxx_ref, miny_ref, maxy_ref, x_size_ref, y_size_ref = get_extent_and_dimensions(outputFile)
+            minx_ref, maxx_ref, miny_ref, maxy_ref, x_size_ref, y_size_ref = main_utils.get_extent_and_dimensions(outputFile)
             
             # If all extents and dimensions are equal, there's nothing to do
             if (minx_target == minx_ref and maxx_target == maxx_ref and 
@@ -170,7 +170,7 @@ def equalize_extents(
 
         # If the extents are not equal, crop the reference image to the target image size
         logger.info('Cropping reference image to target image size')
-        gsd_x, gsd_y = get_pixel_spacing(im_target)
+        gsd_x, gsd_y = main_utils.get_pixel_spacing(im_target)
         
         command = [
             "gdalwarp", 
@@ -187,7 +187,7 @@ def equalize_extents(
             outputFile
         ]
         
-        success, _, stderr = run_gdal_command(command)
+        success, _, stderr = main_utils.run_gdal_command(command)
         if not success:
             logger.error(f"Failed to equalize extents: {stderr}")
             raise RuntimeError(f"Failed to equalize extents: {stderr}")
@@ -218,9 +218,9 @@ def create_binary_cloud_mask(
     Raises:
         RuntimeError: If mask creation fails.
     """
-    cloud_file = ensure_path(cloud_file)
-    output_file = ensure_path(output_file)
-    ensure_directory(output_file.parent)
+    cloud_file = main_utils.ensure_path(cloud_file)
+    output_file = main_utils.ensure_path(output_file)
+    main_utils.ensure_directory(output_file.parent)
     
     logger.info(f"Creating binary cloud mask with threshold ≥{cloud_threshold}%")
     
@@ -239,7 +239,7 @@ def create_binary_cloud_mask(
         "--quiet"
     ]
     
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     if not success:
         logger.error(f"Failed to create cloud mask: {stderr}")
         raise RuntimeError(f"Failed to create cloud mask: {stderr}")
@@ -278,9 +278,9 @@ def coregister_S2(
         cloud_threshold = config.AROSICS_CONFIG['csplus_threshold']
     
     # Set up paths
-    base_path = ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
     data_dir = os.path.join(base_path, f"R{orbit_nr:03}", acquisition_date_str)
-    data_dir = ensure_directory(data_dir)
+    data_dir = main_utils.ensure_directory(data_dir)
     
     logger.info(f"Coregistering Sentinel-2 data for date {acquisition_date_str}, orbit {orbit_nr}")
     
@@ -325,7 +325,7 @@ def coregister_S2(
     
     # Get target image dimensions
     try:
-        x_size, y_size = get_extent_and_dimensions(mosaic_10m)[-2:]
+        x_size, y_size = main_utils.get_extent_and_dimensions(mosaic_10m)[-2:]
     except Exception as e:
         logger.error(f"Failed to get dimensions for {mosaic_10m}: {str(e)}")
         raise
@@ -337,7 +337,7 @@ def coregister_S2(
     out_name = os.path.basename(mosaic_10m).replace('.vrt', f'{config.AROSICS_CONFIG["coreg_file_suffix"]}.tif')
     # out_folder = os.path.join(data_dir, f'TiePoint_GridRes_{grid_res}x{grid_res}px_PerfTest_SI-SPOT-agroscope')
     out_folder = data_dir
-    out_folder = ensure_directory(out_folder)
+    out_folder = main_utils.ensure_directory(out_folder)
     
     # Check if output files already exist
     if (os.path.exists(os.path.join(out_folder, out_name)) and
@@ -354,8 +354,8 @@ def coregister_S2(
             cloud_mask_path = create_binary_cloud_mask(csplus_10m, cloud_bin_file, cloud_threshold)
             
             # Resample cloud mask to match multiband mosaic resolution
-            gsd_multiband = get_pixel_spacing(mosaic_10m)
-            gsd_cld = get_pixel_spacing(cloud_mask_path)
+            gsd_multiband = main_utils.get_pixel_spacing(mosaic_10m)
+            gsd_cld = main_utils.get_pixel_spacing(cloud_mask_path)
             
             if gsd_multiband != gsd_cld:
                 logger.info(f"Resampling cloud mask to match multiband mosaic resolution")
@@ -398,7 +398,7 @@ def coregister_S2(
             'mask_baddata_tgt': cloud_mask_path,
             'out_crea_options': output_options,
             # 'CPUs': num_cpus,
-            'CPUs': 63,
+            'CPUs': 40,
             'progress': True,
             'fmt_out': 'GTIFF',
             'r_b4match': reference_band,
@@ -460,8 +460,8 @@ def coreg_info_to_pickle(coreg_info: Dict[str, Any], file_path: Union[str, Path]
     Returns:
         None
     """
-    file_path = ensure_path(file_path)
-    ensure_directory(file_path.parent)
+    file_path = main_utils.ensure_path(file_path)
+    main_utils.ensure_directory(file_path.parent)
     
     logger.info(f"Saving coregistration info to {file_path}")
     
@@ -498,7 +498,7 @@ def coreg_info_from_pickle(file_path: Union[str, Path]) -> Dict[str, Any]:
         FileNotFoundError: If file doesn't exist.
         ValueError: If file format is invalid.
     """
-    file_path = ensure_path(file_path)
+    file_path = main_utils.ensure_path(file_path)
     
     logger.info(f"Loading coregistration info from {file_path}")
     
@@ -569,7 +569,7 @@ def deshift_image(
     # Step 3: Use reloaded info to deshift image
     # deshift_image(image_to_deshift, coreg_info_reloaded, path_out='/path/to/output.tif')
     
-    im_target = ensure_path(im_target)
+    im_target = main_utils.ensure_path(im_target)
     
     logger.info(f"Deshifting image: {im_target}")
     
@@ -581,7 +581,7 @@ def deshift_image(
         ref_gsd_y = coreg_info['updated map info means'][6]  # Pixel size in the y-direction
         
         # Extract target image GSD
-        tgt_gsd_x, tgt_gsd_y = get_pixel_spacing(im_target)
+        tgt_gsd_x, tgt_gsd_y = main_utils.get_pixel_spacing(im_target)
 
         # Recalculate GCPPixel and GCPLine for each GCP in the list
         logger.info(f"Adjusting GCPs for target GSD: {tgt_gsd_x} x {tgt_gsd_y}")
@@ -591,7 +591,7 @@ def deshift_image(
 
         # Ensure output directory exists if path_out is specified
         if 'path_out' in kwargs:
-            ensure_directory(Path(kwargs['path_out']).parent)
+            main_utils.ensure_directory(Path(kwargs['path_out']).parent)
             
         # Default parameters if not specified
         default_params = {
@@ -647,23 +647,3 @@ def main():
     except Exception as e:
         logger.error(f"Error during coregistration: {str(e)}")
         return 1
-
-acquisition_dates = ["20250619", "20250309", "20250818"]
-orbit_nrs = [65, 108, 108]
-
-for i in range(len(acquisition_dates)):
-
-    acquisition_date = acquisition_dates[i]
-    orbit_nr = orbit_nrs[i]
-
-    noData_value = main_reprojection.reproject_tiles_to_UTM32N(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-    result = main_mosaicing.create_sentinel2_multiband_by_config(
-        acquisition_date=acquisition_date,
-        orbit_nr=orbit_nr,
-        noData_value=noData_value
-    )
-    coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-
-    pickle_path = glob.glob(f"/home/localadmin/Downloads/S2_Test/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B04_10m_coreg_info.pkl")[0]
-    for file in glob.glob(f"/home/localadmin/Downloads/S2_Test/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B*_*m.vrt"):
-        deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=0)
