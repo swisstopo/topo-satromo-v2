@@ -11,6 +11,13 @@ import json
 import pandas as pd
 import dateutil
 from google.cloud import storage
+from typing import Dict, List, Optional, Tuple, Union, Any
+from pathlib import Path
+import subprocess
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 def determine_run_type():
     """
@@ -665,3 +672,224 @@ def get_collection_info_landsat(collection):
 
     # Return the first date, last date, and total number of scenes
     return first_date, last_date, image_count
+
+
+def ensure_path(path: Union[str, Path]) -> Path:
+    """
+    Ensures a path is a proper Path object with normalized separators for the current OS.
+    
+    Args:
+        path: The path to normalize
+        
+    Returns:
+        A normalized Path object
+    """
+    # Convert to Path object if it's a string
+    if isinstance(path, str):
+        path = Path(path)
+    
+    # Normalize path (handles different path separators)
+    path = Path(os.path.normpath(str(path)))
+    
+    return path
+
+
+def ensure_directory(path: Union[str, Path]) -> Path:
+    """
+    Ensures a directory exists, creating it if necessary.
+    
+    Args:
+        path: Directory path
+        
+    Returns:
+        Path object for the directory
+    """
+    path = ensure_path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+def run_gdal_command(command: List[str]) -> Tuple[bool, str, str]:
+    """
+    Run a GDAL command and capture its output.
+    
+    Args:
+        command: List of command arguments
+        
+    Returns:
+        Tuple of (success, stdout, stderr)
+    """
+    try:
+        process = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        return process.returncode == 0, process.stdout, process.stderr
+    except Exception as e:
+        return False, "", str(e)
+    
+def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Get basic information about a raster file using gdalinfo.
+    
+    Args:
+        raster_path: Path to the raster file
+        
+    Returns:
+        Dictionary with raster information (dimensions, extent, projection, etc.)
+        
+    Raises:
+        ValueError: If the raster cannot be opened
+    """
+    raster_path = ensure_path(raster_path)
+    
+    # Run gdalinfo to get raster information
+    command = ["gdalinfo", "-json", str(raster_path)]
+    success, stdout, stderr = run_gdal_command(command)
+    
+    if not success:
+        logger.error(f"Failed to get information for raster: {raster_path}")
+        raise ValueError(f"Failed to open raster: {raster_path}")
+    
+    # Parse JSON output
+    try:
+        info = json.loads(stdout)
+        
+        # Extract basic information
+        width = info["size"][0]
+        height = info["size"][1]
+        
+        # Get geotransform
+        geotransform = info["geoTransform"]
+        minx = geotransform[0]
+        maxy = geotransform[3]
+        pixel_width = abs(geotransform[1])
+        pixel_height = abs(geotransform[5])
+        maxx = minx + pixel_width * width
+        miny = maxy - pixel_height * height
+        
+        # Get projection and EPSG
+        projection = info["coordinateSystem"]["wkt"]
+        epsg = None
+        if "EPSG" in info["coordinateSystem"].get("dataAxisToSRSAxisMapping", ""):
+            epsg_match = re.search(r'EPSG:(\d+)', info["coordinateSystem"]["dataAxisToSRSAxisMapping"])
+            if epsg_match:
+                epsg = int(epsg_match.group(1))
+        
+        # Alternative method to get EPSG using projinfo
+        if epsg is None:
+            epsg_command = ["gdalsrsinfo", "-o", "epsg", str(raster_path)]
+            epsg_success, epsg_stdout, _ = run_gdal_command(epsg_command)
+            if epsg_success and "EPSG:" in epsg_stdout:
+                epsg_match = re.search(r'EPSG:(\d+)', epsg_stdout)
+                if epsg_match:
+                    epsg = int(epsg_match.group(1))
+        
+        # Extract band information
+        bands = []
+        for i, band in enumerate(info["bands"], 1):
+            bands.append({
+                "index": i,
+                "data_type": band.get("type", "Unknown"),
+                "no_data_value": band.get("noDataValue", None)
+            })
+        
+        return {
+            "width": width,
+            "height": height,
+            "pixel_width": pixel_width,
+            "pixel_height": pixel_height,
+            "extent": (minx, miny, maxx, maxy),
+            "projection": projection,
+            "epsg": epsg,
+            "geotransform": geotransform,
+            "bands": bands
+        }
+    
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.error(f"Error parsing gdalinfo output: {e}")
+        raise ValueError(f"Failed to parse raster information: {e}")
+
+
+def get_pixel_spacing(raster_path: Union[str, Path]) -> Tuple[float, float]:
+    """
+    Get the pixel spacing (resolution) of a raster file.
+    
+    Args:
+        raster_path: Path to the raster file
+        
+    Returns:
+        Tuple of (x_resolution, y_resolution) in the raster's units
+        
+    Raises:
+        ValueError: If the pixel spacing cannot be determined
+    """
+    try:
+        info = get_raster_info(raster_path)
+        return (info["pixel_width"], info["pixel_height"])
+    except Exception as e:
+        logger.error(f"Error getting pixel spacing: {e}")
+        raise
+
+
+def get_extent_and_dimensions(raster_path: Union[str, Path]) -> Tuple[float, float, float, float, int, int]:
+    """
+    Get the extent and dimensions of a raster file.
+    
+    Args:
+        raster_path: Path to the raster file
+        
+    Returns:
+        Tuple of (minx, maxx, miny, maxy, width, height)
+        
+    Raises:
+        ValueError: If the extent and dimensions cannot be determined
+    """
+    try:
+        info = get_raster_info(raster_path)
+        minx, miny, maxx, maxy = info["extent"]
+        return (minx, maxx, miny, maxy, info["width"], info["height"])
+    except Exception as e:
+        logger.error(f"Error getting extent and dimensions: {e}")
+        raise
+
+
+def parse_date(date_str: str) -> datetime:
+    """
+    Parse date string in various formats using dateutil.parser.
+    
+    This function can handle a wide variety of date formats automatically,
+    including ISO formats, common regional formats, and timestamps.
+    
+    Args:
+        date_str: Date string in virtually any common format
+        
+    Returns:
+        Datetime object
+        
+    Raises:
+        ValueError: If the date string cannot be parsed
+    """
+    try:
+        from dateutil import parser
+        return parser.parse(date_str)
+    except (ImportError, ValueError) as e:
+        # Fall back to manual parsing if dateutil is not available
+        # or if the parser fails for some reason
+        formats = [
+            "%Y-%m-%d",
+            "%Y%m%d",
+            "%d.%m.%Y",
+            "%Y/%m/%d",
+            "%Y-%m-%dT%H%M%S"
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        
+        raise ValueError(f"Could not parse date: {date_str}")
