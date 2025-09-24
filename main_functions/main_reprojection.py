@@ -24,8 +24,8 @@ import numpy as np
 # Specific SATROMO libraries/modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
-import main_mosaicing
-from main_utils import get_raster_info, ensure_path, ensure_directory, run_gdal_command
+from main_functions import main_mosaicing
+from main_functions import main_utils
 
 # Configure logging
 logging.basicConfig(
@@ -67,9 +67,9 @@ def resolve_os_path(path: Union[str, Path], is_file: bool = False) -> Path:
     
     # Create parent directories if needed
     if is_file:
-        ensure_directory(path.parent)
+        main_utils.ensure_directory(path.parent)
     else:
-        ensure_directory(path)
+        main_utils.ensure_directory(path)
     
     return path
 
@@ -90,18 +90,18 @@ def equalize_extents(reference_path: Union[str, Path], target_path: Union[str, P
     Raises:
         ValueError: If the rasters cannot be equalized
     """
-    reference_path = ensure_path(reference_path)
-    target_path = ensure_path(target_path)
+    reference_path = main_utils.ensure_path(reference_path)
+    target_path = main_utils.ensure_path(target_path)
     
     if output_path is None:
         # Create output path next to reference file with '_masked' suffix
         output_path = reference_path.with_name(f"{reference_path.stem}_masked{reference_path.suffix}")
     else:
-        output_path = ensure_path(output_path)
+        output_path = main_utils.ensure_path(output_path)
     
     # Get extents and dimensions of target
-    target_info = get_raster_info(target_path)
-    reference_info = get_raster_info(reference_path)
+    target_info = main_utils.get_raster_info(target_path)
+    reference_info = main_utils.get_raster_info(reference_path)
     
     minx_target, miny_target, maxx_target, maxy_target = target_info["extent"]
     width_target, height_target = target_info["width"], target_info["height"]
@@ -136,7 +136,7 @@ def equalize_extents(reference_path: Union[str, Path], target_path: Union[str, P
         str(output_path)
     ]
     
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     
     if not success:
         raise ValueError(f"Failed to equalize extents: {stderr}")
@@ -161,9 +161,9 @@ def create_binary_mask(source_path: Union[str, Path], output_path: Union[str, Pa
     Raises:
         ValueError: If the mask cannot be created
     """
-    source_path = ensure_path(source_path)
-    output_path = ensure_path(output_path)
-    ensure_directory(output_path.parent)
+    source_path = main_utils.ensure_path(source_path)
+    output_path = main_utils.ensure_path(output_path)
+    main_utils.ensure_directory(output_path.parent)
     
     logger.info(f"Creating binary mask with threshold {threshold} (greater_than={greater_than})")
     
@@ -188,7 +188,7 @@ def create_binary_mask(source_path: Union[str, Path], output_path: Union[str, Pa
         "--quiet"
     ]
     
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     
     if not success:
         raise ValueError(f"Failed to create binary mask: {stderr}")
@@ -217,9 +217,9 @@ def reproject_to_CH1903(input_path: Union[str, Path],
     Raises:
         ValueError: If reprojection fails
     """
-    input_path = ensure_path(input_path)
-    output_path = ensure_path(output_path)
-    ensure_directory(output_path.parent)
+    input_path = main_utils.ensure_path(input_path)
+    output_path = main_utils.ensure_path(output_path)
+    main_utils.ensure_directory(output_path.parent)
     
     logger.info(f"Reprojecting from UTM32N to CH1903+: {input_path}")
     
@@ -243,7 +243,7 @@ def reproject_to_CH1903(input_path: Union[str, Path],
     command.extend([str(input_path), str(output_path)])
     
     # Run the command
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     
     if not success:
         raise ValueError(f"Failed to reproject from UTM32N to CH1903+: {stderr}")
@@ -272,9 +272,9 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
     Raises:
         ValueError: If reprojection fails
     """
-    input_path = ensure_path(input_path)
-    output_path = ensure_path(output_path)
-    ensure_directory(output_path.parent)
+    input_path = main_utils.ensure_path(input_path)
+    output_path = main_utils.ensure_path(output_path)
+    main_utils.ensure_directory(output_path.parent)
     
     logger.info(f"Reprojecting from UTM31N to UTM32N: {input_path}")
 
@@ -302,7 +302,7 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
         command.extend(["-tr", str(resolution[0]), str(resolution[1])])
     
     # Add noData value
-    file_in_info = get_raster_info(input_path)
+    file_in_info = main_utils.get_raster_info(input_path)
     src_no_data = file_in_info['bands'][0]['no_data_value']
     if src_no_data is None: # If there is no noData value set -> only set the output
         src_no_data = 0
@@ -318,7 +318,7 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
     command.extend([str(input_path), str(output_path)])
     
     # Run the command
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     
     if not success:
         raise ValueError(f"Failed to reproject from CH1903+ to UTM32N: {stderr}")
@@ -341,7 +341,7 @@ def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
     data_folder = config.AROSICS_CONFIG['data_folder']
     noData_value = None # Assuring a return even if no reprojection was needed
     for file_in in glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, 'T31*.jp2')):
-        info = get_raster_info(file_in)
+        info = main_utils.get_raster_info(file_in)
         file_out = file_in.replace('T31', 'T32')
         noData_value = reproject_to_UTM32N(file_in, file_out, resolution=[info['pixel_width'], info['pixel_height']])
     
