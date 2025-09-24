@@ -17,7 +17,7 @@ import numpy as np
 # Specific SATROMO libraries/modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
-from main_utils import run_gdal_command, ensure_directory, ensure_path
+from main_functions import main_utils
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def create_sentinel2_band_mosaic(
         ValueError: If no B04 or cloud mask files are found
     """
     # Convert paths to Path objects
-    base_path = ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
     
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -62,10 +62,10 @@ def create_sentinel2_band_mosaic(
     if output_dir is None:
         output_dir = data_dir
     else:
-        output_dir = ensure_path(output_dir)
+        output_dir = main_utils.ensure_path(output_dir)
     
     # Ensure output directory exists
-    ensure_directory(output_dir)
+    main_utils.ensure_directory(output_dir)
     
     logger.info(f"Creating mosaic for orbit {orbit_nr} date {acquisition_date_str}")
     
@@ -181,7 +181,7 @@ def build_vrt(input_files: List[Path], output_vrt: Path,
     command.append(str(output_vrt))
     command.extend([str(f) for f in input_files])
     
-    success, _, stderr = run_gdal_command(command)
+    success, _, stderr = main_utils.run_gdal_command(command)
     
     if not success:
         logger.error(f"Failed to build VRT: {stderr}")
@@ -214,7 +214,7 @@ def create_multiband_raster(
         ValueError: If no VRT files are found for specified bands
     """
     # Convert paths to Path objects
-    base_path = ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
     
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -229,10 +229,10 @@ def create_multiband_raster(
     if output_dir is None:
         output_dir = data_dir
     else:
-        output_dir = ensure_path(data_dir)
+        output_dir = main_utils.ensure_path(data_dir)
     
     # Ensure output directory exists
-    ensure_directory(output_dir)
+    main_utils.ensure_directory(output_dir)
     
     logger.info(f"Creating multiband rasters for orbit {orbit_nr} date {acquisition_date_str}")
     
@@ -327,7 +327,7 @@ def create_multiband_raster(
         
         # Run the GDAL command
         logger.info(f"Running: {' '.join(gdal_command)}")
-        success, stdout, stderr = run_gdal_command(gdal_command)
+        success, stdout, stderr = main_utils.run_gdal_command(gdal_command)
         
         if success:
             logger.info(f"Successfully created multiband raster: {output_path}")
