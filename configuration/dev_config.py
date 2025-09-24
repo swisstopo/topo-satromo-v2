@@ -151,3 +151,30 @@ step0 = {
 STAC_FSDI_SCHEME = 'https'
 STAC_FSDI_HOSTNAME = 'sys-data.int.bgdi.ch'
 STAC_FSDI_API = '/api/stac/v0.9/'
+
+
+# C AROSICS configuration
+# ***********************
+# Contains dictionary used for co-registration of satellite imagery
+# using a reference image.
+
+AROSICS_CONFIG = {
+    'cloud_threshold': 65,
+    'csplus_threshold': 0.6,
+    'grid_res_multiplier': 5,
+    'max_points': 5000,
+    'window_size': [128, 128],
+    'max_iter': 10,
+    'max_shift': 5,
+    'reference_band': 1,
+    #'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/SI_SPOT5_WGS84_UTM32N_5m_RED_COG.tif',
+    'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/SI_SPOT5_WGS84_UTM32N_10m_RED_COG.tif',
+    # 'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/S2_GRI.tif',
+    #'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
+    'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
+    'data_folder': 'SENTINEL-2',
+    'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
+    'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
+    'csplus_pattern_10m': 'CSPlus_*_10m.vrt',
+    'coreg_file_suffix': '_coreg'
+}
