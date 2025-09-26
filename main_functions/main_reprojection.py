@@ -328,7 +328,7 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
 
 def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
     """
-    Reproject all S2 tiles in UTM31N of a single date/orbit combination to UTM32N (EPSG:32632).
+    Reproject all S2 and CS+ tiles in UTM31N of a single date/orbit combination to UTM32N (EPSG:32632).
     
     Args:
         acquisition_date: Date string in the format yyyymmdd of the date of interest
@@ -340,7 +340,9 @@ def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
     
     data_folder = config.AROSICS_CONFIG['data_folder']
     noData_value = None # Assuring a return even if no reprojection was needed
-    for file_in in glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, 'T31*.jp2')):
+    s2_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.jp2'))
+    csplus_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.tif'))
+    for file_in in s2_tiles + csplus_tiles:
         info = main_utils.get_raster_info(file_in)
         file_out = file_in.replace('T31', 'T32')
         noData_value = reproject_to_UTM32N(file_in, file_out, resolution=[info['pixel_width'], info['pixel_height']])
