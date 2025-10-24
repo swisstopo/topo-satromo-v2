@@ -192,7 +192,7 @@ def create_sentinel2_cloud_mosaic(
     time_str = None
     
     # Find all cloud mask files for the orbit and date
-    cloud_files = list(glob.glob(os.path.join(data_dir, f"S2*_MSIL1C_{acquisition_date_str}*_R{orbit_nr:03d}_T32*.tif")))
+    cloud_files = list(glob.glob(os.path.join(data_dir, f"{config.AROSICS_CONFIG['cloudprob_tile_pattern']}_{acquisition_date_str}*_R{orbit_nr:03d}_T32*.tif")))
     
     if not cloud_files:
         error_msg = f"No cloud mask files found for orbit {orbit_nr} on date {acquisition_date_str}"
@@ -569,7 +569,7 @@ def equalize_all_extents(
                 logger.warning(f"No file found for {band} at {resolution}m")
     
     # Add csplus file
-    csplus_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['csplus_pattern_10m']}")
+    csplus_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['cloudprob_mosaic_pattern']}")
     csplus_matches = glob.glob(csplus_pattern)
     
     if csplus_matches:
