@@ -214,7 +214,7 @@ def coregister_S2(
     # Find multiband files
     multiband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['multiband_mosaic_pattern_10m'])
     singleband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['singleband_mosaic_pattern_10m'])
-    csplus_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['csplus_pattern_10m'])
+    csplus_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['cloudprob_mosaic_pattern'])
     
     # Find required files for coregistration
     mosaic_10m = glob.glob(singleband_mosaic_10m_pattern.replace('.vrt', '_clip.vrt'))
@@ -346,7 +346,7 @@ def coregister_S2(
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_20m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_20m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_60m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_60m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
         # Save coregistration info to pickle file
-        pickle_path = os.path.join(out_folder, out_name.replace(".tif", "_info.pkl"))
+        pickle_path = os.path.join(out_folder, out_name.replace('_clip', '').replace(".tif", "_info.pkl"))
         coreg_info_to_pickle(CRL.coreg_info, pickle_path) # Also correcting shifts
         logger.info(f"Saved coregistration info to {pickle_path}")
         
@@ -357,7 +357,7 @@ def coregister_S2(
             #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-mosaic_20250619T101559_B09_60m.vrt', pickle_path=pickle_path, path_out='/home/localadmin/Downloads/S2_Test/test_multi_60m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
             
             # Save tie points to shapefile
-            shapefile_path = os.path.join(out_folder, out_name.replace(".tif", ".shp"))
+            shapefile_path = os.path.join(out_folder, out_name.replace('_clip', '').replace(".tif", ".shp"))
             CRL.tiepoint_grid.to_PointShapefile(path_out=shapefile_path)
             logger.info(f"Saved tie points to {shapefile_path}")
             success = True
@@ -367,7 +367,7 @@ def coregister_S2(
         
         logger.info('=' * len(title_str))
         
-        return success
+        return success, pickle_path
         
     except Exception as e:
         logger.error(f"Coregistration failed: {str(e)}")
