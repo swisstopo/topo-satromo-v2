@@ -736,7 +736,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             except Exception as e:
                 print(f"Error updating metadata file {metadata_path}: {e}")
 
-    breakpoint()
+    #breakpoint()
 
 
     ##############################
@@ -762,10 +762,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
-        success = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         if success:
-            pickle_path = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B04_10m_coreg_info.pkl")[0]
             for file in glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B*_*m.vrt"):
                 main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=0)
         
