@@ -126,79 +126,6 @@ def resample_raster(
         raise
 
 
-def equalize_extents(
-    im_reference: Union[str, Path], 
-    im_target: Union[str, Path]
-) -> str:
-    """
-    Equalize the extents of two raster files.
-
-    Args:
-        im_reference: The path to the reference raster file.
-        im_target: The path to the target raster file.
-
-    Returns:
-        Path to the output raster file with equal extents.
-        
-    Raises:
-        RuntimeError: If equalization fails.
-    """
-    im_reference = main_utils.ensure_path(im_reference)
-    im_target = main_utils.ensure_path(im_target)
-    
-    # Define the output file name
-    outputFile = str(im_reference).replace('.tif', '_masked.tif')
-    main_utils.ensure_directory(Path(outputFile).parent)
-    
-    logger.info(f"Equalizing extents between reference and target images")
-    
-    try:
-        # Get the extent and dimensions of the target image
-        minx_target, maxx_target, miny_target, maxy_target, x_size_target, y_size_target = main_utils.get_extent_and_dimensions(im_target)
-        
-        # If the output file already exists
-        if os.path.exists(outputFile):
-            # Get the extent and dimensions of the reference image
-            minx_ref, maxx_ref, miny_ref, maxy_ref, x_size_ref, y_size_ref = main_utils.get_extent_and_dimensions(outputFile)
-            
-            # If all extents and dimensions are equal, there's nothing to do
-            if (minx_target == minx_ref and maxx_target == maxx_ref and 
-                miny_target == miny_ref and maxy_target == maxy_ref and 
-                x_size_target == x_size_ref and y_size_target == y_size_ref):
-                logger.info("Reference and target extents already match")
-                return outputFile
-
-        # If the extents are not equal, crop the reference image to the target image size
-        logger.info('Cropping reference image to target image size')
-        gsd_x, gsd_y = main_utils.get_pixel_spacing(im_target)
-        
-        command = [
-            "gdalwarp", 
-            "-overwrite", 
-            "-te", str(minx_target), str(miny_target), str(maxx_target), str(maxy_target), 
-            #"-tr", str(gsd_x), str(gsd_y),
-            #"-tap",
-            "-r", "near", 
-            "-co", "COMPRESS=DEFLATE", 
-            "-co", "PREDICTOR=2", 
-            "-co", "NUM_THREADS=ALL_CPUS",
-            "-co", "BIGTIFF=YES",
-            str(im_reference), 
-            outputFile
-        ]
-        
-        success, _, stderr = main_utils.run_gdal_command(command)
-        if not success:
-            logger.error(f"Failed to equalize extents: {stderr}")
-            raise RuntimeError(f"Failed to equalize extents: {stderr}")
-        
-        return outputFile
-    
-    except Exception as e:
-        logger.error(f"Error equalizing extents: {str(e)}")
-        raise
-
-
 def create_binary_cloud_mask(
     cloud_file: Union[str, Path],
     output_file: Union[str, Path],
@@ -226,17 +153,17 @@ def create_binary_cloud_mask(
     
     # Use gdal_calc to create binary mask
     command = [
-        "gdal_calc.py", 
-        "-A", str(cloud_file), 
-        "--overwrite", 
-        f"--outfile={output_file}", 
-        f"--calc=logical_and(A>={cloud_threshold}, A<=100)", 
-        "--type=Byte", 
-        "--NoDataValue=0", 
-        "--co", "COMPRESS=DEFLATE", 
-        "--co", "PREDICTOR=2", 
-        "--co", "NUM_THREADS=ALL_CPUS", 
-        "--quiet"
+        'gdal_calc.py', 
+        '-A', str(cloud_file), 
+        '--overwrite', 
+        f'--outfile={output_file}', 
+        f'--calc="A<={cloud_threshold}"', 
+        '--type=Byte', 
+        '--NoDataValue=None', 
+        '--co', 'COMPRESS=DEFLATE', 
+        '--co', 'PREDICTOR=2', 
+        '--co', 'NUM_THREADS=ALL_CPUS', 
+        '--quiet'
     ]
     
     success, _, stderr = main_utils.run_gdal_command(command)
@@ -290,9 +217,8 @@ def coregister_S2(
     csplus_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['csplus_pattern_10m'])
     
     # Find required files for coregistration
-    mosaic_10m = glob.glob(singleband_mosaic_10m_pattern)
-    csplus_10m = glob.glob(csplus_10m_pattern)
-
+    mosaic_10m = glob.glob(singleband_mosaic_10m_pattern.replace('.vrt', '_clip.vrt'))
+    csplus_10m = glob.glob(csplus_10m_pattern.replace('.vrt', '_clip.vrt'))
 
 
     # File availability checks
@@ -375,9 +301,6 @@ def coregister_S2(
     logger.info('-' * len(title_str))
     
     try:
-        # Equalize extents of reference and target images
-        im_reference_masked = equalize_extents(reference_path, mosaic_10m)
-        
         # Set number of CPU threads
         num_cpus = max(os.cpu_count() - 1, 1)
         print(num_cpus)
@@ -417,7 +340,7 @@ def coregister_S2(
         #kwargs['path_out'] = os.path.basename(mosaic_10m).replace('.tif', f'{config.AROSICS_CONFIG["coreg_file_suffix"]}.tif')
 
         del kwargs['s_b4match']
-        CRL = COREG_LOCAL(im_reference_masked, mosaic_10m, **kwargs)
+        CRL = COREG_LOCAL(config.AROSICS_CONFIG['reference_image'].replace(".tif", "_clip.vrt"), mosaic_10m, **kwargs)
         #test = CRL.correct_shifts()
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_10m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_10m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_20m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_20m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
@@ -437,12 +360,14 @@ def coregister_S2(
             shapefile_path = os.path.join(out_folder, out_name.replace(".tif", ".shp"))
             CRL.tiepoint_grid.to_PointShapefile(path_out=shapefile_path)
             logger.info(f"Saved tie points to {shapefile_path}")
+            success = True
         else:
             logger.warning("No valid GCPs found - area may be totally cloud covered")
+            success = False
         
         logger.info('=' * len(title_str))
         
-        return os.path.join(out_folder, out_name.replace(".tif", "_dx.tif"))
+        return success
         
     except Exception as e:
         logger.error(f"Coregistration failed: {str(e)}")
