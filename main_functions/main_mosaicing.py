@@ -192,7 +192,7 @@ def create_sentinel2_cloud_mosaic(
     time_str = None
     
     # Find all cloud mask files for the orbit and date
-    cloud_files = list(glob.glob(os.path.join(data_dir, f"S2A_MSIL1C_{acquisition_date_str}*_R{orbit_nr:03d}_T32*.tif")))
+    cloud_files = list(glob.glob(os.path.join(data_dir, f"S2*_MSIL1C_{acquisition_date_str}*_R{orbit_nr:03d}_T32*.tif")))
     
     if not cloud_files:
         error_msg = f"No cloud mask files found for orbit {orbit_nr} on date {acquisition_date_str}"
