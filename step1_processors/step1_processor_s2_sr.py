@@ -752,17 +752,23 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         orbit_nr = orbit_nrs[i]
 
         noData_value = main_reprojection.reproject_tiles_to_UTM32N(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-        result = main_mosaicing.create_sentinel2_multiband_by_config(
+        main_mosaicing.create_sentinel2_multiband_by_config(
             acquisition_date=acquisition_date,
             orbit_nr=orbit_nr,
             noData_value=noData_value
         )
-        main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
-        pickle_path = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B04_10m_coreg_info.pkl")[0]
-        for file in glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B*_*m.vrt"):
-            main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=0)
-            
+        main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+
+        main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+
+        success = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+
+        if success:
+            pickle_path = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B04_10m_coreg_info.pkl")[0]
+            for file in glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B*_*m.vrt"):
+                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=0)
+        
     ##############################
     # TODO Update METADATA json
 
