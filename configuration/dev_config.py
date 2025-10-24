@@ -160,7 +160,8 @@ STAC_FSDI_API = '/api/stac/v0.9/'
 
 AROSICS_CONFIG = {
     'cloud_threshold': 65,
-    'csplus_threshold': 0.6,
+    'csplus_threshold': 65,
+    'cloud_nodata': 255,
     'grid_res_multiplier': 5,
     'max_points': 5000,
     'window_size': [128, 128],
@@ -175,6 +176,7 @@ AROSICS_CONFIG = {
     'data_folder': 'SENTINEL-2',
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
     'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
-    'csplus_pattern_10m': 'CSPlus_*_10m.vrt',
+    'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
+    'csplus_pattern_10m': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg'
 }
