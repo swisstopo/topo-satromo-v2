@@ -16,6 +16,9 @@ from pathlib import Path
 import subprocess
 import logging
 import re
+import math
+import shutil
+
 
 logger = logging.getLogger(__name__)
 
@@ -893,3 +896,87 @@ def parse_date(date_str: str) -> datetime:
                 continue
         
         raise ValueError(f"Could not parse date: {date_str}")
+    
+
+def equalize_extents(
+    common_extent: Tuple[float, float, float, float],
+    im_target: Union[str, Path]
+) -> str:
+    """
+    Clip the target image to a common extent that is aligned to a grid.
+    The common extent should already be aligned to the coarsest GSD grid,
+    ensuring compatibility with all finer resolution images.
+    
+    Args:
+        common_extent: Tuple of (minx, miny, maxx, maxy) representing the common aligned extent.
+        im_target: The path to the target raster file (will be clipped).
+    
+    Returns:
+        Path to the clipped target as a VRT file.
+    
+    Raises:
+        RuntimeError: If clipping fails or the target doesn't overlap with the common extent.
+    """
+    im_target = ensure_path(im_target)
+    minx_common, miny_common, maxx_common, maxy_common = common_extent
+    
+    # Define output file name for target (same location, same name, but .vrt extension)
+    output_target = im_target.with_name(im_target.stem + "_clip.vrt")
+    
+    logger.info(f"Clipping target image to common extent: ({minx_common}, {miny_common}, {maxx_common}, {maxy_common})")
+    
+    try:
+        # Get extent of the target image
+        minx_target, maxx_target, miny_target, maxy_target, _, _ = get_extent_and_dimensions(im_target)
+        
+        # Get the target's GSD
+        gsd_x_target, gsd_y_target = get_pixel_spacing(im_target)
+        
+        # Check that target origin is aligned to multiples of its GSD
+        tolerance = 1e-6
+        if (abs(minx_target % gsd_x_target) > tolerance or 
+            abs(miny_target % gsd_y_target) > tolerance):
+            raise RuntimeError(f"Target image origin ({minx_target}, {miny_target}) is not aligned to multiples of its GSD ({gsd_x_target}, {gsd_y_target})")
+        
+        # Verify that common extent is aligned to target's GSD
+        # (This should always be true if common extent is aligned to coarsest GSD and target GSD divides into it)
+        if (abs(minx_common % gsd_x_target) > tolerance or 
+            abs(miny_common % gsd_y_target) > tolerance or
+            abs(maxx_common % gsd_x_target) > tolerance or
+            abs(maxy_common % gsd_y_target) > tolerance):
+            raise RuntimeError(
+                f"Common extent ({minx_common}, {miny_common}, {maxx_common}, {maxy_common}) "
+                f"is not aligned to target's GSD ({gsd_x_target}, {gsd_y_target}). "
+                f"This should not happen if common extent is aligned to coarsest GSD."
+            )
+        
+        # Check if there's overlap between target and common extent
+        if (minx_common >= maxx_target or maxx_common <= minx_target or
+            miny_common >= maxy_target or maxy_common <= miny_target):
+            raise RuntimeError(
+                f"Target image extent ({minx_target}, {miny_target}, {maxx_target}, {maxy_target}) "
+                f"does not overlap with common extent ({minx_common}, {miny_common}, {maxx_common}, {maxy_common})"
+            )
+        
+        # Crop the target image to the common extent
+        command_target = [
+            "gdalwarp",
+            "-overwrite",
+            "-of", "VRT",
+            "-te", str(minx_common), str(miny_common), str(maxx_common), str(maxy_common),
+            "-r", "near",
+            str(im_target),
+            str(output_target)
+        ]
+        
+        success, _, stderr = run_gdal_command(command_target)
+        if not success:
+            logger.error(f"Failed to crop target image: {stderr}")
+            raise RuntimeError(f"Failed to crop target image: {stderr}")
+        
+        logger.info(f"Successfully clipped {im_target.name} to common extent")
+        return str(output_target)
+        
+    except Exception as e:
+        logger.error(f"Error equalizing extents for {im_target}: {str(e)}")
+        raise
