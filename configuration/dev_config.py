@@ -177,6 +177,7 @@ AROSICS_CONFIG = {
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
     'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
     'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
-    'csplus_pattern_10m': 'S2-L1C-mosaic_*_cloud.vrt',
+    'cloudprob_tile_pattern': 'S2*_MSIL1C',
+    'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg'
 }
