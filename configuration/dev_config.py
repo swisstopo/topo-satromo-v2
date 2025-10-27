@@ -179,5 +179,7 @@ AROSICS_CONFIG = {
     'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
     'cloudprob_tile_pattern': 'S2*_MSIL1C',
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
-    'coreg_file_suffix': '_coreg'
+    'coreg_file_suffix': '_coreg',
+    'omnicloudmask_venv_path': '.venv/omnicloud_venv/bin/python3',
+    'omnicloudmask_script_path': 'main_functions/main_omnicloudmask.py',
 }
