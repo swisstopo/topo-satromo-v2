@@ -4,8 +4,17 @@ import rasterio
 from rasterio.crs import CRS
 from pathlib import Path
 from omnicloudmask import predict_from_array
+
+# Save original sys.argv before importing configuration
+original_argv = sys.argv.copy()
+
+# Temporarily clear sys.argv so configuration doesn't try to parse omnicloudmask args
+sys.argv = [sys.argv[0]]  # Keep only script name
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
+
+sys.argv = original_argv
 
 
 def get_band_resolution(band_name):
@@ -67,7 +76,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
     """
     # Normalize orbit number (ensure it starts with 'R')
     if not orbit_nr.startswith('R'):
-        orbit_nr = f"R{orbit_nr}"
+        orbit_nr = f"R{int(orbit_nr):03d}"
     
     # Normalize date (remove dashes if present)
     acquisition_date = acquisition_date.replace('-', '')
@@ -165,19 +174,18 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
     
     return pred_mask
 
-# Example usage:
 if __name__ == "__main__":
-    # Process single scene with memory-efficient settings
-    generate_cloud_mask_for_scene(
-        orbit_nr="R108",
-        acquisition_date="20250423",
-        output_dir="cloud_masks"
-    )
+    import argparse
     
-    # If still running out of memory, you can further reduce patch_size:
-    # generate_cloud_mask_for_scene(
-    #     orbit_nr="R108",
-    #     acquisition_date="20250423",
-    #     output_dir="cloud_masks",
-    #     patch_size=800,  # Smaller patches = less memory per batch
-    # )
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--orbit', '-o', required=True)
+    parser.add_argument('--date', '-d', type=str, required=True)
+    parser.add_argument('--output-dir', default='cloud_masks')
+    
+    args = parser.parse_args()
+    
+    generate_cloud_mask_for_scene(
+        orbit_nr=args.orbit,
+        acquisition_date=args.date,
+        output_dir=args.output_dir
+    )
