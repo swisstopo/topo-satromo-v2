@@ -1,3 +1,4 @@
+import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
@@ -757,6 +758,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             orbit_nr=orbit_nr,
             noData_value=noData_value
         )
+
+        # Creating cloud mask with omnicloudmask
+        result = subprocess.run([
+            config.AROSICS_CONFIG['omnicloudmask_venv_path'],
+            config.AROSICS_CONFIG['omnicloudmask_script_path'],
+            "--orbit", str(orbit_nr),
+            "--date", acquisition_date
+        ], check=True)
 
         main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
