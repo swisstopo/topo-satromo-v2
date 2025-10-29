@@ -760,12 +760,21 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         )
 
         # Creating cloud mask with omnicloudmask
-        result = subprocess.run([
+        # Build the argument list
+        cmd = [
             config.AROSICS_CONFIG['omnicloudmask_venv_path'],
             config.AROSICS_CONFIG['omnicloudmask_script_path'],
             "--orbit", str(orbit_nr),
-            "--date", acquisition_date
-        ], check=True)
+            "--date", acquisition_date,
+            "--output-dir", config.AROSICS_CONFIG['data_folder'],
+        ]
+
+        # Add --noDataValue only when noData_value is of type int as None cannot be passed to subprocess
+        if isinstance(noData_value, int):
+            cmd.extend(["--no-data-value", str(noData_value)])
+
+        # Run the command
+        result = subprocess.run(cmd, check=True)
 
         main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
@@ -773,10 +782,34 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
+
+
+        files_to_coregister = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_B*_*m.vrt")
+        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
+        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
+        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern'].replace('*', '*_omnicloud.tif')}")
+
         if success:
-            for file in glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/S2-L2A-mosaic_{acquisition_date}*_B*_*m.vrt"):
-                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=0)
-        
+            for file in files_to_coregister:
+                info = main_utils.get_raster_info(file)
+                nodata = info["bands"][0]["no_data_value"]  # First band's nodata
+                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif').replace('.tif','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=nodata)
+
+    ##############################
+    # Move results to intermediate_data folder
+    
+  
+    print(f"Working directory: {os.getcwd()}")
+    print(f"copernicus_collection value: {copernicus_collection}")
+    print(f"Absolute path: {os.path.abspath(copernicus_collection)}")
+    print(f"Source exists: {os.path.exists(copernicus_collection)}")
+    if os.path.exists(copernicus_collection):
+        print(f"Contents: {os.listdir(copernicus_collection)}")
+
+    shutil.move(copernicus_collection, "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/")
+
+    print(f"After move - source exists: {os.path.exists(copernicus_collection)}")
+
     ##############################
     # TODO Update METADATA json
 
