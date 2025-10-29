@@ -321,7 +321,7 @@ def coregister_S2(
             'mask_baddata_tgt': cloud_mask_path,
             'out_crea_options': output_options,
             # 'CPUs': num_cpus,
-            'CPUs': 40,
+            'CPUs': 32,
             'progress': True,
             'fmt_out': 'GTIFF',
             'r_b4match': reference_band,
