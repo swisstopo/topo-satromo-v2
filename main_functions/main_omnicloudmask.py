@@ -4,6 +4,8 @@ import rasterio
 from rasterio.crs import CRS
 from pathlib import Path
 from omnicloudmask import predict_from_array
+import re
+from datetime import datetime
 
 # Save original sys.argv before importing configuration
 original_argv = sys.argv.copy()
@@ -61,13 +63,14 @@ def find_band_file(scene_folder, acquisition_date, band_name):
         return matches[0]
     return None
 
-def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_masks", **kwargs):
+def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.AROSICS_CONFIG['data_folder'], noData_value=None, **kwargs):
     """
     Generate cloud mask for a specific scene from VRT mosaics
     
     Args:
         orbit_nr: Orbit number (e.g., 'R108' or '108')
         acquisition_date: Acquisition date (e.g., '20250423' or '2025-04-23')
+        noData_value: Value within input scenes that specifies no data region. Defaults to 0.
         output_dir: Directory to save cloud masks
         **kwargs: Additional arguments for predict_from_array (e.g., batch_size, inference_dtype)
     
@@ -113,6 +116,16 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
         band_files[band] = band_file
         print(f"  {band}: {band_file.name}")
     
+    # Extract the date-time for the mosaic filename
+    # Try to extract time from the first filename
+    match = re.search(r'(\d{4}\d{2}\d{2}T\d{6})', str(band_files['B04']))
+    if match:
+        time_str = match.group(1)
+    else:
+        # Use acquisition date with default time if no time found
+        date_obj = datetime.strptime(acquisition_date, "%Y%m%d")
+        time_str = date_obj.strftime("%Y-%m-%dT000000")
+
     # Read bands in order: Red, Green, NIR (as required by OmniCloudMask)
     with rasterio.open(band_files['B04']) as src:  # Red
         red = src.read(1)
@@ -135,6 +148,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
         'mosaic_device': 'cpu',  # Offload patch mosaicking to CPU to save GPU memory
         'patch_size': 1000,  # Default patch size
         'patch_overlap': 300,  # Default overlap
+        'no_data_value': noData_value
     }
     default_kwargs.update(kwargs)
     
@@ -152,7 +166,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
     output_scene_dir.mkdir(parents=True, exist_ok=True)
     
     # Output filename
-    output_path = output_scene_dir / f"cloud_mask_{orbit_nr}_{acquisition_date}.tif"
+    output_path = output_scene_dir / f"{config.AROSICS_CONFIG['singleband_mosaic_pattern'].replace('*', '')}{time_str}_omnicloud.tif"
     
     # Update profile for output with explicit EPSG:32632
     profile.update(
@@ -174,6 +188,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir="cloud_
     
     return pred_mask
 
+
 if __name__ == "__main__":
     import argparse
     
@@ -181,11 +196,18 @@ if __name__ == "__main__":
     parser.add_argument('--orbit', '-o', required=True)
     parser.add_argument('--date', '-d', type=str, required=True)
     parser.add_argument('--output-dir', default='cloud_masks')
+    parser.add_argument('--no-data-value', type=int)
     
     args = parser.parse_args()
+
+    if args.no_data_value in locals():
+        noData_value=args.no_data_value
+    else:
+        noData_value=None
     
     generate_cloud_mask_for_scene(
         orbit_nr=args.orbit,
         acquisition_date=args.date,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        noData_value=args.no_data_value
     )
