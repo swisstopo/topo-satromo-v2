@@ -523,7 +523,8 @@ def deshift_image(
             'fmt_out': 'GTIFF',
             'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
             'progress': True,
-            'out_gsd': (tgt_gsd_x, tgt_gsd_y)
+            'out_gsd': (tgt_gsd_x, tgt_gsd_y),
+            'resamp_alg': 'nearest',
         }
         
         # Update with defaults if not in kwargs
