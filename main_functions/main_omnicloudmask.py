@@ -63,7 +63,7 @@ def find_band_file(scene_folder, acquisition_date, band_name):
         return matches[0]
     return None
 
-def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.AROSICS_CONFIG['data_folder'], noData_value=None, **kwargs):
+def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.AROSICS_CONFIG['data_folder'], noData_value=0, **kwargs):
     """
     Generate cloud mask for a specific scene from VRT mosaics
     
@@ -148,13 +148,14 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.
         'mosaic_device': 'cpu',  # Offload patch mosaicking to CPU to save GPU memory
         'patch_size': 1000,  # Default patch size
         'patch_overlap': 300,  # Default overlap
-        'no_data_value': noData_value
+        'no_data_value': noData_value,
+        'apply_no_data_mask': True
     }
     default_kwargs.update(kwargs)
     
     # Generate cloud mask
     print("Generating cloud mask (this may take a while for large mosaics)...")
-    print(f"Settings: batch_size={default_kwargs['batch_size']}, mosaic_device={default_kwargs['mosaic_device']}")
+    print(f"Settings: noData={noData_value}, batch_size={default_kwargs['batch_size']}, mosaic_device={default_kwargs['mosaic_device']}")
     pred_mask = predict_from_array(input_array, **default_kwargs)
     
     # Squeeze to remove extra dimensions (from (1, 1, H, W) to (H, W))
@@ -196,18 +197,11 @@ if __name__ == "__main__":
     parser.add_argument('--orbit', '-o', required=True)
     parser.add_argument('--date', '-d', type=str, required=True)
     parser.add_argument('--output-dir', default='cloud_masks')
-    parser.add_argument('--no-data-value', type=int)
     
     args = parser.parse_args()
-
-    if args.no_data_value in locals():
-        noData_value=args.no_data_value
-    else:
-        noData_value=None
     
     generate_cloud_mask_for_scene(
         orbit_nr=args.orbit,
         acquisition_date=args.date,
         output_dir=args.output_dir,
-        noData_value=args.no_data_value
     )
