@@ -787,7 +787,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         files_to_coregister = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_B*_*m.vrt")
         files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
         files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
-        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern'].replace('*', '*_omnicloud.tif')}")
 
         if success:
             for file in files_to_coregister:
