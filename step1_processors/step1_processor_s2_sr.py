@@ -769,10 +769,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             "--output-dir", config.AROSICS_CONFIG['data_folder'],
         ]
 
-        # Add --noDataValue only when noData_value is of type int as None cannot be passed to subprocess
-        if isinstance(noData_value, int):
-            cmd.extend(["--no-data-value", str(noData_value)])
-
         # Run the command
         result = subprocess.run(cmd, check=True)
 
