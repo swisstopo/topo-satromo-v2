@@ -798,17 +798,18 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # Move results to intermediate_data folder
     
-  
-    print(f"Working directory: {os.getcwd()}")
-    print(f"copernicus_collection value: {copernicus_collection}")
-    print(f"Absolute path: {os.path.abspath(copernicus_collection)}")
-    print(f"Source exists: {os.path.exists(copernicus_collection)}")
-    if os.path.exists(copernicus_collection):
-        print(f"Contents: {os.listdir(copernicus_collection)}")
+    # shutil.move is FUBAR in case of nested folders with the same name
+    # shutil.move(copernicus_collection, "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/")
 
-    shutil.move(copernicus_collection, "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/")
+    source = copernicus_collection  # "SENTINEL-2"
+    dest = "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/SENTINEL-2"
 
-    print(f"After move - source exists: {os.path.exists(copernicus_collection)}")
+    subprocess.run([
+        'rsync', '-a', '--remove-source-files',
+        f'{source}/', 
+        f'{dest}/'
+    ], check=True)
+    subprocess.run(['find', source, '-type', 'd', '-empty', '-delete'], check=True)
 
     ##############################
     # TODO Update METADATA json
