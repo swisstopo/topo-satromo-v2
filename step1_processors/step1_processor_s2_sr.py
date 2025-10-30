@@ -784,7 +784,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
 
-        files_to_coregister = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_B*_*m.vrt")
+        files_to_coregister = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_*_*m.vrt")
         files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
         files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
 
@@ -792,7 +792,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             for file in files_to_coregister:
                 info = main_utils.get_raster_info(file)
                 nodata = info["bands"][0]["no_data_value"]  # First band's nodata
-                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.vrt','_coreg.tif').replace('.tif','_coreg.tif')), fmt_out='GTIFF', CPUs=64, nodata=nodata)
+                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.tif','_coreg.tif')).replace('.vrt','_coreg.tif'), fmt_out='GTIFF', CPUs=64, nodata=nodata)
 
     ##############################
     # Move results to intermediate_data folder
