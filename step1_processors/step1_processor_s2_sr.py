@@ -801,15 +801,25 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # shutil.move is FUBAR in case of nested folders with the same name
     # shutil.move(copernicus_collection, "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/")
 
-    source = copernicus_collection  # "SENTINEL-2"
+    source = copernicus_collection
     dest = "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/SENTINEL-2"
 
-    subprocess.run([
-        'rsync', '-a', '--remove-source-files',
-        f'{source}/', 
-        f'{dest}/'
-    ], check=True)
-    subprocess.run(['find', source, '-type', 'd', '-empty', '-delete'], check=True)
+    os.makedirs(dest, exist_ok=True)
+
+    for item in os.listdir(source):
+        src_path = os.path.join(source, item)
+        dst_path = os.path.join(dest, item)
+        
+        if os.path.exists(dst_path):
+            if os.path.isdir(src_path):
+                shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+                shutil.rmtree(src_path)
+            else:
+                os.replace(src_path, dst_path)
+        else:
+            shutil.move(src_path, dst_path)
+
+    os.rmdir(source)
 
     ##############################
     # TODO Update METADATA json
