@@ -532,10 +532,10 @@ def deshift_image(
         if 'path_out' in kwargs:
             main_utils.ensure_directory(Path(kwargs['path_out']).parent)
             
-        # Default parameters if not specified
+        # Default parameters if not specified based on https://github.com/geostandards-ch/cog-best-practices#lossless-raster
         default_params = {
-            'fmt_out': 'GTIFF',
-            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
+            'fmt_out': 'COG',
+            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES', 'STATISTICS=YES'],
             'progress': True,
             'out_gsd': (tgt_gsd_x, tgt_gsd_y),
             'resamp_alg': 'nearest',
@@ -617,10 +617,10 @@ def deshift_files(
             suffix = f"{band_name}_{gsd}m"
         else:
             # Fallback for files without band info (like cloud masks or omnicloud)
-            if '_cloud_' in os.path.basename(file):
+            if '_cloud_' in os.path.basename(file): # CS+
                 band_name = 'cloudmask'
                 suffix = f"{band_name}"
-            elif '_omnicloud_' in os.path.basename(file):
+            elif '_omnicloud_' in os.path.basename(file): #Omnicloud
                 band_name = 'omnicloudmask'
                 suffix = f"{band_name}"
             else:
