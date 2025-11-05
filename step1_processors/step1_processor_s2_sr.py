@@ -773,23 +773,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         result = subprocess.run(cmd, check=True)
 
         main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-
         success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
-
-
-        files_to_coregister = glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_*_*m_clip.vrt")
-        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date}*_omnicloud_clip.vrt")
-        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
-        files_to_coregister = files_to_coregister + glob.glob(f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
-
         if success:
-            for file in files_to_coregister:
-                info = main_utils.get_raster_info(file)
-                nodata = info["bands"][0]["no_data_value"]  # First band's nodata
-                main_coregistration.deshift_image(im_target=file, pickle_path=pickle_path, path_out=os.path.join(os.path.dirname(file),os.path.basename(file).replace('.tif','_coreg.tif')).replace('.vrt','_coreg.tif'), fmt_out='GTIFF', CPUs=64, nodata=nodata)
+            main_coregistration.deshift_files(
+                acquisition_date=acquisition_date,
+                orbit_nr=orbit_nr,
+                pickle_path=pickle_path,
+                fmt_out='GTIFF',
+                CPUs=64
+            )
 
     ##############################
     # Move results to intermediate_data folder
