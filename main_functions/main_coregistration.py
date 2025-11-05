@@ -621,7 +621,7 @@ def deshift_files(
                 band_name = 'cloudmask'
             elif '_omnicloud_' in os.path.basename(file):
                 band_name = 'omnicloudmask'
-            suffix = f"_{band_name}"
+            suffix = f"{band_name}"
         
         # Build output path at topmost level
         output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{suffix}.tif"
