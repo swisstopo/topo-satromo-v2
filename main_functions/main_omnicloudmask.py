@@ -118,15 +118,13 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.
     
     # Extract the date-time for the mosaic filename
     # Try to extract time from the first filename
-    match = re.search(r'(\d{8}T\d{6})', str(band_files['B04']))
+    match = re.search(r'(\d{4}\d{2}\d{2}T\d{6})', str(band_files['B04']))
     if match:
-        datetime_obj = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S")
+        time_str = match.group(1)
     else:
         # Use acquisition date with default time if no time found
-        datetime_obj = datetime.strptime(acquisition_date, "%Y%m%d")
-
-    # Format for output filename
-    formatted_time = datetime_obj.strftime("%Y-%m-%dt%H%M%S")
+        date_obj = datetime.strptime(acquisition_date, "%Y%m%d")
+        time_str = date_obj.strftime("%Y-%m-%dT000000")
 
     # Read bands in order: Red, Green, NIR (as required by OmniCloudMask)
     with rasterio.open(band_files['B04']) as src:  # Red
@@ -163,13 +161,13 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.
     # Squeeze to remove extra dimensions (from (1, 1, H, W) to (H, W))
     pred_mask = pred_mask.squeeze()
     
-    # Create output directory at the topmost level (no subfolders)
-    script_dir = Path(__file__).parent  # main_functions folder
-    topmost_dir = script_dir.parent      # parent of main_functions
-    topmost_dir.mkdir(parents=True, exist_ok=True)
-
-    # Output filename directly in topmost directory
-    output_path = topmost_dir / f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_cloudmask_10m.tif"
+    # Create output directory structure
+    output_dir = Path(output_dir)
+    output_scene_dir = output_dir / orbit_nr / acquisition_date
+    output_scene_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Output filename
+    output_path = output_scene_dir / f"{config.AROSICS_CONFIG['singleband_mosaic_pattern'].replace('*', '')}{time_str}_omnicloud.tif"
     
     # Update profile for output with explicit EPSG:32632
     profile.update(
