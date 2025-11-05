@@ -614,13 +614,17 @@ def deshift_files(
         if match:
             band_name = match.group(1).lower()
             gsd = match.group(2)
+            suffix = f"_{band_name}_{gsd}m"
         else:
             # Fallback for files without band info (like cloud masks or omnicloud)
-            band_name = 'cloudmask'
-            gsd = '10'
+            if '_cloud_' in os.path.basename(file):
+                band_name = 'cloudmask'
+            elif '_omnicloud_' in os.path.basename(file):
+                band_name = 'omnicloudmask'
+            suffix = f"_{band_name}"
         
         # Build output path at topmost level
-        output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{band_name}_{gsd}m.tif"
+        output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{suffix}.tif"
         output_path = topmost_dir / output_filename
         
         # Deshift the image
