@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
+import re
 
 import numpy as np
 from arosics import COREG_LOCAL, DeShifter
@@ -199,7 +200,7 @@ def coregister_S2(
         acquisition_date_str = acquisition_date.strftime("%Y%m%d")
     else:
         acquisition_date_str = str(acquisition_date)
-    
+  
     # Get cloud threshold from config if not provided
     if cloud_threshold is None:
         cloud_threshold = config.AROSICS_CONFIG['csplus_threshold']
@@ -239,6 +240,18 @@ def coregister_S2(
         csplus_10m = csplus_10m[0]
     except: # Remove once CS+ is implemented
         pass # Remove once CS+ is implemented
+
+    # Extract the date-time for the mosaic filename
+    # Try to extract time from the first filename
+    match = re.search(r'(\d{8}T\d{6})', str(mosaic_10m))
+    if match:
+        date_obj = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S")
+    else:
+        # Use acquisition date with default time if no time found
+        date_obj = datetime.strptime(acquisition_date_str, "%Y%m%d")
+
+    # Format for output filename
+    formatted_time = date_obj.strftime("%Y-%m-%dt%H%M%S")
     
     logger.info(f"Using multiband mosaic file: {os.path.basename(mosaic_10m)}")
     if csplus_10m:
@@ -260,9 +273,11 @@ def coregister_S2(
     grid_res = round((((x_size * y_size) / max_points) ** .5) / 5) * 5
     
     # Set output file names and folder
-    out_name = os.path.basename(mosaic_10m).replace('.vrt', f'{config.AROSICS_CONFIG["coreg_file_suffix"]}.tif')
-    # out_folder = os.path.join(data_dir, f'TiePoint_GridRes_{grid_res}x{grid_res}px_PerfTest_SI-SPOT-agroscope')
-    out_folder = data_dir
+    out_name = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_registration.pickle"
+    
+    # Output to topmost level (parent of main_functions)
+    script_dir = Path(__file__).parent  # main_functions folder
+    out_folder = script_dir.parent       # parent of main_functions
     out_folder = main_utils.ensure_directory(out_folder)
     
     # Check if output files already exist
@@ -303,7 +318,6 @@ def coregister_S2(
     try:
         # Set number of CPU threads
         num_cpus = max(os.cpu_count() - 1, 1)
-        print(num_cpus)
         
         # Define coregistration arguments from config
         window_size = config.AROSICS_CONFIG['window_size']
@@ -346,7 +360,7 @@ def coregister_S2(
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_20m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_20m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
         #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-multiband_20250619T101559_60m.vrt', coreg_info=CRL.coreg_info, path_out='/home/localadmin/Downloads/S2_Test/test_multi_60m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
         # Save coregistration info to pickle file
-        pickle_path = os.path.join(out_folder, out_name.replace('_clip', '').replace(".tif", "_info.pkl"))
+        pickle_path = os.path.join(out_folder, out_name)
         coreg_info_to_pickle(CRL.coreg_info, pickle_path) # Also correcting shifts
         logger.info(f"Saved coregistration info to {pickle_path}")
         
@@ -357,9 +371,9 @@ def coregister_S2(
             #deshift_image(im_target='/home/localadmin/Downloads/S2_Test/R065/20250619/S2-L2A-mosaic_20250619T101559_B09_60m.vrt', pickle_path=pickle_path, path_out='/home/localadmin/Downloads/S2_Test/test_multi_60m.tif', fmt_out='GTIFF', CPUs=64, nodata=0)
             
             # Save tie points to shapefile
-            shapefile_path = os.path.join(out_folder, out_name.replace('_clip', '').replace(".tif", ".shp"))
-            CRL.tiepoint_grid.to_PointShapefile(path_out=shapefile_path)
-            logger.info(f"Saved tie points to {shapefile_path}")
+            #shapefile_path = os.path.join(out_folder, out_name.replace('_clip', '').replace(".tif", ".shp"))
+            #CRL.tiepoint_grid.to_PointShapefile(path_out=shapefile_path)
+            #logger.info(f"Saved tie points to {shapefile_path}")
             success = True
         else:
             logger.warning("No valid GCPs found - area may be totally cloud covered")
@@ -539,6 +553,89 @@ def deshift_image(
     except Exception as e:
         logger.error(f"Error deshifting image: {str(e)}")
         raise
+
+
+def deshift_files(
+    acquisition_date: Union[str, datetime],
+    orbit_nr: int,
+    pickle_path: Union[str, Path],
+    **kwargs
+) -> List[str]:
+    """
+    Deshift all files for a given acquisition using coregistration info.
+    
+    Args:
+        acquisition_date: Acquisition date as string (YYYYMMDD) or datetime object.
+        orbit_nr: Relative orbit number.
+        pickle_path: Path to the pickle file containing coregistration info.
+        **kwargs: Additional arguments for deshift_image (e.g., CPUs, fmt_out).
+        
+    Returns:
+        List of output file paths.
+    """
+    # Convert acquisition_date to string if it's a datetime
+    if isinstance(acquisition_date, datetime):
+        acquisition_date_str = acquisition_date.strftime("%Y%m%d")
+    else:
+        acquisition_date_str = str(acquisition_date)
+    
+    # Find all files to deshift
+    base_path = f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date_str}"
+    
+    files_to_deshift = []
+    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_*_*m_clip.vrt")
+    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_omnicloud_clip.vrt")
+    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
+    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
+    
+    # Extract datetime from pickle filename
+    pickle_basename = os.path.basename(pickle_path)
+    datetime_match = re.search(r'(\d{4}-\d{2}-\d{2}t\d{6})', pickle_basename)
+    if not datetime_match:
+        raise ValueError(f"Could not extract datetime from pickle filename: {pickle_basename}")
+    formatted_time = datetime_match.group(1)
+    
+    # Get topmost directory for output
+    script_dir = Path(__file__).parent  # main_functions folder
+    topmost_dir = script_dir.parent      # parent of main_functions
+    
+    output_paths = []
+    
+    for file in files_to_deshift:
+        logger.info(f"Processing: {os.path.basename(file)}")
+        
+        # Get nodata value
+        info = main_utils.get_raster_info(file)
+        nodata = info["bands"][0]["no_data_value"]
+        
+        # Extract band name and GSD from filename
+        # Pattern matches any band name (B02, B8A, AOT, SCL, TCI, etc.) followed by resolution
+        match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(file))
+        if match:
+            band_name = match.group(1).lower()
+            gsd = match.group(2)
+        else:
+            # Fallback for files without band info (like cloud masks or omnicloud)
+            band_name = 'cloudmask'
+            gsd = '10'
+        
+        # Build output path at topmost level
+        output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{band_name}_{gsd}m.tif"
+        output_path = topmost_dir / output_filename
+        
+        # Deshift the image
+        deshift_image(
+            im_target=file,
+            pickle_path=pickle_path,
+            path_out=str(output_path),
+            nodata=nodata,
+            **kwargs
+        )
+        
+        output_paths.append(str(output_path))
+    
+    logger.info(f"Deshifted {len(output_paths)} files")
+    return output_paths
 
 
 def main():
