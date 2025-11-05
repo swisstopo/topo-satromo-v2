@@ -614,15 +614,19 @@ def deshift_files(
         if match:
             band_name = match.group(1).lower()
             gsd = match.group(2)
-            suffix = f"_{band_name}_{gsd}m"
+            suffix = f"{band_name}_{gsd}m"
         else:
             # Fallback for files without band info (like cloud masks or omnicloud)
             if '_cloud_' in os.path.basename(file):
                 band_name = 'cloudmask'
+                suffix = f"{band_name}"
             elif '_omnicloud_' in os.path.basename(file):
                 band_name = 'omnicloudmask'
-            suffix = f"{band_name}"
-        
+                suffix = f"{band_name}"
+            else:
+                logger.info(f"Unknown file in list for deshifting: {os.path.basename(file)}. Skipping.")
+                continue
+
         # Build output path at topmost level
         output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{suffix}.tif"
         output_path = topmost_dir / output_filename
