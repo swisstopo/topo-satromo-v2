@@ -173,3 +173,6 @@ rclone/
 # Downloaded assets (e.g. S2 tiles)
 temp/
 SENTINEL-2/
+
+# Miscellaneous
+CloudMaskComparison/
