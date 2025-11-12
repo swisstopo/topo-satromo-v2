@@ -125,7 +125,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             Exception: For other errors such as file reading or JSON parsing issues.
         """
         # STAC Access point
-        search_url = "https://catalogue.dataspace.copernicus.eu/stac/search"
+        search_url = "https://stac.dataspace.copernicus.eu/v1/search"
 
         with open(aoi, 'r') as f:
             geojson_data = json.load(f)
@@ -787,7 +787,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     ##############################
     # Move results to intermediate_data folder
-    
+
     # shutil.move is FUBAR in case of nested folders with the same name
     # shutil.move(copernicus_collection, "/mnt/c/Users/Localadmin/Documents/SATROMO/intermediate_data/")
 
@@ -799,7 +799,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     for item in os.listdir(source):
         src_path = os.path.join(source, item)
         dst_path = os.path.join(dest, item)
-        
+
         if os.path.exists(dst_path):
             if os.path.isdir(src_path):
                 shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
