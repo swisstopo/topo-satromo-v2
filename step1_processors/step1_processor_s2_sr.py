@@ -125,8 +125,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             Exception: For other errors such as file reading or JSON parsing issues.
         """
         # STAC Access point
-        search_url = "https://catalogue.dataspace.copernicus.eu/stac/search" #old endpoint
-        #search_url = "https://stac.dataspace.copernicus.eu/v1/search"
+        search_url = "https://stac.dataspace.copernicus.eu/v1/search"
 
         with open(aoi, 'r') as f:
             geojson_data = json.load(f)
@@ -134,23 +133,40 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         # Build the query body for SENTINEL2 filter for switzerland and LEVEL2A
-        # Calculate bounding box from your polygon
-        coords = geometry['coordinates'][0]
-        lons = [coord[0] for coord in coords]
-        lats = [coord[1] for coord in coords]
-
-        bbox = [min(lons), min(lats), max(lons), max(lats)]
-
         query_body = {
-            "collections": [copernicus_collection],
-            "bbox": bbox,  # Use bbox instead of intersects
-            "datetime": f"{date}T00:00:00Z/{date}T23:59:59Z",
+            "filter-lang": "cql2-json",
+            "filter": {
+                "op": "and",
+                "args": [
+                    {
+                        "op": "=",
+                        "args": [
+                            {"property": "collection"},
+                            copernicus_collection
+                        ]
+                    },
+                    {
+                        "op": "s_intersects",
+                        "args": [
+                            {"property": "geometry"},
+                            geometry
+                        ]
+                    },
+                    {
+                        "op": "t_intersects",
+                        "args": [
+                            {"property": "datetime"},
+                            {
+                                "interval": [
+                                    f"{date}T00:00:00Z",
+                                    f"{date}T23:59:59Z"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
             "limit": 1000
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Python/requests"
         }
 
         #print("Sending POST request to STAC API...")
@@ -726,8 +742,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     ##############################
     # TODO TERRAINSHADOWMASK
-
-    breakpoint()
 
     ##############################
     # TODO COREGISTRATION AROSICS
