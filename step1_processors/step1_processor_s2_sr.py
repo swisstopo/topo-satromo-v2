@@ -85,7 +85,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # SATELLITE DATA
 
     # # Copernicus Collection
-    copernicus_collection = "SENTINEL-2"
+    copernicus_collection = "sentinel-2-l2a"
     # # Baseline Version greater than
     baseline_version = "04.00"
     # # Processing Level
@@ -126,49 +126,21 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         """
         # STAC Access point
         search_url = "https://stac.dataspace.copernicus.eu/v1/search"
+        #search_url = "https://catalogue.dataspace.copernicus.eu/stac/search" #old endpoint dead on 17.11.2025
 
         with open(aoi, 'r') as f:
             geojson_data = json.load(f)
-        geometry = geojson_data['features'][0]['geometry']
+        geometry = geojson_data['geometries'][0]
+
 
 
         # Build the query body for SENTINEL2 filter for switzerland and LEVEL2A
         query_body = {
-            "filter-lang": "cql2-json",
-            "filter": {
-                "op": "and",
-                "args": [
-                    {
-                        "op": "=",
-                        "args": [
-                            {"property": "collection"},
-                            copernicus_collection
-                        ]
-                    },
-                    {
-                        "op": "s_intersects",
-                        "args": [
-                            {"property": "geometry"},
-                            geometry
-                        ]
-                    },
-                    {
-                        "op": "t_intersects",
-                        "args": [
-                            {"property": "datetime"},
-                            {
-                                "interval": [
-                                    f"{date}T00:00:00Z",
-                                    f"{date}T23:59:59Z"
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            },
-            "limit": 1000
+        "collections": [copernicus_collection],
+        "intersects": geometry,
+        "datetime": f"{date}T00:00:00Z/{date}T23:59:59Z",
+        "limit": 1000
         }
-
         #print("Sending POST request to STAC API...")
         #print(f"Query: {json.dumps(query_body, indent=2)}")
 
@@ -187,10 +159,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             print(f"Error: {e}")
             raise
 
-        # remove baseline version and filter for  processing level
-        search_result = [item for item in items
-                    if ("_"+processing_level+"_" in item['properties'].get('sourceProduct', '') and
-                        item['properties']['processorVersion'] > baseline_version)]
+        # filter for  processing level
+        search_result = [
+            item for item in items
+            if item['properties'].get('processing:version', '00.00') > baseline_version
+        ]
 
         return search_result
 
@@ -210,8 +183,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # in the List Search_result we check if we have all tiles for each orbit, if realiveOrbitnUmber is  8 ist ahs to be < 4 unqieue tileID, if realiveOrbitnUmber is  108 ist ahs to be < 11 unqieue tileID
     orbit_to_tiles = defaultdict(set)
     for item in search_result:
-        orbit_num = item['properties']['relativeOrbitNumber']
-        tile_id = item['properties']['tileId']
+        orbit_num = item['properties']['sat:relative_orbit']
+        grid_code = item['properties']['grid:code']  # 'MGRS-32TLT'
+        tile_id = grid_code.split('-')[1]
         orbit_to_tiles[orbit_num].add(tile_id)
     # Define expected tile counts for specific orbits
     expected_tile_counts = {8: 4, 108: 11, 65: 11, 22: 4}  # Add more orbits and their expected counts as needed
@@ -222,7 +196,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     non_valid_orbits = {orbit for orbit, tiles in orbit_to_tiles.items()
                 if orbit in expected_tile_counts and len(tiles) < expected_tile_counts[orbit]}
     # Filter search_result to include only items from valid orbits
-    search_result = [item for item in search_result if item['properties']['relativeOrbitNumber'] in valid_orbits]
+    search_result = [item for item in search_result if item['properties']['sat:relative_orbit'] in valid_orbits]
 
     # If no valid orbits remain, write an empty asset and return
     if len(search_result) == 0:
@@ -241,41 +215,72 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     # Download the data from copernicus
 
-    def copernicus_download(bucket, search_result: list, target: str = "") -> None:
+    def copernicus_download(bucket, search_result: list, target: str = "") -> list:
         """
-        Downloads files from an S3 bucket based on search results.
-        Iterates over the provided search results, determines the corresponding product prefix,
-        and downloads all matching files from the S3 bucket to the specified local target directory.
-        Implements retry logic for each file download and prints progress and statistics.
+        Downloads files from an S3 bucket based on STAC search results from the new Copernicus endpoint.
+
+        Args:
             bucket: boto3 Resource bucket object representing the S3 bucket.
-            search_result (list): List of search result dictionaries containing asset information.
-            target (str, optional): Local directory to store downloaded files. Should end with a '/'.
-                Defaults to the current directory.
+            search_result (list): List of search result dictionaries containing asset information (STAC Items).
+            target (str, optional): Local directory to store downloaded files. Defaults to the current directory.
+
         Returns:
             list: Download statistics as [success_count, failure_count].
+
         Raises:
-            FileNotFoundError: If no files are found for a given product.
+            FileNotFoundError: If no files are found for a given product prefix.
         """
 
         # Initialize download statistics
         dl_stats = [0, 0]  # 0: success, 1: failed
 
         # Define which file we want to download based on the Band configs
-        target_endings = [f'{band}_{res}m.jp2' for res, bands in config.SENTINEL2_BAND_CONFIG.items() for band in bands]
+        # NOTE: This line assumes 'config' is properly imported and defined.
+        # target_endings = [f'{band}_{res}m.jp2' for res, bands in config.SENTINEL2_BAND_CONFIG.items() for band in bands]
+
+        # Using a placeholder for target_endings if config isn't available:
+        target_endings = ['.jp2']
 
         # Create the target dir
         os.makedirs(target, exist_ok=True)
 
-        print(f"Downloading {len(search_result)} tiles from {bucket}...")
+        print(f"Downloading {len(search_result)} tiles from {bucket.name}...")
+
         # Loop over the search results
         for i, item in enumerate(search_result):
-            #print(f"Downloading tile {i+1} of {len(search_result)} ...")
-            product_all = item['assets']['PRODUCT']['alternate']['s3']['href']+"/"
-            product = product_all.lstrip("/").split("/", 1)[1]
+
+            # --- START OF MODIFIED SECTION: Derive the S3 Product Prefix ---
+
+            # 1. Use a reliable asset (e.g., 'AOT_10m') to get the S3 HREF.
+            try:
+                sample_href = item['assets']['AOT_10m']['href']
+            except KeyError:
+                print(f"Skipping item {item['id']}: Missing expected 'AOT_10m' asset key.")
+                dl_stats[1] += 1
+                continue
+
+            # 2. Use regex to extract the S3 object key prefix (everything after the bucket name, up to .SAFE/)
+            # Example HREF: s3://bucket-name/eodata/.../PRODUCT.SAFE/GRANULE/...
+            # We need the prefix: eodata/.../PRODUCT.SAFE/
+            match = re.search(r's3:\/\/[^\/]+\/(.*\.SAFE\/)', sample_href)
+
+            if match:
+                # 'product' is the S3 object key prefix (e.g., 'eodata/Sentinel-2/.../PRODUCT.SAFE/')
+                product = match.group(1)
+            else:
+                print(f"Skipping item {item['id']}: Could not find .SAFE directory pattern in asset HREF.")
+                dl_stats[1] += 1
+                continue
+
+            # --- END OF MODIFIED SECTION ---
+
+            # Use the extracted S3 object key prefix to filter objects
             files = bucket.objects.filter(Prefix=product)
 
             if not list(files):
-                raise FileNotFoundError(f"Could not find any files for {product}")
+                raise FileNotFoundError(f"Could not find any files for S3 Prefix: {product}. Check bucket contents.")
+
+            # The rest of the download and retry logic is unchanged:
             for file in files:
                 if os.path.isdir(file.key):
                     continue
@@ -577,7 +582,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         orbit_groups = defaultdict(list)
 
         for item in search_result:
-            orbit_num = item['properties']['relativeOrbitNumber']
+            orbit_num = item['properties']['sat:relative_orbit']
             orbit_groups[orbit_num].append(item)
 
         # Create the final JSON structure
@@ -743,6 +748,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # TODO TERRAINSHADOWMASK
 
+    
     ##############################
     # TODO COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')

@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2025-04-23"
+        current_date_str = "2025-06-02"
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print("*****************************")
@@ -60,10 +60,12 @@ if __name__ == "__main__":
     collections_ready_for_processors = step0_main(
         step0_product_dict, current_date_str)
     # Print the list of collections that are ready for processing
+
     print(collections_ready_for_processors)
 
     for collection_ready in collections_ready_for_processors:
         print('Collection ready: {}'.format(collection_ready))
+
         for product_to_be_processed in step0_product_dict[collection_ready][0]:
             print('Launching product {}'.format(product_to_be_processed))
 
