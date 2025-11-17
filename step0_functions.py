@@ -31,7 +31,7 @@ def write_file(input_dict, output_file):
 
 def step0_main(step0_product_dict, current_date_str):
     collections_ready = list()
-    
+
     # Determine which collections are ready for processing
     # We check every step0 collection independently
     # The collection is ready if all assets are present for the interval [date-temporal_coverage; date]
@@ -49,7 +49,6 @@ def step0_main(step0_product_dict, current_date_str):
 def step0_check_collection(collection, temporal_coverage, current_date_str):
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
-
     # Check if the collection is stored on S3
     if collection.startswith("s3://"):
         # Parse the S3 bucket and prefix from the collection path
@@ -59,14 +58,20 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
 
         # initialized S3
         main_utils.initialize_gee()
-        # List all objects in the S3 bucket with the specific prefix
-        response = main_utils.s3.list_objects_v2(
-            Bucket=bucket_name,
-            Prefix=prefix
-        )
 
-        # Extract the list of assets
-        assets = [obj['Key'] for obj in response.get('Contents', []) if target_date.strftime('%Y%m%dT') in obj['Key'] and obj['Key'].endswith('.tif')]
+        # Use paginator to handle more than 1000 objects
+        paginator = main_utils.s3.get_paginator('list_objects_v2')
+        date_str = target_date.strftime('%Y%m%dT')
+
+        # Paginate through all results and filter
+        assets = []
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+            if 'Contents' in page:
+                assets.extend([
+                    obj['Key']
+                    for obj in page['Contents']
+                    if date_str in obj['Key'] and obj['Key'].endswith('.tif')
+                ])
 
     else:
         # Original Google Earth Engine list
@@ -75,13 +80,13 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
 
     # asset_cleaning
     if 'cleaning_older_than' in config.step0[collection]:
-        target_date = target_date + \
+        cleaning_target_date = target_date + \
             timedelta(
                 days=-1 * config.step0[collection]['cleaning_older_than'])
         for asset in assets:
             date = asset['properties']['date']
             date_as_datetime = datetime.strptime(date, '%Y-%m-%d')
-            if date_as_datetime < target_date:
+            if date_as_datetime < cleaning_target_date:
                 print('remove asset {}'.format(date))
                 print(
                     'XXX Actual asset deletion is not activated. Uncomment the code to do so XXXX')

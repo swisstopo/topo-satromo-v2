@@ -742,13 +742,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             except Exception as e:
                 print(f"Error updating metadata file {metadata_path}: {e}")
 
-   
+
 
 
     ##############################
     # TODO TERRAINSHADOWMASK
 
-    breakpoint()
+    
     ##############################
     # TODO COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
