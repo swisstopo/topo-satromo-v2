@@ -12,6 +12,7 @@ from pathlib import Path
 import glob
 import shutil
 import re
+import rasterio
 
 from step0_processors.step0_utils import write_asset_as_empty
 
@@ -748,7 +749,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # TODO TERRAINSHADOWMASK
 
-    
+    breakpoint()
     ##############################
     # TODO COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
@@ -818,16 +819,218 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     os.rmdir(source)
 
     ##############################
-    # TODO Update METADATA json
+    # TODO Upload pickle to S3
+
+    ##############################
+    # TODO Update METADATA json with
+    # - coregistration status
+    # - cloudshadow percentage
+
+    ##############################
+    # TODO Clip Data to Switzerland and Reproeject to CH1903LV95
+
+
+
+    def clip_resample_to_cog(
+        input_tif,
+        clipfile,
+        nodata_value=None,
+        epsg=2056,
+        lossy=False,
+        quality=85,
+        oversample_factor=5
+        ):
+        """
+        Clips, resamples and converts raster to COG format using multi-step oversampling.
+        Process: 5x oversample (nearest) -> bilinear reproject -> 5x downsample (bilinear)
+        As decided on 02.04.2025 with AGROSCOPE team.
+        Uses only ONE temporary file to minimize disk usage.
+
+        Resolution and datatype are automatically detected from input file.
+
+        Args:
+            input_tif: Path to input raster (will be replaced with processed version)
+            clipfile: Path to clip shapefile/geojson
+            nodata_value: NoData value (optional)
+            datatype: GDAL data type (e.g. Float32, Int16, Byte) - auto-detected if None
+            epsg: EPSG code for coordinate system
+            lossy: True for JPEG compression, False for DEFLATE compression
+            quality: JPEG quality (1-100), only relevant if lossy=True
+            oversample_factor: Oversampling factor (default: 5)
+        """
+
+        # Read original resolution and datatype from input file
+        with rasterio.open(input_tif) as src:
+            # Get pixel size (resolution) - using absolute values
+            original_res_x = abs(src.transform[0])
+            original_res_y = abs(src.transform[4])
+            resolution = int(max(original_res_x, original_res_y))  # Use the larger value
+
+            # Get datatype if not specified
+            #if datatype is None:
+            # Map rasterio dtype to GDAL dtype string
+            dtype_map = {
+                'uint8': 'Byte',
+                'uint16': 'UInt16',
+                'int16': 'Int16',
+                'uint32': 'UInt32',
+                'int32': 'Int32',
+                'float32': 'Float32',
+                'float64': 'Float64'
+            }
+            rasterio_dtype = str(src.dtypes[0])
+            datatype = dtype_map.get(rasterio_dtype, 'Float32')
+
+        print(f"Detected original resolution: {resolution}m")
+        print(f"Using datatype: {datatype}")
+
+        # Create single temp file path
+        input_path = Path(input_tif)
+        temp_file = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
+
+        try:
+            # Calculate intermediate resolution
+            intermediate_res = resolution / oversample_factor
+
+            print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
+
+            # Step 1: Clip and oversample with nearest neighbour (keep original projection)
+            cmd_oversample = [
+                "gdalwarp",
+                "-cutline", str(clipfile),
+                "-crop_to_cutline",
+                "-of", "GTiff",
+                "-co", "TILED=YES",
+                "-co", "BIGTIFF=YES",
+                "-co", "COMPRESS=DEFLATE",
+                "-co", "NUM_THREADS=ALL_CPUS",
+                "-tr", str(intermediate_res), str(intermediate_res),
+                "-r", "near",
+                "-ot", datatype,
+                "-overwrite"
+            ]
+
+            if nodata_value is not None:
+                cmd_oversample.extend(["-dstnodata", str(nodata_value)])
+
+            cmd_oversample.extend([str(input_tif), str(temp_file)])
+
+            print(f"Command: {' '.join(cmd_oversample)}")
+            result = subprocess.run(cmd_oversample, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error: {result.stderr}")
+                raise Exception(f"Oversampling failed with code {result.returncode}")
+
+            print(f"✓ Oversampled and clipped file created: {temp_file}")
+
+            # Step 2: Reproject with bilinear (at oversampled resolution)
+            print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
+
+            cmd_reproject = [
+                "gdalwarp",
+                "-t_srs", f"EPSG:{epsg}",
+                "-of", "GTiff",
+                "-co", "TILED=YES",
+                "-co", "BIGTIFF=YES",
+                "-co", "COMPRESS=DEFLATE",
+                "-co", "NUM_THREADS=ALL_CPUS",
+                "-tr", str(intermediate_res), str(intermediate_res),
+                "-r", "bilinear",
+                "-ot", datatype,
+                "-overwrite"
+            ]
+
+            if nodata_value is not None:
+                cmd_reproject.extend(["-dstnodata", str(nodata_value)])
+
+            # Use temp_file as both input and output (via intermediate step)
+            cmd_reproject.extend([str(temp_file), str(input_tif)])
+
+            print(f"Command: {' '.join(cmd_reproject)}")
+            result = subprocess.run(cmd_reproject, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error: {result.stderr}")
+                raise Exception(f"Reprojection failed with code {result.returncode}")
+
+            # Move result back to temp_file for next step
+            shutil.move(str(input_tif), str(temp_file))
+            print(f"✓ Reprojected file ready")
+
+            # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
+            print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
+
+            # Calculate output size based on resolution change
+            # gdal_translate uses -outsize percentage or pixel dimensions
+            outsize_percent = int((intermediate_res / resolution) * 100)
+
+            cmd_downsample = [
+                "gdal_translate",
+                "-of", "COG",
+                "-co", "NUM_THREADS=ALL_CPUS",
+                "-co", "BIGTIFF=YES",
+                "-outsize", f"{outsize_percent}%", f"{outsize_percent}%",
+                "-r", "bilinear",
+                "-ot", datatype
+            ]
+
+            # Compression options
+            if lossy:
+                print(f"Using JPEG compression with quality {quality}")
+                cmd_downsample.extend([
+                    "-co", "COMPRESS=JPEG",
+                    "-co", f"QUALITY={quality}"
+                ])
+            else:
+                print(f"Using lossless DEFLATE compression")
+                cmd_downsample.extend([
+                    "-co", "COMPRESS=DEFLATE",
+                    "-co", "PREDICTOR=2",
+                    "-co", "ZLEVEL=2"
+                ])
+
+            if nodata_value is not None:
+                cmd_downsample.extend(["-a_nodata", str(nodata_value)])
+
+            cmd_downsample.extend([str(temp_file), str(input_tif)])
+
+            print(f"Command: {' '.join(cmd_downsample)}")
+            result = subprocess.run(cmd_downsample, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"Error: {result.stderr}")
+                raise Exception(f"Resampling failed with code {result.returncode}")
+
+            print(f"✓ Final COG created: {input_tif}")
+
+        except Exception as e:
+            print(f"\n✗ Error occurred: {e}")
+            raise e
+
+        finally:
+            # Clean up temp file
+            if temp_file.exists():
+                print(f"Cleaning up: {temp_file}")
+                temp_file.unlink()
+
+    ##############################
+    # TODO Clip Data to Switzerland and Reproeject to CH1903LV95
+
+    clip_resample_to_cog("swisseo_s2-sr_v200_mosaic_2025-06-01t101041_tci_10m.tif",os.path.join("assets","swissboundary_buffer_5000m.gpkg"),nodata_value=None,epsg=2056,lossy=True,quality=85,oversample_factor=5)
 
     print("end of function")
     ##############################
     # TODO Upload to STAC
     #upload the  file swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif to STAC: collection swisseo_s2-sr_v200 raw_asset is swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif raw_item is 2025-06-10t103641 colelction is swisseo_s2-sr_v200 geocat_id is 6e8f3f3e-1d4e-11ee-be56-0242ac120002, current is none
-    # main_publish_stac_fsdi.publish_to_stac("swisseo_s2-sr_v200_mosaic_2025-06-10t103641_cloudprobability-10.tif",
-    #     "2025-06-10t103641",
-    #     "swisseo_s2-sr_v200",
-    #     config.PRODUCT_S2_LEVEL_2A['geocat_id'],
-    #     None
-    # )
+    main_publish_stac_fsdi.publish_to_stac("swisseo_s2-sr_v200_mosaic_2025-06-01t101041_scl_20m.tif",
+        "2025-06-01t101041",
+        "ch.swisstopo.swisseo_s2-sr_v200",
+        config.PRODUCT_S2_LEVEL_2A['geocat_id'],
+        None
+    )
+
+    ##############################
+    # TODO Upload to GEE
+
     print("end of function")

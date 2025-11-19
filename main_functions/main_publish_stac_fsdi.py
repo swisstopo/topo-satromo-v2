@@ -440,6 +440,7 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None):
     asset = raw_asset.lower()
     os.rename(raw_asset, asset)
 
+    # ITEM remove any collection part in the item title
     if current is not None:
         item_title = collection.replace('ch.swisstopo.', '')
         item = item_title

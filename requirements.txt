@@ -19,7 +19,6 @@ dill==0.4.0
 earthengine-api==1.7.0
 folium==0.20.0
 fonttools==4.60.1
-GDAL @ file:///D:/temp/github/topo-satromo-v2/secrets/gdal-3.11.4-cp311-cp311-win_amd64.whl
 geoarray==0.19.2
 geojson==3.2.0
 geopandas==1.1.1
@@ -45,7 +44,7 @@ kiwisolver==1.4.9
 lazy_loader==0.4
 MarkupSafe==3.0.3
 matplotlib==3.10.7
-multihash==0.1.1
+py-multihash==2.0.1
 narwhals==2.11.0
 networkx==3.5
 numpy==2.3.4
