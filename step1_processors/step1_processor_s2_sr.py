@@ -765,7 +765,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         main_mosaicing.create_sentinel2_multiband_by_config(
             acquisition_date=acquisition_date,
             orbit_nr=orbit_nr,
-            noData_value=noData_value
+            noData_value=noData_value,
+            data_folder=copernicus_collection
         )
 
         # Creating cloud mask with omnicloudmask
