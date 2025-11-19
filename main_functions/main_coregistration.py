@@ -622,10 +622,10 @@ def deshift_files(
             # Fallback for files without band info (like cloud masks or omnicloud)
             if '_cloud_' in os.path.basename(file): # CS+
                 band_name = 'cloudmask'
-                suffix = f"{band_name}"
+                suffix = f"{band_name}_10m"
             elif '_omnicloud_' in os.path.basename(file): #Omnicloud
                 band_name = 'omnicloudmask'
-                suffix = f"{band_name}"
+                suffix = f"{band_name}_10m"
             else:
                 logger.info(f"Unknown file in list for deshifting: {os.path.basename(file)}. Skipping.")
                 continue
