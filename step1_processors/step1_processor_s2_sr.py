@@ -751,7 +751,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # TODO TERRAINSHADOWMASK
 
-    
+    #breakpoint()
     ##############################
     # TODO COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
@@ -761,7 +761,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         orbit_nr = orbit_nrs[i]
 
-        noData_value = main_reprojection.reproject_tiles_to_UTM32N(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        noData_value = main_reprojection.reproject_tiles_to_UTM32N(acquisition_date=acquisition_date, orbit_nr=orbit_nr,data_folder=copernicus_collection)
         main_mosaicing.create_sentinel2_multiband_by_config(
             acquisition_date=acquisition_date,
             orbit_nr=orbit_nr,
@@ -829,7 +829,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # - cloudshadow percentage
 
     # ##############################
-    # # TODO Clip Data to Switzerland and Reproeject to CH1903LV95
+    # # Clip Data to Switzerland and Reproeject to CH1903LV95
+    # ## TODO no data value handling per data set
 
     # def clip_resample_to_cog(
     #     input_tif,
@@ -1109,7 +1110,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     # ##############################
-    # # TODO Upload to STAC
+    # # Upload to STAC
+    # # TODO News WMS URL: replace with COGTIF
 
     # # Process Sentinel files grouped by timestamp
     # for timestamp, file_list in sorted(files_by_timestamp.items()):
@@ -1145,4 +1147,4 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # ##############################
     # # TODO Upload to GEE
 
-    print("end of function")
+    # print("end of function")
