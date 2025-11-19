@@ -63,6 +63,24 @@ SENTINEL2_BAND_CONFIG ={
     60:['B01', 'B09', 'AOT',] # 60m bands: Coastal Aerosol  Water Vapor and Aerosol
 }
 
+#Sentinel-2 L2A Band Names
+SENTINEL2_BAND_NAMES = {
+    'B02': "Blue (band 2) - 10m",
+    'B03': "Green (band 3) - 10m",
+    'B04': "Red (band 4) - 10m",
+    'B08': "NIR 1 (band 8) - 10m",
+    'TCI': "True color image (TCI) - 10m",
+    'B05': "Red edge 1 (band 5) - 20m",
+    'B06': "Red edge 2 (band 6) - 20m",
+    'B07': "Red edge 3 (band 7) - 20m",
+    'B8A': "NIR 2 (band 8A) - 20m",
+    'B11': "SWIR 1 (band 11) - 20m",
+    'B12': "SWIR 2 (band 12) - 20m",
+    'SCL': "Scene classification map (SCL) - 20m",
+    'B01': "Coastal aerosol (band 1) - 60m",
+    'B09': "NIR 3 (band 9) - 60m",
+    'AOT': "Aerosol optical thickness (AOT) - 60m",
+}
 
 # A) PRODUCTS, INDICES
 # ********************
@@ -173,7 +191,6 @@ AROSICS_CONFIG = {
     # 'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/S2_GRI.tif',
     #'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
     'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
-    'data_folder': 'sentinel-2-l2a',
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
     'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
     'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
