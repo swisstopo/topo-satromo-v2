@@ -45,6 +45,9 @@ OUTPUT_CRS = "EPSG:2056"
 ROI_RECTANGLE = [5.78, 45.70, 10.69, 47.89]
 ROI_BORDER_BUFFER = 5000  # Buffer around Switzerland
 
+# Switzerland border and lakes with 5km buffer :
+BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
+
 # No data value
 NODATA = 9999
 
@@ -70,6 +73,7 @@ SENTINEL2_BAND_NAMES = {
     'B04': "Red (band 4) - 10m",
     'B08': "NIR 1 (band 8) - 10m",
     'TCI': "True color image (TCI) - 10m",
+    'CLOUDMASK': "Cloud mask - 10m",
     'B05': "Red edge 1 (band 5) - 20m",
     'B06': "Red edge 2 (band 6) - 20m",
     'B07': "Red edge 3 (band 7) - 20m",
@@ -95,12 +99,14 @@ PRODUCT_S2_LEVEL_CSPLUS = {
 PRODUCT_S2_LEVEL_2A = {
     "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
-    "temporal_coverage": 1,  # Days
-    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with step0
-    "asset_size": 5,
-    "spatial_scale_export_mask": 10,
+    "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
+    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
+    "asset_size": 5, # TODO: check if needed in context with V2
+    "spatial_scale_export_mask": 10, # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
     "no_data": 9999,
+    "band_config": SENTINEL2_BAND_CONFIG,
+    "band_names": SENTINEL2_BAND_NAMES,
     "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
 

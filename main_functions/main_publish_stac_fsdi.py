@@ -291,22 +291,49 @@ def asset_create_title(asset, current):
         return filename_uppercase
 
 
-def asset_create_json_payload(id, asset_type, current):
+def asset_create_json_payload(id, asset_type, current, asset_title=None):
     """
-    Creates a JSON payload for a STAC asset.
+    Create a JSON payload dictionary for registering a STAC asset.
 
-    This function creates a dictionary with the provided arguments and additional static data. The dictionary can be used as a JSON payload in a request to create a STAC asset.
-    JSON TIF and CSV type supported
+    This function prepares a JSON-serializable dictionary describing a STAC asset
+    for use in collection/item registration, supporting TIF, JSON, GEOJSON, CSV,
+    PARQUET, and JPEG asset types. The function auto-generates a title if not provided,
+    and adds relevant properties for imagery and tabular assets,
+    such as EPSG code or ground sample distance (gsd) for TIF types.
 
     Args:
-        id (str): The ID of the STAC asset.
-        asset_type (str): The type of the STAC asset.
-        current (str): If not None, indicates the 'current' substring should be used to determine the title.
+        id (str):
+            The asset's unique identifier, typically the asset's file name or key.
+        asset_type (str):
+            The asset's file/data type. Supported values:
+            "TIF", "JSON", "GEOJSON", "CSV", "PARQUET", and (by default) "JPEG".
+        current (str):
+            If not None, used by `asset_create_title` to determine the asset's title when `asset_title` is not provided.
+        asset_title (str, optional):
+            The custom title to use for the asset. If not set, `asset_create_title` is used.
 
     Returns:
-        dict: A dictionary representing the JSON payload for the STAC asset.
+        dict:
+            A dictionary suitable for use as a STAC Asset JSON payload.
+            Key fields:
+                - "id": Asset identifier
+                - "title": Human-readable asset title
+                - "type": MIME type
+                - "proj:epsg": (for TIF) EPSG code for spatial reference (always 2056)
+                - "eo:gsd": (for TIF) Ground sample distance parsed from asset title
+
+    Notes:
+        - The MIME type, EPSG, and other asset details are set based on `asset_type`.
+        - If asset type is not recognized, defaults to JPEG.
+        - This function expects that `asset_create_title` exists and returns
+          a title string derived from `id` and `current`.
     """
-    title = asset_create_title(id, current)
+
+    if asset_title is not None:
+        title = asset_title
+    else:
+        title = asset_create_title(id, current)
+
     if asset_type == "TIF":
         gsd = re.findall(r'\d+', title)
         payload = {
@@ -413,7 +440,7 @@ def create_asset(stac_asset_url, payload):
 
 
 
-def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None):
+def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None,asset_title=None):
     """
     Publishes a STAC asset.
 
@@ -425,6 +452,7 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None):
         collection (str): The collection to which the asset belongs.
         geocat_id (str): The Geocat ID of the asset.
         current (str): If not None, indicates the 'current' substring should be used to determine the title.
+        asset_title (str, optional): The custom title to use for the asset. If not set, `asset_create_title` is used.
 
     Returns:
         None
@@ -534,7 +562,7 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None):
         print(f"ASSET object {asset}: does not exist preparing...")
 
     # create asset payload
-    payload = asset_create_json_payload(asset, asset_type, current)
+    payload = asset_create_json_payload(asset, asset_type, current,asset_title=asset_title)
 
     # Create Asset
     if not create_asset(stac_path+asset_path, payload):
