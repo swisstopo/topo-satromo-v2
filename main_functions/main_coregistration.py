@@ -209,7 +209,7 @@ def coregister_S2(
         cloud_threshold = config.AROSICS_CONFIG['csplus_threshold']
 
     # Set up paths
-    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
     data_dir = os.path.join(base_path, f"R{orbit_nr:03}", acquisition_date_str)
     data_dir = main_utils.ensure_directory(data_dir)
 
@@ -583,7 +583,7 @@ def deshift_files(
         acquisition_date_str = str(acquisition_date)
 
     # Find all files to deshift
-    base_path = f"{config.AROSICS_CONFIG['data_folder']}/R{orbit_nr:03}/{acquisition_date_str}"
+    base_path = f"{config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]}/R{orbit_nr:03}/{acquisition_date_str}"
 
     files_to_deshift = []
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_*_*m_clip.vrt")

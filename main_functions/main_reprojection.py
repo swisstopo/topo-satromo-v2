@@ -338,7 +338,7 @@ def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
         NoData value used for reprojected files
     """
 
-    data_folder = config.AROSICS_CONFIG['data_folder']
+    data_folder = config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
     noData_value = None # Assuring a return even if no reprojection was needed
     s2_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.jp2'))
     csplus_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.tif'))
@@ -360,6 +360,6 @@ def reproject_coregistered_mosaics_to_CH1903(date_str: str, orbit_nr: int):
         orbit_nr: Orbit number as an integer
     """
 
-    data_folder = config.AROSICS_CONFIG['data_folder']
+    data_folder = config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
     for file_in in glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', date_str, 'AROSICS_output','*.tif')):
         pass

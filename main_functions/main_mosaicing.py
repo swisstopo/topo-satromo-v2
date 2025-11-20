@@ -49,7 +49,7 @@ def create_sentinel2_band_mosaic(
         ValueError: If no B04 or cloud mask files are found
     """
     # Convert paths to Path objects
-    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -166,7 +166,7 @@ def create_sentinel2_cloud_mosaic(
         ValueError: If no B04 or cloud mask files are found
     """
     # Convert paths to Path objects
-    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -344,7 +344,7 @@ def create_multiband_raster(
         ValueError: If no VRT files are found for specified bands
     """
     # Convert paths to Path objects
-    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
+    base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -543,7 +543,7 @@ def equalize_all_extents(
     else:
         acquisition_date_str = str(acquisition_date)
 
-    data_dir = os.path.join(config.AROSICS_CONFIG['data_folder'], f"R{orbit_nr:03d}", acquisition_date_str)
+    data_dir = os.path.join(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"], f"R{orbit_nr:03d}", acquisition_date_str)
 
     logger.info(f"Starting extent equalization for orbit {orbit_nr}, date {acquisition_date_str}")
 

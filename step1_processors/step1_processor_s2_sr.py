@@ -775,7 +775,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             config.AROSICS_CONFIG['omnicloudmask_script_path'],
             "--orbit", str(orbit_nr),
             "--date", acquisition_date,
-            "--output-dir",config.AROSICS_CONFIG['data_folder']
+            "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
         ]
 
         # Run the command

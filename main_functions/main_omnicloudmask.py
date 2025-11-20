@@ -85,7 +85,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData
     acquisition_date = acquisition_date.replace('-', '')
     
     # Construct scene path
-    data_folder = Path(config.AROSICS_CONFIG['data_folder'])
+    data_folder = Path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
     scene_folder = data_folder / orbit_nr / acquisition_date
     
     if not scene_folder.exists():
