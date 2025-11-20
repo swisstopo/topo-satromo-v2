@@ -29,6 +29,7 @@ def create_sentinel2_band_mosaic(
     band_name: str,
     ground_sampling_distance: Optional[int] = None,
     noData_value: Optional[int] = 0,
+    base_path: Optional[Union[str, Path]] = None,
     output_dir: Optional[Union[str, Path]] = None
 ) -> Dict[str, Any]:
     """
@@ -48,8 +49,6 @@ def create_sentinel2_band_mosaic(
     Raises:
         ValueError: If no B04 or cloud mask files are found
     """
-    # Convert paths to Path objects
-    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -408,6 +407,7 @@ def create_multiband_raster(
                         band_name=band_name,
                         ground_sampling_distance=gsd,
                         noData_value=noData_value,
+                        base_path=base_path,
                         output_dir=output_dir
                     )
 

@@ -63,7 +63,7 @@ def find_band_file(scene_folder, acquisition_date, band_name):
         return matches[0]
     return None
 
-def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir=config.AROSICS_CONFIG['data_folder'], noData_value=0, **kwargs):
+def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData_value=0, **kwargs):
     """
     Generate cloud mask for a specific scene from VRT mosaics
     
