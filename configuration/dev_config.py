@@ -59,6 +59,18 @@ NODATA = 9999
 # TL;DR : First define in A) PRODUCTS, INDICES: for step0 (cloud, shadow, co-register, mosaic) the TOA SR data  custom  "step0_collection" to be generated / used
 # then
 
+
+
+# A) PRODUCTS, INDICES
+# ********************
+
+#  ch.swisstopo.swisseo_s2-sr
+PRODUCT_S2_LEVEL_CSPLUS = {
+    "image_collection": "S2_SR_HARMONIZED_SWISS",
+    "temporal_coverage": 1,  # Days
+    "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
+}
+#  ch.swisstopo.swisseo_s2-sr
 #Sentinel-2 L2A Band configurations
 SENTINEL2_BAND_CONFIG ={
     10:['B02', 'B03', 'B04', 'B08', 'TCI',], # 10m bands: BLUE, GREEN, RED, NIR
@@ -86,16 +98,6 @@ SENTINEL2_BAND_NAMES = {
     'AOT': "Aerosol optical thickness (AOT) - 60m",
 }
 
-# A) PRODUCTS, INDICES
-# ********************
-
-#  ch.swisstopo.swisseo_s2-sr
-PRODUCT_S2_LEVEL_CSPLUS = {
-    "image_collection": "S2_SR_HARMONIZED_SWISS",
-    "temporal_coverage": 1,  # Days
-    "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
-}
-#  ch.swisstopo.swisseo_s2-sr
 PRODUCT_S2_LEVEL_2A = {
     "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
@@ -177,6 +179,7 @@ STAC_FSDI_HOSTNAME = 'sys-data.int.bgdi.ch'
 STAC_FSDI_API = '/api/stac/v0.9/'
 
 
+
 # C AROSICS configuration
 # ***********************
 # Contains dictionary used for co-registration of satellite imagery
@@ -197,7 +200,7 @@ AROSICS_CONFIG = {
     # 'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/S2_GRI.tif',
     #'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
     'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
-    'data_folder': 'SENTINEL-2',
+    'data_folder': 'sentinel-2-l2a',
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
     'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
     'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
