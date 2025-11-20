@@ -335,13 +335,17 @@ def asset_create_json_payload(id, asset_type, current, asset_title=None):
         title = asset_create_title(id, current)
 
     if asset_type == "TIF":
-        gsd = re.findall(r'\d+', title)
+        with rasterio.open(id) as src:
+            # Get pixel size (resolution) - using absolute values
+            original_res_x = abs(src.transform[0])
+            original_res_y = abs(src.transform[4])
+            gsd = int(max(original_res_x, original_res_y))  # Use the larger valu
         payload = {
             "id": id,
             "title": title,
             "type": "image/tiff; application=geotiff; profile=cloud-optimized",
             "proj:epsg": 2056,
-            "eo:gsd": int(gsd[0])
+            "eo:gsd": int(gsd)
         }
     elif asset_type == "JSON":
         payload = {
