@@ -197,10 +197,7 @@ AROSICS_CONFIG = {
     # 'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/S2_GRI.tif',
     #'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
     'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
-<<<<<<< HEAD
-=======
     'data_folder': 'SENTINEL-2',
->>>>>>> parent of 12e950cd (added new folder name for input data  AROSICS)
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
     'singleband_mosaic_pattern_10m': 'S2-L2A-mosaic_*_B04_10m.vrt',
     'singleband_mosaic_pattern': 'S2-L2A-mosaic_*',
