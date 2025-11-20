@@ -751,7 +751,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # TODO TERRAINSHADOWMASK
 
-    breakpoint()
+    
     ##############################
     # TODO COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
