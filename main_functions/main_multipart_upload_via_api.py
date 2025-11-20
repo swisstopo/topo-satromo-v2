@@ -405,4 +405,3 @@ def multipart_upload(env, collection, item, asset, filepath, username, password,
     except Exception as e:
         print(f"Upload failed: {str(e)}")
         return False
-

@@ -29,7 +29,6 @@ def create_sentinel2_band_mosaic(
     band_name: str,
     ground_sampling_distance: Optional[int] = None,
     noData_value: Optional[int] = 0,
-    base_path: Optional[Union[str, Path]] = None,
     output_dir: Optional[Union[str, Path]] = None
 ) -> Dict[str, Any]:
     """
@@ -49,6 +48,8 @@ def create_sentinel2_band_mosaic(
     Raises:
         ValueError: If no B04 or cloud mask files are found
     """
+    # Convert paths to Path objects
+    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -323,8 +324,7 @@ def create_multiband_raster(
     orbit_nr: int,
     gsd_dict: Dict[int, List[str]],
     output_dir: Optional[Union[str, Path]] = None,
-    noData_value: Optional[int] = 0,
-    data_folder: Optional[str] = None
+    noData_value: Optional[int] = 0
 ) -> Dict[str, Any]:
     """
     Create multiband rasters from mosaiced Sentinel-2 bands, grouped by ground sampling distance.
@@ -344,8 +344,7 @@ def create_multiband_raster(
         ValueError: If no VRT files are found for specified bands
     """
     # Convert paths to Path objects
-    #base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
-    base_path = data_folder
+    base_path = main_utils.ensure_path(config.AROSICS_CONFIG['data_folder'])
 
     # Convert acquisition_date to string if it's a datetime
     if isinstance(acquisition_date, datetime):
@@ -407,7 +406,6 @@ def create_multiband_raster(
                         band_name=band_name,
                         ground_sampling_distance=gsd,
                         noData_value=noData_value,
-                        base_path=base_path,
                         output_dir=output_dir
                     )
 
@@ -491,8 +489,7 @@ def create_sentinel2_multiband_by_config(
     acquisition_date: Union[str, datetime],
     orbit_nr: int,
     output_dir: Optional[Union[str, Path]] = None,
-    noData_value: Optional[int] = 0,
-    data_folder: Optional[str] = None
+    noData_value: Optional[int] = 0
 ) -> Dict[str, Any]:
     """
     Create multiband rasters for Sentinel-2 data based on band configurations in the config file.
@@ -515,8 +512,7 @@ def create_sentinel2_multiband_by_config(
         orbit_nr=orbit_nr,
         gsd_dict=band_config,
         output_dir=output_dir,
-        noData_value=noData_value,
-        data_folder=data_folder
+        noData_value=noData_value
     )
 
     return results

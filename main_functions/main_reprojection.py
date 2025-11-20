@@ -326,7 +326,7 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
     return src_no_data
 
 
-def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int,data_folder:str):
+def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
     """
     Reproject all S2 and CS+ tiles in UTM31N of a single date/orbit combination to UTM32N (EPSG:32632).
 
@@ -338,7 +338,7 @@ def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int,data_folder:s
         NoData value used for reprojected files
     """
 
-    #data_folder = config.AROSICS_CONFIG['data_folder']
+    data_folder = config.AROSICS_CONFIG['data_folder']
     noData_value = None # Assuring a return even if no reprojection was needed
     s2_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.jp2'))
     csplus_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.tif'))
