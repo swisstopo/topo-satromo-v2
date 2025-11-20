@@ -109,6 +109,10 @@ PRODUCT_S2_LEVEL_2A = {
     "no_data": 9999,
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
+    "copernicus_collection": "sentinel-2-l2a",# Copernnicus STAC Collection
+    "baseline_version": "04.00",    # Baseline Version greater than
+    "processing_level": "L2A",  #  Processing Level
+    "copernicus_bucket": "eodata", # Copernicus S3 bucket
     "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
 
