@@ -747,7 +747,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
 
-
+    breakpoint()
     ##############################
     # TODO TERRAINSHADOWMASK
 
@@ -770,16 +770,16 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         # Creating cloud mask with omnicloudmask
         # Build the argument list
-        # cmd = [
-        #     config.AROSICS_CONFIG['omnicloudmask_venv_path'],
-        #     config.AROSICS_CONFIG['omnicloudmask_script_path'],
-        #     "--orbit", str(orbit_nr),
-        #     "--date", acquisition_date,
-        #     "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
-        # ]
+        cmd = [
+            config.AROSICS_CONFIG['omnicloudmask_venv_path'],
+            config.AROSICS_CONFIG['omnicloudmask_script_path'],
+            "--orbit", str(orbit_nr),
+            "--date", acquisition_date,
+            "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
+        ]
 
-        # # Run the command
-        # result = subprocess.run(cmd, check=True)
+        # Run the command
+        result = subprocess.run(cmd, check=True)
 
         main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
@@ -791,351 +791,351 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 orbit_nr=orbit_nr,
                 pickle_path=pickle_path,
                 fmt_out='GTIFF',
-                CPUs=64
+                CPUs=os.cpu_count() #use all cpus
             )
 
-    breakpoint()
-
-    ##############################
-    # Clean up Download folder
-    if Path(copernicus_collection).exists():
-        print(f"Cleaning up: {copernicus_collection}")
-        shutil.rmtree(copernicus_collection)
-
-    ##############################
-    # Loop over all orbits and process final steps
-
-    for orbit_num, timestamp in orbit_timestamp.items():
-        print(f"Processing orbit {orbit_num} of {timestamp} ...")
-
-        ##############################
-        # TODO Upload pickle to S3
-
-        ##############################
-        # TODO Update METADATA json with
-        # - coregistration status
-        # - cloudshadow percentage
-
-        ##############################
-        # Clip Data to Switzerland and Reproeject to CH1903LV95
-        ## TODO no data value handling per data set
-
-        def clip_resample_to_cog(
-            input_tif,
-            clipfile,
-            nodata_value=None,
-            epsg=2056,
-            lossy=False,
-            quality=85,
-            oversample_factor=5
-            ):
-            """
-            Clips, resamples and converts raster to COG format using multi-step oversampling.
-            Process: 5x oversample (nearest) -> bilinear reproject -> 5x downsample (bilinear)
-            As decided on 02.04.2025 with AGROSCOPE team.
-            Uses only ONE temporary file to minimize disk usage.
-
-            Resolution and datatype are automatically detected from input file.
-
-            Args:
-                input_tif: Path to input raster (will be replaced with processed version)
-                clipfile: Path to clip shapefile/geojson
-                nodata_value: NoData value (optional)
-                datatype: GDAL data type (e.g. Float32, Int16, Byte) - auto-detected if None
-                epsg: EPSG code for coordinate system
-                lossy: True for JPEG compression, False for DEFLATE compression
-                quality: JPEG quality (1-100), only relevant if lossy=True
-                oversample_factor: Oversampling factor (default: 5)
-            """
-
-            # Read original resolution and datatype from input file
-            with rasterio.open(input_tif) as src:
-                # Get pixel size (resolution) - using absolute values
-                original_res_x = abs(src.transform[0])
-                original_res_y = abs(src.transform[4])
-                resolution = int(max(original_res_x, original_res_y))  # Use the larger value
-
-                # Get datatype if not specified
-                #if datatype is None:
-                # Map rasterio dtype to GDAL dtype string
-                dtype_map = {
-                    'uint8': 'Byte',
-                    'uint16': 'UInt16',
-                    'int16': 'Int16',
-                    'uint32': 'UInt32',
-                    'int32': 'Int32',
-                    'float32': 'Float32',
-                    'float64': 'Float64'
-                }
-                rasterio_dtype = str(src.dtypes[0])
-                datatype = dtype_map.get(rasterio_dtype, 'Float32')
-
-            print(f"Detected original resolution: {resolution}m")
-            print(f"Using datatype: {datatype}")
-
-            # Create single temp file path
-            input_path = Path(input_tif)
-            temp_file = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
-
-            try:
-                # Calculate intermediate resolution
-                intermediate_res = resolution / oversample_factor
-
-                print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
-
-                # Step 1: Clip and oversample with nearest neighbour (keep original projection)
-                cmd_oversample = [
-                    "gdalwarp",
-                    "-cutline", str(clipfile),
-                    "-crop_to_cutline",
-                    "-of", "GTiff",
-                    "-co", "TILED=YES",
-                    "-co", "BIGTIFF=YES",
-                    "-co", "COMPRESS=DEFLATE",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "-tr", str(intermediate_res), str(intermediate_res),
-                    "-r", "near",
-                    "-ot", datatype,
-                    "-overwrite"
-                ]
-
-                if nodata_value is not None:
-                    cmd_oversample.extend(["-dstnodata", str(nodata_value)])
-
-                cmd_oversample.extend([str(input_tif), str(temp_file)])
-
-                print(f"Command: {' '.join(cmd_oversample)}")
-                result = subprocess.run(cmd_oversample, capture_output=True, text=True)
-
-                if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Oversampling failed with code {result.returncode}")
-
-                print(f"✓ Oversampled and clipped file created: {temp_file}")
-
-                # Step 2: Reproject with bilinear (at oversampled resolution)
-                print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
-
-                cmd_reproject = [
-                    "gdalwarp",
-                    "-t_srs", f"EPSG:{epsg}",
-                    "-of", "GTiff",
-                    "-co", "TILED=YES",
-                    "-co", "BIGTIFF=YES",
-                    "-co", "COMPRESS=DEFLATE",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "-tr", str(intermediate_res), str(intermediate_res),
-                    "-r", "bilinear",
-                    "-ot", datatype,
-                    "-overwrite"
-                ]
-
-                if nodata_value is not None:
-                    cmd_reproject.extend(["-dstnodata", str(nodata_value)])
-
-                # Use temp_file as both input and output (via intermediate step)
-                cmd_reproject.extend([str(temp_file), str(input_tif)])
-
-                print(f"Command: {' '.join(cmd_reproject)}")
-                result = subprocess.run(cmd_reproject, capture_output=True, text=True)
-
-                if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Reprojection failed with code {result.returncode}")
-
-                # Move result back to temp_file for next step
-                shutil.move(str(input_tif), str(temp_file))
-                print(f"✓ Reprojected file ready")
-
-                # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
-                print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
-
-                # Calculate output size based on resolution change
-                # gdal_translate uses -outsize percentage or pixel dimensions
-                outsize_percent = int((intermediate_res / resolution) * 100)
-
-                cmd_downsample = [
-                    "gdal_translate",
-                    "-of", "COG",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "-co", "BIGTIFF=YES",
-                    "-outsize", f"{outsize_percent}%", f"{outsize_percent}%",
-                    "-r", "bilinear",
-                    "-ot", datatype
-                ]
-
-                # Compression options
-                if lossy:
-                    print(f"Using JPEG compression with quality {quality}")
-                    cmd_downsample.extend([
-                        "-co", "COMPRESS=JPEG",
-                        "-co", f"QUALITY={quality}"
-                    ])
-                else:
-                    print(f"Using lossless DEFLATE compression")
-                    cmd_downsample.extend([
-                        "-co", "COMPRESS=DEFLATE",
-                        "-co", "PREDICTOR=2",
-                        "-co", "ZLEVEL=2"
-                    ])
-
-                if nodata_value is not None:
-                    cmd_downsample.extend(["-a_nodata", str(nodata_value)])
-
-                cmd_downsample.extend([str(temp_file), str(input_tif)])
-
-                print(f"Command: {' '.join(cmd_downsample)}")
-                result = subprocess.run(cmd_downsample, capture_output=True, text=True)
-
-                if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Resampling failed with code {result.returncode}")
-
-                print(f"✓ Final COG created: {input_tif}")
-
-            except Exception as e:
-                print(f"\n✗ Error occurred: {e}")
-                raise e
-
-            finally:
-                # Clean up temp file
-                if temp_file.exists():
-                    print(f"Cleaning up: {temp_file}")
-                    temp_file.unlink()
-
-        ##############################
-        # Clip Data to Switzerland and Reproeject to CH1903LV95
-
-        def parse_sentinel2_filename(filename):
-            """Parse Sentinel-2 mosaic filename including cloudmask."""
-            basename = os.path.basename(filename)
-
-            if not basename.endswith('.tif'):
-                return None
-
-            name_without_ext = basename[:-4]
-            parts = name_without_ext.split('_')
-
-            if len(parts) < 7 or parts[3] != 'mosaic':
-                return None
-
-            timestamp = parts[4]
-            band = parts[5].upper()
-            resolution_str = parts[6]
-
-            if not resolution_str.endswith('m'):
-                return None
-
-            try:
-                resolution = int(resolution_str[:-1])
-            except ValueError:
-                return None
-
-            # Validate: either in band_config or is CLOUDMASK
-            all_bands = [b for bands in config.PRODUCT_S2_LEVEL_2A['band_config'].values() for b in bands]
-
-            if band not in all_bands and band != 'CLOUDMASK':
-                return None
-
-            return {
-                'timestamp': timestamp,
-                'band': band,
-                'resolution': resolution,
-                'filename': filename
-            }
-
-
-        # Get all .tif files in current directory
-        tif_files = glob.glob('*.tif')
-
-        # Parse and group by timestamp
-        files_by_timestamp = defaultdict(list)
-
-        for tif_file in tif_files:
-            parsed = parse_sentinel2_filename(tif_file)
-            if parsed:
-                files_by_timestamp[parsed['timestamp']].append(parsed)
-
-        # Process files grouped by timestamp
-        for timestamp, file_list in sorted(files_by_timestamp.items()):
-            print(f"\n=== Processing timestamp: {timestamp} ===")
-
-            # Sort by resolution and band
-            file_list.sort(key=lambda x: (x['resolution'], x['band']))
-
-            for file_info in file_list:
-                band = file_info['band']
-                filename = file_info['filename']
-
-                # Get band title using config
-                band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
-                band_title = band_names.get(band, band)
-
-                # Set compression
-                if band in ['TCI']:
-                    lossy = True
-                    quality = 85
-                else:
-                    lossy = False
-                    quality = 100
-
-                print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
-
-                clip_resample_to_cog(
-                    filename,
-                    os.path.join(config.BUFFER),
-                    nodata_value=None,
-                    epsg=2056,
-                    lossy=lossy,
-                    quality=quality,
-                    oversample_factor=5
-                )
-
-        # clip_resample_to_cog("swisseo_s2-sr_v200_mosaic_2025-06-01t101041_tci_10m.tif",os.path.join(config.BUFFER),nodata_value=None,epsg=2056,lossy=True,quality=85,oversample_factor=5)
-
-        ##############################
-        # TODO Checkif current, if yes then rund upload below twice a day
-
-
-        ##############################
-        # Upload to STAC
-        # TODO News WMS URL: replace with COGTIF
-
-        # Process Sentinel files grouped by timestamp
-        for timestamp, file_list in sorted(files_by_timestamp.items()):
-            print(f"\n=== Processing timestamp: {timestamp} ===")
-
-            # TCI last, resolution descending (bigger first), bands Z to A, so it is alphabetically in STAC
-            file_list.sort(key=lambda x: (x['band'] == 'TCI', x['resolution'], x['band']), reverse=True)
-
-            for file_info in file_list:
-                band = file_info['band']
-                filename = file_info['filename']
-
-                # Get band title using config
-                band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
-                band_title = band_names.get(band, band)
-
-                # STAC Upload
-                main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
-
-                # Clean up Data file
-                if Path(filename).exists():
-                    print(f"Cleaning up: {filename}")
-                    Path(filename).unlink()
-
-        # Upload metadata fileuti
-        filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
-        main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
-
-        # Clean up metadata file
-        if Path(filename).exists():
-                print(f"Cleaning up: {filename}")
-                Path(filename).unlink()
-
-        ##############################
-        # TODO Upload to GEE
-
-
-
-    print("end of function")
+    # breakpoint()
+
+    # ##############################
+    # # Clean up Download folder
+    # if Path(copernicus_collection).exists():
+    #     print(f"Cleaning up: {copernicus_collection}")
+    #     shutil.rmtree(copernicus_collection)
+
+    # ##############################
+    # # Loop over all orbits and process final steps
+
+    # for orbit_num, timestamp in orbit_timestamp.items():
+    #     print(f"Processing orbit {orbit_num} of {timestamp} ...")
+
+    #     ##############################
+    #     # TODO Upload pickle to S3
+
+    #     ##############################
+    #     # TODO Update METADATA json with
+    #     # - coregistration status
+    #     # - cloudshadow percentage
+
+    #     ##############################
+    #     # Clip Data to Switzerland and Reproeject to CH1903LV95
+    #     ## TODO no data value handling per data set
+
+    #     def clip_resample_to_cog(
+    #         input_tif,
+    #         clipfile,
+    #         nodata_value=None,
+    #         epsg=2056,
+    #         lossy=False,
+    #         quality=85,
+    #         oversample_factor=5
+    #         ):
+    #         """
+    #         Clips, resamples and converts raster to COG format using multi-step oversampling.
+    #         Process: 5x oversample (nearest) -> bilinear reproject -> 5x downsample (bilinear)
+    #         As decided on 02.04.2025 with AGROSCOPE team.
+    #         Uses only ONE temporary file to minimize disk usage.
+
+    #         Resolution and datatype are automatically detected from input file.
+
+    #         Args:
+    #             input_tif: Path to input raster (will be replaced with processed version)
+    #             clipfile: Path to clip shapefile/geojson
+    #             nodata_value: NoData value (optional)
+    #             datatype: GDAL data type (e.g. Float32, Int16, Byte) - auto-detected if None
+    #             epsg: EPSG code for coordinate system
+    #             lossy: True for JPEG compression, False for DEFLATE compression
+    #             quality: JPEG quality (1-100), only relevant if lossy=True
+    #             oversample_factor: Oversampling factor (default: 5)
+    #         """
+
+    #         # Read original resolution and datatype from input file
+    #         with rasterio.open(input_tif) as src:
+    #             # Get pixel size (resolution) - using absolute values
+    #             original_res_x = abs(src.transform[0])
+    #             original_res_y = abs(src.transform[4])
+    #             resolution = int(max(original_res_x, original_res_y))  # Use the larger value
+
+    #             # Get datatype if not specified
+    #             #if datatype is None:
+    #             # Map rasterio dtype to GDAL dtype string
+    #             dtype_map = {
+    #                 'uint8': 'Byte',
+    #                 'uint16': 'UInt16',
+    #                 'int16': 'Int16',
+    #                 'uint32': 'UInt32',
+    #                 'int32': 'Int32',
+    #                 'float32': 'Float32',
+    #                 'float64': 'Float64'
+    #             }
+    #             rasterio_dtype = str(src.dtypes[0])
+    #             datatype = dtype_map.get(rasterio_dtype, 'Float32')
+
+    #         print(f"Detected original resolution: {resolution}m")
+    #         print(f"Using datatype: {datatype}")
+
+    #         # Create single temp file path
+    #         input_path = Path(input_tif)
+    #         temp_file = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
+
+    #         try:
+    #             # Calculate intermediate resolution
+    #             intermediate_res = resolution / oversample_factor
+
+    #             print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
+
+    #             # Step 1: Clip and oversample with nearest neighbour (keep original projection)
+    #             cmd_oversample = [
+    #                 "gdalwarp",
+    #                 "-cutline", str(clipfile),
+    #                 "-crop_to_cutline",
+    #                 "-of", "GTiff",
+    #                 "-co", "TILED=YES",
+    #                 "-co", "BIGTIFF=YES",
+    #                 "-co", "COMPRESS=DEFLATE",
+    #                 "-co", "NUM_THREADS=ALL_CPUS",
+    #                 "-tr", str(intermediate_res), str(intermediate_res),
+    #                 "-r", "near",
+    #                 "-ot", datatype,
+    #                 "-overwrite"
+    #             ]
+
+    #             if nodata_value is not None:
+    #                 cmd_oversample.extend(["-dstnodata", str(nodata_value)])
+
+    #             cmd_oversample.extend([str(input_tif), str(temp_file)])
+
+    #             print(f"Command: {' '.join(cmd_oversample)}")
+    #             result = subprocess.run(cmd_oversample, capture_output=True, text=True)
+
+    #             if result.returncode != 0:
+    #                 print(f"Error: {result.stderr}")
+    #                 raise Exception(f"Oversampling failed with code {result.returncode}")
+
+    #             print(f"✓ Oversampled and clipped file created: {temp_file}")
+
+    #             # Step 2: Reproject with bilinear (at oversampled resolution)
+    #             print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
+
+    #             cmd_reproject = [
+    #                 "gdalwarp",
+    #                 "-t_srs", f"EPSG:{epsg}",
+    #                 "-of", "GTiff",
+    #                 "-co", "TILED=YES",
+    #                 "-co", "BIGTIFF=YES",
+    #                 "-co", "COMPRESS=DEFLATE",
+    #                 "-co", "NUM_THREADS=ALL_CPUS",
+    #                 "-tr", str(intermediate_res), str(intermediate_res),
+    #                 "-r", "bilinear",
+    #                 "-ot", datatype,
+    #                 "-overwrite"
+    #             ]
+
+    #             if nodata_value is not None:
+    #                 cmd_reproject.extend(["-dstnodata", str(nodata_value)])
+
+    #             # Use temp_file as both input and output (via intermediate step)
+    #             cmd_reproject.extend([str(temp_file), str(input_tif)])
+
+    #             print(f"Command: {' '.join(cmd_reproject)}")
+    #             result = subprocess.run(cmd_reproject, capture_output=True, text=True)
+
+    #             if result.returncode != 0:
+    #                 print(f"Error: {result.stderr}")
+    #                 raise Exception(f"Reprojection failed with code {result.returncode}")
+
+    #             # Move result back to temp_file for next step
+    #             shutil.move(str(input_tif), str(temp_file))
+    #             print(f"✓ Reprojected file ready")
+
+    #             # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
+    #             print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
+
+    #             # Calculate output size based on resolution change
+    #             # gdal_translate uses -outsize percentage or pixel dimensions
+    #             outsize_percent = int((intermediate_res / resolution) * 100)
+
+    #             cmd_downsample = [
+    #                 "gdal_translate",
+    #                 "-of", "COG",
+    #                 "-co", "NUM_THREADS=ALL_CPUS",
+    #                 "-co", "BIGTIFF=YES",
+    #                 "-outsize", f"{outsize_percent}%", f"{outsize_percent}%",
+    #                 "-r", "bilinear",
+    #                 "-ot", datatype
+    #             ]
+
+    #             # Compression options
+    #             if lossy:
+    #                 print(f"Using JPEG compression with quality {quality}")
+    #                 cmd_downsample.extend([
+    #                     "-co", "COMPRESS=JPEG",
+    #                     "-co", f"QUALITY={quality}"
+    #                 ])
+    #             else:
+    #                 print(f"Using lossless DEFLATE compression")
+    #                 cmd_downsample.extend([
+    #                     "-co", "COMPRESS=DEFLATE",
+    #                     "-co", "PREDICTOR=2",
+    #                     "-co", "ZLEVEL=2"
+    #                 ])
+
+    #             if nodata_value is not None:
+    #                 cmd_downsample.extend(["-a_nodata", str(nodata_value)])
+
+    #             cmd_downsample.extend([str(temp_file), str(input_tif)])
+
+    #             print(f"Command: {' '.join(cmd_downsample)}")
+    #             result = subprocess.run(cmd_downsample, capture_output=True, text=True)
+
+    #             if result.returncode != 0:
+    #                 print(f"Error: {result.stderr}")
+    #                 raise Exception(f"Resampling failed with code {result.returncode}")
+
+    #             print(f"✓ Final COG created: {input_tif}")
+
+    #         except Exception as e:
+    #             print(f"\n✗ Error occurred: {e}")
+    #             raise e
+
+    #         finally:
+    #             # Clean up temp file
+    #             if temp_file.exists():
+    #                 print(f"Cleaning up: {temp_file}")
+    #                 temp_file.unlink()
+
+    #     ##############################
+    #     # Clip Data to Switzerland and Reproeject to CH1903LV95
+
+    #     def parse_sentinel2_filename(filename):
+    #         """Parse Sentinel-2 mosaic filename including cloudmask."""
+    #         basename = os.path.basename(filename)
+
+    #         if not basename.endswith('.tif'):
+    #             return None
+
+    #         name_without_ext = basename[:-4]
+    #         parts = name_without_ext.split('_')
+
+    #         if len(parts) < 7 or parts[3] != 'mosaic':
+    #             return None
+
+    #         timestamp = parts[4]
+    #         band = parts[5].upper()
+    #         resolution_str = parts[6]
+
+    #         if not resolution_str.endswith('m'):
+    #             return None
+
+    #         try:
+    #             resolution = int(resolution_str[:-1])
+    #         except ValueError:
+    #             return None
+
+    #         # Validate: either in band_config or is CLOUDMASK
+    #         all_bands = [b for bands in config.PRODUCT_S2_LEVEL_2A['band_config'].values() for b in bands]
+
+    #         if band not in all_bands and band != 'CLOUDMASK':
+    #             return None
+
+    #         return {
+    #             'timestamp': timestamp,
+    #             'band': band,
+    #             'resolution': resolution,
+    #             'filename': filename
+    #         }
+
+
+    #     # Get all .tif files in current directory
+    #     tif_files = glob.glob('*.tif')
+
+    #     # Parse and group by timestamp
+    #     files_by_timestamp = defaultdict(list)
+
+    #     for tif_file in tif_files:
+    #         parsed = parse_sentinel2_filename(tif_file)
+    #         if parsed:
+    #             files_by_timestamp[parsed['timestamp']].append(parsed)
+
+    #     # Process files grouped by timestamp
+    #     for timestamp, file_list in sorted(files_by_timestamp.items()):
+    #         print(f"\n=== Processing timestamp: {timestamp} ===")
+
+    #         # Sort by resolution and band
+    #         file_list.sort(key=lambda x: (x['resolution'], x['band']))
+
+    #         for file_info in file_list:
+    #             band = file_info['band']
+    #             filename = file_info['filename']
+
+    #             # Get band title using config
+    #             band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
+    #             band_title = band_names.get(band, band)
+
+    #             # Set compression
+    #             if band in ['TCI']:
+    #                 lossy = True
+    #                 quality = 85
+    #             else:
+    #                 lossy = False
+    #                 quality = 100
+
+    #             print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
+
+    #             clip_resample_to_cog(
+    #                 filename,
+    #                 os.path.join(config.BUFFER),
+    #                 nodata_value=None,
+    #                 epsg=2056,
+    #                 lossy=lossy,
+    #                 quality=quality,
+    #                 oversample_factor=5
+    #             )
+
+    #     # clip_resample_to_cog("swisseo_s2-sr_v200_mosaic_2025-06-01t101041_tci_10m.tif",os.path.join(config.BUFFER),nodata_value=None,epsg=2056,lossy=True,quality=85,oversample_factor=5)
+
+    #     ##############################
+    #     # TODO Checkif current, if yes then rund upload below twice a day
+
+
+    #     ##############################
+    #     # Upload to STAC
+    #     # TODO News WMS URL: replace with COGTIF
+
+    #     # Process Sentinel files grouped by timestamp
+    #     for timestamp, file_list in sorted(files_by_timestamp.items()):
+    #         print(f"\n=== Processing timestamp: {timestamp} ===")
+
+    #         # TCI last, resolution descending (bigger first), bands Z to A, so it is alphabetically in STAC
+    #         file_list.sort(key=lambda x: (x['band'] == 'TCI', x['resolution'], x['band']), reverse=True)
+
+    #         for file_info in file_list:
+    #             band = file_info['band']
+    #             filename = file_info['filename']
+
+    #             # Get band title using config
+    #             band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
+    #             band_title = band_names.get(band, band)
+
+    #             # STAC Upload
+    #             main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
+
+    #             # Clean up Data file
+    #             if Path(filename).exists():
+    #                 print(f"Cleaning up: {filename}")
+    #                 Path(filename).unlink()
+
+    #     # Upload metadata fileuti
+    #     filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
+    #     main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
+
+    #     # Clean up metadata file
+    #     if Path(filename).exists():
+    #             print(f"Cleaning up: {filename}")
+    #             Path(filename).unlink()
+
+    #     ##############################
+    #     # TODO Upload to GEE
+
+
+
+    # print("end of function")

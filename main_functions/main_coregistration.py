@@ -583,7 +583,7 @@ def deshift_files(
         acquisition_date_str = str(acquisition_date)
 
     # Find all files to deshift
-    base_path = f"{config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]}/R{orbit_nr:03}/{acquisition_date_str}"
+    base_path = f"{config.PRODUCT_S2_LEVEL_2A['copernicus_collection']}/R{orbit_nr:03}/{acquisition_date_str}"
 
     files_to_deshift = []
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_*_*m_clip.vrt")
