@@ -137,37 +137,27 @@ def create_binary_cloud_mask(
 ) -> str:
     """
     Create a binary cloud mask from a cloud probability file.
-
-    Args:
-        cloud_file: Path to the cloud probability file.
-        output_file: Path to the output binary mask file.
-        cloud_threshold: Threshold percentage for cloud detection.
-
-    Returns:
-        Path to the created binary mask.
-
-    Raises:
-        RuntimeError: If mask creation fails.
+    0 = no cloud, 1 = cloud, 255 = NoData
     """
     cloud_file = main_utils.ensure_path(cloud_file)
     output_file = main_utils.ensure_path(output_file)
     main_utils.ensure_directory(output_file.parent)
 
-    logger.info(f"Creating binary cloud mask with threshold ≥{cloud_threshold}%")
+    logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
 
-    # Use gdal_calc to create binary mask
+    # Create binary cloud mask with NoData = 255
     command = [
-        'gdal_calc.py',
-        '-A', str(cloud_file),
-        '--overwrite',
-        f'--outfile={output_file}',
-        f'--calc="A<={cloud_threshold}"',
-        '--type=Byte',
-        '--NoDataValue=None',
-        '--co', 'COMPRESS=DEFLATE',
-        '--co', 'PREDICTOR=2',
-        '--co', 'NUM_THREADS=ALL_CPUS',
-        '--quiet'
+        "gdal_calc.py",
+        "-A", str(cloud_file),
+        "--overwrite",
+        f"--outfile={output_file}",
+        f"--calc=A>{cloud_threshold}",
+        "--type=Byte",
+        "--NoDataValue=255",  # Use 255 instead of 0
+        "--co", "COMPRESS=DEFLATE",
+        "--co", "PREDICTOR=2",
+        "--co", "NUM_THREADS=ALL_CPUS",
+        "--quiet"
     ]
 
     success, _, stderr = main_utils.run_gdal_command(command)
@@ -175,7 +165,17 @@ def create_binary_cloud_mask(
         logger.error(f"Failed to create cloud mask: {stderr}")
         raise RuntimeError(f"Failed to create cloud mask: {stderr}")
 
+    # Explicitly set NoData value
+    ds = gdal.Open(str(output_file), gdal.GA_Update)
+    if ds is not None:
+        band = ds.GetRasterBand(1)
+        band.SetNoDataValue(255)
+        band.FlushCache()
+        ds = None
+        logger.info(f"NoData value set to 255 for {output_file}")
+
     return str(output_file)
+
 
 
 def coregister_S2(
@@ -461,6 +461,39 @@ def coreg_info_from_pickle(file_path: Union[str, Path]) -> Dict[str, Any]:
         logger.error(f"Error loading coregistration info: {str(e)}")
         raise ValueError(f"Invalid coregistration info file: {str(e)}")
 
+def create_vrt_with_nodata(src_vrt: Union[str, Path], nodata_value: float) -> str:
+    """
+    Create a temporary VRT file with NoData value set.
+
+    Args:
+        src_vrt: Path to source VRT.
+        nodata_value: NoData value to set.
+
+    Returns:
+        Path to temporary VRT with NoData set.
+
+    Raises:
+        RuntimeError: If VRT creation fails.
+    """
+    src_vrt = main_utils.ensure_path(src_vrt)
+    temp_vrt = src_vrt.parent / f"temp_nodata_{src_vrt.name}"
+
+    logger.info(f"Creating temporary VRT with NoData={nodata_value} for {src_vrt.name}")
+
+    # Use gdal_translate to create VRT with NoData
+    command = [
+        "gdal_translate",
+        "-of", "VRT",
+        "-a_nodata", str(nodata_value),
+        str(src_vrt),
+        str(temp_vrt)
+    ]
+
+    success, _, stderr = main_utils.run_gdal_command(command)
+    if not success:
+        raise RuntimeError(f"Failed to create VRT with NoData: {stderr}")
+
+    return str(temp_vrt)
 
 def deshift_image(
     im_target: Union[str, Path],
@@ -611,6 +644,29 @@ def deshift_files(
         info = main_utils.get_raster_info(file)
         nodata = info["bands"][0]["no_data_value"]
 
+        # GDAL 3.11 FIX: Handle None nodata values
+        original_file = file
+        temp_vrt_created = False
+
+        if nodata is None:
+            # For cloud masks and binary data, use 255
+            if 'cloud' in os.path.basename(file).lower():
+                nodata = 255
+            # For other data, use 0
+            else:
+                nodata = 0
+
+            logger.warning(f"NoData value was None for {os.path.basename(file)}, using {nodata}")
+
+            # Create temporary VRT with NoData set if input is VRT
+            if file.endswith('.vrt'):
+                try:
+                    file = create_vrt_with_nodata(file, nodata)
+                    temp_vrt_created = True
+                except Exception as e:
+                    logger.error(f"Failed to create temporary VRT: {str(e)}")
+                    continue
+
         # Extract band name and GSD from filename
         # Pattern matches any band name (B02, B8A, AOT, SCL, TCI, etc.) followed by resolution
         match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(file))
@@ -623,11 +679,17 @@ def deshift_files(
             if '_cloud_' in os.path.basename(file): # CS+
                 band_name = 'cloudmask'
                 suffix = f"{band_name}_10m"
-            elif '_omnicloud_' in os.path.basename(file): #Omnicloud
+            elif '_omnicloud_' in os.path.basename(file): # Omnicloud
                 band_name = 'omnicloudmask'
                 suffix = f"{band_name}_10m"
             else:
                 logger.info(f"Unknown file in list for deshifting: {os.path.basename(file)}. Skipping.")
+                # Clean up temporary VRT if created
+                if temp_vrt_created and os.path.exists(file):
+                    try:
+                        os.remove(file)
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temporary VRT: {str(e)}")
                 continue
 
         # Build output path at topmost level
@@ -635,15 +697,27 @@ def deshift_files(
         output_path = topmost_dir / output_filename
 
         # Deshift the image
-        deshift_image(
-            im_target=file,
-            pickle_path=pickle_path,
-            path_out=str(output_path),
-            nodata=nodata,
-            **kwargs
-        )
+        try:
+            deshift_image(
+                im_target=file,
+                pickle_path=pickle_path,
+                path_out=str(output_path),
+                nodata=nodata,
+                **kwargs
+            )
 
-        output_paths.append(str(output_path))
+            output_paths.append(str(output_path))
+
+        except Exception as e:
+            logger.error(f"Failed to deshift {os.path.basename(file)}: {str(e)}")
+        finally:
+            # Clean up temporary VRT if created
+            if temp_vrt_created and os.path.exists(file):
+                try:
+                    os.remove(file)
+                    logger.info(f"Cleaned up temporary VRT: {os.path.basename(file)}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary VRT {file}: {str(e)}")
 
     logger.info(f"Deshifted {len(output_paths)} files")
     return output_paths
