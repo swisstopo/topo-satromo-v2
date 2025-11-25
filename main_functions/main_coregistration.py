@@ -138,6 +138,17 @@ def create_binary_cloud_mask(
     """
     Create a binary cloud mask from a cloud probability file.
     0 = no cloud, 1 = cloud, 255 = NoData
+
+    Args:
+        cloud_file: Path to the cloud probability file.
+        output_file: Path to the output binary mask file.
+        cloud_threshold: Threshold percentage for cloud detection.
+
+    Returns:
+        Path to the created binary mask.
+
+    Raises:
+        RuntimeError: If mask creation fails.
     """
     cloud_file = main_utils.ensure_path(cloud_file)
     output_file = main_utils.ensure_path(output_file)
@@ -153,7 +164,7 @@ def create_binary_cloud_mask(
         f"--outfile={output_file}",
         f"--calc=A>{cloud_threshold}",
         "--type=Byte",
-        "--NoDataValue=255",  # Use 255 instead of 0
+        "--NoDataValue=255",
         "--co", "COMPRESS=DEFLATE",
         "--co", "PREDICTOR=2",
         "--co", "NUM_THREADS=ALL_CPUS",
@@ -165,17 +176,16 @@ def create_binary_cloud_mask(
         logger.error(f"Failed to create cloud mask: {stderr}")
         raise RuntimeError(f"Failed to create cloud mask: {stderr}")
 
-    # Explicitly set NoData value
+    # Explicitly set NoData value to ensure it's properly written
     ds = gdal.Open(str(output_file), gdal.GA_Update)
     if ds is not None:
         band = ds.GetRasterBand(1)
         band.SetNoDataValue(255)
         band.FlushCache()
         ds = None
-        logger.info(f"NoData value set to 255 for {output_file}")
+        logger.info(f"Binary cloud mask created: 0=no cloud, 1=cloud, 255=NoData")
 
     return str(output_file)
-
 
 
 def coregister_S2(
@@ -640,23 +650,28 @@ def deshift_files(
     for file in files_to_deshift:
         logger.info(f"Processing: {os.path.basename(file)}")
 
-        # Get nodata value
+        # Get nodata value from file
         info = main_utils.get_raster_info(file)
         nodata = info["bands"][0]["no_data_value"]
 
-        # GDAL 3.11 FIX: Handle None nodata values
+        # GDAL 3.11 FIX: Handle None nodata values and special cases
         original_file = file
         temp_vrt_created = False
 
-        if nodata is None:
-            # For cloud masks and binary data, use 255
+        # Determine appropriate nodata value based on file type
+        if nodata is None or (file.endswith('.vrt') and 'cloud' in os.path.basename(file).lower()):
+            # For cloud masks, always use 255
             if 'cloud' in os.path.basename(file).lower():
                 nodata = 255
+            # For TCI (RGB composite), use a value that won't interfere with data (not 0)
+            elif '_tci_' in os.path.basename(file).lower():
+                nodata = 0  # We'll handle this specially
             # For other data, use 0
             else:
                 nodata = 0
 
-            logger.warning(f"NoData value was None for {os.path.basename(file)}, using {nodata}")
+            if nodata is None or info["bands"][0]["no_data_value"] is None:
+                logger.warning(f"NoData value was None for {os.path.basename(file)}, using {nodata}")
 
             # Create temporary VRT with NoData set if input is VRT
             if file.endswith('.vrt'):
@@ -696,15 +711,29 @@ def deshift_files(
         output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{suffix}.tif"
         output_path = topmost_dir / output_filename
 
-        # Deshift the image
+        # Deshift the image with appropriate parameters
         try:
-            deshift_image(
-                im_target=file,
-                pickle_path=pickle_path,
-                path_out=str(output_path),
-                nodata=nodata,
-                **kwargs
-            )
+            # Special handling for TCI to avoid nodata=0 warning
+            deshift_kwargs = kwargs.copy()
+            if '_tci_' in band_name:
+                # For TCI, don't specify nodata in deshift_image to avoid the warning
+                # The output will inherit proper nodata handling from the VRT
+                logger.info(f"Processing TCI without explicit nodata to avoid value conflicts")
+                deshift_image(
+                    im_target=file,
+                    pickle_path=pickle_path,
+                    path_out=str(output_path),
+                    **deshift_kwargs
+                )
+            else:
+                # For other files, use the determined nodata value
+                deshift_image(
+                    im_target=file,
+                    pickle_path=pickle_path,
+                    path_out=str(output_path),
+                    nodata=nodata,
+                    **deshift_kwargs
+                )
 
             output_paths.append(str(output_path))
 
