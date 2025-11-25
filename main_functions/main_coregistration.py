@@ -507,7 +507,7 @@ def create_vrt_with_nodata(src_vrt: Union[str, Path], nodata_value: float) -> st
 
 def deshift_image(
     im_target: Union[str, Path],
-    pickle_path = Union[str, Path],
+    pickle_path: Union[str, Path],
     **kwargs
 ) -> None:
     """
@@ -515,12 +515,12 @@ def deshift_image(
 
     Args:
         im_target: Path of the image to be de-shifted.
-        coreg_info: The results of the co-registration (from COREG.coreg_info or COREG_LOCAL.coreg_info).
+        pickle_path: Path to pickle file with coregistration info.
         **kwargs: Additional keyword arguments for DeShifter.DESHIFTER.
 
     Keyword Args:
         path_out (str): Output path for coregistered results.
-        fmt_out (str): Raster file format (default: 'ENVI').
+        fmt_out (str): Raster file format (default: 'GTIFF').
         out_crea_options (list): GDAL creation options.
         band2process (int): Band index to process (starts with 1).
         nodata (float): No data value.
@@ -543,17 +543,6 @@ def deshift_image(
     Raises:
         ValueError: If image cannot be opened or processed.
     """
-    # Example of using pickle for coregistration:
-    #
-    # Step 1: Save coregistration info to pickle file
-    # coreg_info_to_pickle(CRL.coreg_info, '/path/to/coreg_info.pkl')
-    #
-    # Step 2: Load coregistration info from pickle file later
-    # coreg_info_reloaded = coreg_info_from_pickle('/path/to/coreg_info.pkl')
-    #
-    # Step 3: Use reloaded info to deshift image
-    # deshift_image(image_to_deshift, coreg_info_reloaded, path_out='/path/to/output.tif')
-
     im_target = main_utils.ensure_path(im_target)
 
     logger.info(f"Deshifting image: {im_target}")
@@ -578,10 +567,15 @@ def deshift_image(
         if 'path_out' in kwargs:
             main_utils.ensure_directory(Path(kwargs['path_out']).parent)
 
-        # Default parameters if not specified based on https://github.com/geostandards-ch/cog-best-practices#lossless-raster
+        # Remove STATISTICS from creation options (not supported by GTiff driver)
+        if 'out_crea_options' in kwargs:
+            kwargs['out_crea_options'] = [opt for opt in kwargs['out_crea_options']
+                                          if not opt.startswith('STATISTICS')]
+
+        # Default parameters if not specified
         default_params = {
-            'fmt_out': 'COG',
-            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES', 'STATISTICS=YES'],
+            'fmt_out': 'GTIFF',
+            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
             'progress': True,
             'out_gsd': (tgt_gsd_x, tgt_gsd_y),
             'resamp_alg': 'nearest',
@@ -590,7 +584,7 @@ def deshift_image(
         # Update with defaults if not in kwargs
         for key, value in default_params.items():
             if key not in kwargs:
-                kwargs[key] = tuple(value) if isinstance(value, tuple) else value # Making sure that tuples are preserved
+                kwargs[key] = tuple(value) if isinstance(value, tuple) else value
 
         logger.info(f"Running DeShifter with parameters: {kwargs}")
         DeShifter.DESHIFTER(im2shift=str(im_target), coreg_results=coreg_info, **kwargs).correct_shifts()
@@ -652,54 +646,57 @@ def deshift_files(
 
         # Get nodata value from file
         info = main_utils.get_raster_info(file)
-        nodata = info["bands"][0]["no_data_value"]
+        original_nodata = info["bands"][0]["no_data_value"]
 
-        # GDAL 3.11 FIX: Handle None nodata values and special cases
+        # GDAL 3.11 FIX: Determine appropriate nodata value based on file type
         original_file = file
         temp_vrt_created = False
+        nodata = None
 
-        # Determine appropriate nodata value based on file type
-        if nodata is None or (file.endswith('.vrt') and 'cloud' in os.path.basename(file).lower()):
-            # For cloud masks, always use 255
-            if 'cloud' in os.path.basename(file).lower():
-                nodata = 255
-            # For TCI (RGB composite), use a value that won't interfere with data (not 0)
-            elif '_tci_' in os.path.basename(file).lower():
-                nodata = 0  # We'll handle this specially
-            # For other data, use 0
-            else:
-                nodata = 0
+        # Determine appropriate nodata value based on file type and content
+        filename_lower = os.path.basename(file).lower()
 
-            if nodata is None or info["bands"][0]["no_data_value"] is None:
-                logger.warning(f"NoData value was None for {os.path.basename(file)}, using {nodata}")
+        if '_cloud' in filename_lower:
+            # Cloud masks: use 255 as NoData
+            nodata = 255
+            logger.info(f"Cloud mask detected, using NoData=255")
+        elif '_tci_' in filename_lower:
+            # TCI (RGB composite): use 256 (outside byte range) to avoid conflicts
+            nodata = None  # Don't set nodata for TCI, let it be handled naturally
+            logger.info(f"TCI detected, not setting explicit NoData to avoid value conflicts")
+        elif original_nodata is None:
+            # For other files without nodata, use 0
+            nodata = 0
+            logger.warning(f"NoData value was None, using 0")
+        else:
+            # Use existing nodata value
+            nodata = original_nodata
 
-            # Create temporary VRT with NoData set if input is VRT
-            if file.endswith('.vrt'):
-                try:
-                    file = create_vrt_with_nodata(file, nodata)
-                    temp_vrt_created = True
-                except Exception as e:
-                    logger.error(f"Failed to create temporary VRT: {str(e)}")
-                    continue
+        # For VRT files, always create a temporary VRT with explicit NoData
+        if file.endswith('.vrt') and nodata is not None:
+            try:
+                file = create_vrt_with_nodata(file, nodata)
+                temp_vrt_created = True
+            except Exception as e:
+                logger.error(f"Failed to create temporary VRT: {str(e)}")
+                continue
 
         # Extract band name and GSD from filename
-        # Pattern matches any band name (B02, B8A, AOT, SCL, TCI, etc.) followed by resolution
-        match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(file))
+        match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(original_file))
         if match:
             band_name = match.group(1).lower()
             gsd = match.group(2)
             suffix = f"{band_name}_{gsd}m"
         else:
-            # Fallback for files without band info (like cloud masks or omnicloud)
-            if '_cloud_' in os.path.basename(file): # CS+
+            # Fallback for files without band info
+            if '_cloud_' in filename_lower:
                 band_name = 'cloudmask'
                 suffix = f"{band_name}_10m"
-            elif '_omnicloud_' in os.path.basename(file): # Omnicloud
+            elif '_omnicloud_' in filename_lower:
                 band_name = 'omnicloudmask'
                 suffix = f"{band_name}_10m"
             else:
                 logger.info(f"Unknown file in list for deshifting: {os.path.basename(file)}. Skipping.")
-                # Clean up temporary VRT if created
                 if temp_vrt_created and os.path.exists(file):
                     try:
                         os.remove(file)
@@ -711,22 +708,12 @@ def deshift_files(
         output_filename = f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_{suffix}.tif"
         output_path = topmost_dir / output_filename
 
-        # Deshift the image with appropriate parameters
+        # Deshift the image
         try:
-            # Special handling for TCI to avoid nodata=0 warning
             deshift_kwargs = kwargs.copy()
-            if '_tci_' in band_name:
-                # For TCI, don't specify nodata in deshift_image to avoid the warning
-                # The output will inherit proper nodata handling from the VRT
-                logger.info(f"Processing TCI without explicit nodata to avoid value conflicts")
-                deshift_image(
-                    im_target=file,
-                    pickle_path=pickle_path,
-                    path_out=str(output_path),
-                    **deshift_kwargs
-                )
-            else:
-                # For other files, use the determined nodata value
+
+            # Only pass nodata if it's defined
+            if nodata is not None:
                 deshift_image(
                     im_target=file,
                     pickle_path=pickle_path,
@@ -734,11 +721,19 @@ def deshift_files(
                     nodata=nodata,
                     **deshift_kwargs
                 )
+            else:
+                # For TCI and files where we don't want to set nodata
+                deshift_image(
+                    im_target=file,
+                    pickle_path=pickle_path,
+                    path_out=str(output_path),
+                    **deshift_kwargs
+                )
 
             output_paths.append(str(output_path))
 
         except Exception as e:
-            logger.error(f"Failed to deshift {os.path.basename(file)}: {str(e)}")
+            logger.error(f"Failed to deshift {os.path.basename(original_file)}: {str(e)}")
         finally:
             # Clean up temporary VRT if created
             if temp_vrt_created and os.path.exists(file):
