@@ -993,7 +993,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     #                 print(f"Using JPEG compression with quality {quality}")
     #                 cmd_downsample.extend([
     #                     "-co", "COMPRESS=JPEG",
-    #                     "-co", f"QUALITY={quality}"
+    #                     "-co", f"QUALITY={quality}",
+    #                     "-dstalpha",
+    #                     "-srcnodata", "0 0 0"
     #                 ])
     #             else:
     #                 print(f"Using lossless DEFLATE compression")
