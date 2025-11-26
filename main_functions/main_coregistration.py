@@ -139,6 +139,8 @@ def create_binary_cloud_mask(
     Create a binary cloud mask from a cloud probability file.
     0 = no cloud, 1 = cloud, 255 = NoData
 
+    Uses Python API for platform independence and reliability.
+
     Args:
         cloud_file: Path to the cloud probability file.
         output_file: Path to the output binary mask file.
@@ -156,36 +158,68 @@ def create_binary_cloud_mask(
 
     logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
 
-    # Create binary cloud mask with NoData = 255
-    command = [
-        "gdal_calc.py",
-        "-A", str(cloud_file),
-        "--overwrite",
-        f"--outfile={output_file}",
-        f"--calc=A>{cloud_threshold}",
-        "--type=Byte",
-        "--NoDataValue=255",
-        "--co", "COMPRESS=DEFLATE",
-        "--co", "PREDICTOR=2",
-        "--co", "NUM_THREADS=ALL_CPUS",
-        "--quiet"
-    ]
+    try:
+        # Open source file
+        src_ds = gdal.Open(str(cloud_file))
+        if src_ds is None:
+            raise RuntimeError(f"Could not open cloud file: {cloud_file}")
 
-    success, _, stderr = main_utils.run_gdal_command(command)
-    if not success:
-        logger.error(f"Failed to create cloud mask: {stderr}")
-        raise RuntimeError(f"Failed to create cloud mask: {stderr}")
+        # Read the data
+        band = src_ds.GetRasterBand(1)
+        data = band.ReadAsArray()
+        src_nodata = band.GetNoDataValue()
 
-    # Explicitly set NoData value to ensure it's properly written
-    ds = gdal.Open(str(output_file), gdal.GA_Update)
-    if ds is not None:
-        band = ds.GetRasterBand(1)
-        band.SetNoDataValue(255)
-        band.FlushCache()
-        ds = None
+        # Create binary mask: 1 where cloud probability > threshold, 0 otherwise
+        # Preserve NoData as 255
+        mask = np.zeros_like(data, dtype=np.uint8)
+
+        if src_nodata is not None:
+            # Set areas with NoData to 255
+            nodata_mask = (data == src_nodata)
+            mask[nodata_mask] = 255
+            # Set cloud areas (above threshold) to 1
+            mask[(data > cloud_threshold) & ~nodata_mask] = 1
+            # Everything else is already 0 (no cloud)
+        else:
+            # No NoData in source, just threshold
+            mask[data > cloud_threshold] = 1
+
+        # Create output file
+        driver = gdal.GetDriverByName('GTiff')
+        out_ds = driver.Create(
+            str(output_file),
+            src_ds.RasterXSize,
+            src_ds.RasterYSize,
+            1,
+            gdal.GDT_Byte,
+            options=['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS']
+        )
+
+        if out_ds is None:
+            raise RuntimeError(f"Could not create output file: {output_file}")
+
+        # Copy geotransform and projection
+        out_ds.SetGeoTransform(src_ds.GetGeoTransform())
+        out_ds.SetProjection(src_ds.GetProjection())
+
+        # Write the mask
+        out_band = out_ds.GetRasterBand(1)
+        out_band.WriteArray(mask)
+        out_band.SetNoDataValue(255)
+        out_band.FlushCache()
+
+        # Clean up
+        out_band = None
+        out_ds = None
+        src_ds = None
+
         logger.info(f"Binary cloud mask created: 0=no cloud, 1=cloud, 255=NoData")
 
-    return str(output_file)
+        return str(output_file)
+
+    except Exception as e:
+        logger.error(f"Failed to create binary cloud mask: {str(e)}")
+        raise RuntimeError(f"Failed to create binary cloud mask: {str(e)}")
 
 
 def coregister_S2(
@@ -473,7 +507,7 @@ def coreg_info_from_pickle(file_path: Union[str, Path]) -> Dict[str, Any]:
 
 def create_vrt_with_nodata(src_vrt: Union[str, Path], nodata_value: float) -> str:
     """
-    Create a temporary VRT file with NoData value set.
+    Create a temporary VRT file with NoData value explicitly set in all bands.
 
     Args:
         src_vrt: Path to source VRT.
@@ -490,20 +524,36 @@ def create_vrt_with_nodata(src_vrt: Union[str, Path], nodata_value: float) -> st
 
     logger.info(f"Creating temporary VRT with NoData={nodata_value} for {src_vrt.name}")
 
-    # Use gdal_translate to create VRT with NoData
-    command = [
-        "gdal_translate",
-        "-of", "VRT",
-        "-a_nodata", str(nodata_value),
-        str(src_vrt),
-        str(temp_vrt)
-    ]
+    try:
+        # First, use gdal_translate to create a basic VRT
+        command = [
+            "gdal_translate",
+            "-of", "VRT",
+            "-a_nodata", str(nodata_value),
+            str(src_vrt),
+            str(temp_vrt)
+        ]
 
-    success, _, stderr = main_utils.run_gdal_command(command)
-    if not success:
-        raise RuntimeError(f"Failed to create VRT with NoData: {stderr}")
+        success, _, stderr = main_utils.run_gdal_command(command)
+        if not success:
+            raise RuntimeError(f"Failed to create VRT with NoData: {stderr}")
 
-    return str(temp_vrt)
+        # Now explicitly set NoData on all bands using GDAL API
+        ds = gdal.Open(str(temp_vrt), gdal.GA_Update)
+        if ds is not None:
+            for i in range(1, ds.RasterCount + 1):
+                band = ds.GetRasterBand(i)
+                band.SetNoDataValue(float(nodata_value))
+                band.FlushCache()
+            ds.FlushCache()
+            ds = None
+            logger.info(f"Explicitly set NoData={nodata_value} on all bands in VRT")
+
+        return str(temp_vrt)
+
+    except Exception as e:
+        logger.error(f"Failed to create VRT with NoData: {str(e)}")
+        raise RuntimeError(f"Failed to create VRT with NoData: {str(e)}")
 
 def deshift_image(
     im_target: Union[str, Path],
@@ -661,9 +711,10 @@ def deshift_files(
             nodata = 255
             logger.info(f"Cloud mask detected, using NoData=255")
         elif '_tci_' in filename_lower:
-            # TCI (RGB composite): use 256 (outside byte range) to avoid conflicts
-            nodata = None  # Don't set nodata for TCI, let it be handled naturally
-            logger.info(f"TCI detected, not setting explicit NoData to avoid value conflicts")
+            # TCI (RGB composite): use 65535 (outside byte range but valid for processing)
+            # This avoids conflict with actual RGB values which range 0-255
+            nodata = 65535
+            logger.info(f"TCI detected, using NoData=65535 to avoid value conflicts")
         elif original_nodata is None:
             # For other files without nodata, use 0
             nodata = 0
@@ -673,7 +724,7 @@ def deshift_files(
             nodata = original_nodata
 
         # For VRT files, always create a temporary VRT with explicit NoData
-        if file.endswith('.vrt') and nodata is not None:
+        if file.endswith('.vrt'):
             try:
                 file = create_vrt_with_nodata(file, nodata)
                 temp_vrt_created = True
@@ -710,25 +761,13 @@ def deshift_files(
 
         # Deshift the image
         try:
-            deshift_kwargs = kwargs.copy()
-
-            # Only pass nodata if it's defined
-            if nodata is not None:
-                deshift_image(
-                    im_target=file,
-                    pickle_path=pickle_path,
-                    path_out=str(output_path),
-                    nodata=nodata,
-                    **deshift_kwargs
-                )
-            else:
-                # For TCI and files where we don't want to set nodata
-                deshift_image(
-                    im_target=file,
-                    pickle_path=pickle_path,
-                    path_out=str(output_path),
-                    **deshift_kwargs
-                )
+            deshift_image(
+                im_target=file,
+                pickle_path=pickle_path,
+                path_out=str(output_path),
+                nodata=nodata,
+                **kwargs
+            )
 
             output_paths.append(str(output_path))
 
