@@ -172,6 +172,8 @@ rclone/
 
 # Co-registered assets
 *.tif
+*.json
+*.pickle
 
 # Downloaded assets (e.g. S2 tiles)
 temp/
