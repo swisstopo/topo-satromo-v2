@@ -950,28 +950,33 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
                 print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
 
-                # Calculate output size based on resolution change
-                # gdal_translate uses -outsize percentage or pixel dimensions
-                outsize_percent = int((intermediate_res / resolution) * 100)
+                # The target resolution is simply the original resolution.
+                target_res = resolution
 
                 cmd_downsample = [
-                    "gdal_translate",
-                    "-of", "COG",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "-co", "BIGTIFF=YES",
-                    "-outsize", f"{outsize_percent}%", f"{outsize_percent}%",
-                    "-r", "bilinear",
-                    "-ot", datatype
+                "gdalwarp",
+                        "-of", "COG",
+                        "-co", "NUM_THREADS=ALL_CPUS",
+                        "-co", "BIGTIFF=YES",
+                        # Resizing based on final resolution
+                        "-tr", str(target_res), str(target_res),
+                        # Resampling
+                        "-r", "bilinear",
+                        "-ot", datatype,
                 ]
 
                 # Compression options
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
                     cmd_downsample.extend([
+                # --- Clipping and Transparency Flags, since we want no artefacts at the border ---
+                        "-cutline", str(clipfile),
+                        "-crop_to_cutline",
+                        "-dstalpha", # <-- Crucial: Creates Alpha mask for clean JPEG edges
+                        # Compression options
                         "-co", "COMPRESS=JPEG",
                         "-co", f"QUALITY={quality}",
-                        "-dstalpha",
-                        "-srcnodata", "0 0 0"
+                        "-co", "PHOTOMETRIC=YCBCR" # Recommended for JPEG compression
                     ])
                 else:
                     print(f"Using lossless DEFLATE compression")
