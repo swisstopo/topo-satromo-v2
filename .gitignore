@@ -170,6 +170,9 @@ rclone/
 # Ground Reference Image (3 GB). Will be stored on public S3 bucket
 */SI_SPOT5_WGS84_UTM32N_10m_RED_COG.tif
 
+# Co-registered assets
+*.tif
+
 # Downloaded assets (e.g. S2 tiles)
 temp/
 sentinel-2-l2a/
