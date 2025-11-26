@@ -158,7 +158,24 @@ def create_binary_cloud_mask(
 
     logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
 
+    # GDAL 3.11 FIX: If input is a VRT without NoData, create a temporary VRT with NoData set
+    temp_vrt_created = False
+    original_cloud_file = cloud_file
+
     try:
+        # Check if source has NoData defined
+        check_ds = gdal.Open(str(cloud_file))
+        if check_ds is not None:
+            check_band = check_ds.GetRasterBand(1)
+            src_nodata = check_band.GetNoDataValue()
+            check_ds = None
+
+            # If it's a VRT without NoData, create a temp VRT with NoData
+            if src_nodata is None and str(cloud_file).endswith('.vrt'):
+                logger.info(f"Source VRT has no NoData defined, creating temporary VRT with NoData=0")
+                cloud_file = create_vrt_with_nodata(cloud_file, 0)
+                temp_vrt_created = True
+
         # Open source file
         src_ds = gdal.Open(str(cloud_file))
         if src_ds is None:
@@ -220,6 +237,14 @@ def create_binary_cloud_mask(
     except Exception as e:
         logger.error(f"Failed to create binary cloud mask: {str(e)}")
         raise RuntimeError(f"Failed to create binary cloud mask: {str(e)}")
+    finally:
+        # Clean up temporary VRT if created
+        if temp_vrt_created and cloud_file != original_cloud_file and os.path.exists(cloud_file):
+            try:
+                os.remove(cloud_file)
+                logger.info(f"Cleaned up temporary cloud VRT")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary cloud VRT: {str(e)}")
 
 
 def coregister_S2(

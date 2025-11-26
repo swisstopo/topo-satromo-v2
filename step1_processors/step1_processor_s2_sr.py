@@ -972,11 +972,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # --- Clipping and Transparency Flags, since we want no artefacts at the border ---
                         "-cutline", str(clipfile),
                         "-crop_to_cutline",
+                        "-srcnodata", "0",
                         "-dstalpha", # <-- Crucial: Creates Alpha mask for clean JPEG edges
                         # Compression options
                         "-co", "COMPRESS=JPEG",
-                        "-co", f"QUALITY={quality}",
-                        "-co", "PHOTOMETRIC=YCBCR" # Recommended for JPEG compression
+                        "-co", f"QUALITY={quality}"
                     ])
                 else:
                     print(f"Using lossless DEFLATE compression")
