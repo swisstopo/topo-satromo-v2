@@ -538,7 +538,7 @@ def deshift_image(
         # Default parameters if not specified based on https://github.com/geostandards-ch/cog-best-practices#lossless-raster
         default_params = {
             'fmt_out': 'COG',
-            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES', 'STATISTICS=YES'],
+            'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
             'progress': True,
             'out_gsd': (tgt_gsd_x, tgt_gsd_y),
             'resamp_alg': 'nearest',
