@@ -137,7 +137,8 @@ def create_binary_cloud_mask(
 ) -> str:
     """
     Create a binary cloud mask from a cloud probability file.
-    0 = no cloud, 1 = cloud, 255 = NoData
+    For AROSICS: 0 = valid/no cloud, 1 = cloud/bad data
+    NoData areas are set to 0 (transparent/ignore) for AROSICS compatibility.
 
     Uses Python API for platform independence and reliability.
 
@@ -158,23 +159,25 @@ def create_binary_cloud_mask(
 
     logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
 
-    # GDAL 3.11 FIX: If input is a VRT without NoData, create a temporary VRT with NoData set
-    temp_vrt_created = False
+    # GDAL 3.11 FIX: For VRT files, materialize to GeoTIFF first to avoid INIT_DEST warnings
+    temp_tif_created = False
     original_cloud_file = cloud_file
 
     try:
-        # Check if source has NoData defined
-        check_ds = gdal.Open(str(cloud_file))
-        if check_ds is not None:
-            check_band = check_ds.GetRasterBand(1)
-            src_nodata = check_band.GetNoDataValue()
-            check_ds = None
+        # If input is a VRT, convert to temporary GeoTIFF to avoid NoData warnings from source files
+        if str(cloud_file).endswith('.vrt'):
+            logger.info(f"Converting VRT to temporary GeoTIFF to avoid GDAL warnings")
+            temp_tif = cloud_file.parent / f"temp_cloud_{cloud_file.stem}.tif"
 
-            # If it's a VRT without NoData, create a temp VRT with NoData
-            if src_nodata is None and str(cloud_file).endswith('.vrt'):
-                logger.info(f"Source VRT has no NoData defined, creating temporary VRT with NoData=0")
-                cloud_file = create_vrt_with_nodata(cloud_file, 0)
-                temp_vrt_created = True
+            # Use gdal.Translate to materialize the VRT
+            translate_options = gdal.TranslateOptions(
+                format='GTiff',
+                creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS']
+            )
+
+            gdal.Translate(str(temp_tif), str(cloud_file), options=translate_options)
+            cloud_file = temp_tif
+            temp_tif_created = True
 
         # Open source file
         src_ds = gdal.Open(str(cloud_file))
@@ -186,17 +189,16 @@ def create_binary_cloud_mask(
         data = band.ReadAsArray()
         src_nodata = band.GetNoDataValue()
 
-        # Create binary mask: 1 where cloud probability > threshold, 0 otherwise
-        # Preserve NoData as 255
+        # Create binary mask for AROSICS: only 0 and 1 values
+        # 0 = valid data/no cloud (includes NoData areas as "ignore")
+        # 1 = cloud/bad data
         mask = np.zeros_like(data, dtype=np.uint8)
 
         if src_nodata is not None:
-            # Set areas with NoData to 255
+            # Only mark clouds (above threshold) as 1
+            # NoData areas and valid areas both become 0 (AROSICS will ignore them)
             nodata_mask = (data == src_nodata)
-            mask[nodata_mask] = 255
-            # Set cloud areas (above threshold) to 1
             mask[(data > cloud_threshold) & ~nodata_mask] = 1
-            # Everything else is already 0 (no cloud)
         else:
             # No NoData in source, just threshold
             mask[data > cloud_threshold] = 1
@@ -222,7 +224,7 @@ def create_binary_cloud_mask(
         # Write the mask
         out_band = out_ds.GetRasterBand(1)
         out_band.WriteArray(mask)
-        out_band.SetNoDataValue(255)
+        # Don't set NoData for AROSICS compatibility - it expects only 0 and 1
         out_band.FlushCache()
 
         # Clean up
@@ -230,7 +232,7 @@ def create_binary_cloud_mask(
         out_ds = None
         src_ds = None
 
-        logger.info(f"Binary cloud mask created: 0=no cloud, 1=cloud, 255=NoData")
+        logger.info(f"Binary cloud mask created for AROSICS: 0=valid/no_cloud, 1=cloud/bad_data")
 
         return str(output_file)
 
@@ -238,13 +240,13 @@ def create_binary_cloud_mask(
         logger.error(f"Failed to create binary cloud mask: {str(e)}")
         raise RuntimeError(f"Failed to create binary cloud mask: {str(e)}")
     finally:
-        # Clean up temporary VRT if created
-        if temp_vrt_created and cloud_file != original_cloud_file and os.path.exists(cloud_file):
+        # Clean up temporary GeoTIFF if created
+        if temp_tif_created and cloud_file != original_cloud_file and os.path.exists(cloud_file):
             try:
                 os.remove(cloud_file)
-                logger.info(f"Cleaned up temporary cloud VRT")
+                logger.info(f"Cleaned up temporary cloud GeoTIFF")
             except Exception as e:
-                logger.warning(f"Failed to remove temporary cloud VRT: {str(e)}")
+                logger.warning(f"Failed to remove temporary cloud GeoTIFF: {str(e)}")
 
 
 def coregister_S2(
