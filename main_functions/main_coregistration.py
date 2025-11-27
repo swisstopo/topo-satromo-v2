@@ -159,27 +159,30 @@ def create_binary_cloud_mask(
 
     logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
 
-    # GDAL 3.11 FIX: For VRT files, materialize to GeoTIFF first to avoid INIT_DEST warnings
-    temp_tif_created = False
-    original_cloud_file = cloud_file
+    # GDAL 3.11 FIX: Create a proper VRT with NoData defined at all levels
+    temp_files = []
 
     try:
-        # If input is a VRT, convert to temporary GeoTIFF to avoid NoData warnings from source files
+        # If input is a VRT, we need to fix NoData at all levels
         if str(cloud_file).endswith('.vrt'):
-            logger.info(f"Converting VRT to temporary GeoTIFF to avoid GDAL warnings")
-            temp_tif = cloud_file.parent / f"temp_cloud_{cloud_file.stem}.tif"
+            logger.info(f"Processing VRT with NoData fix for GDAL 3.11 compatibility")
 
-            # Use gdal.Translate to materialize the VRT
-            translate_options = gdal.TranslateOptions(
-                format='GTiff',
-                creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS']
+            # Create a temporary VRT with NoData set using gdalwarp (more robust than gdal_translate)
+            temp_vrt_fixed = cloud_file.parent / f"temp_fixed_{cloud_file.name}"
+            temp_files.append(temp_vrt_fixed)
+
+            # Use gdalwarp to create a proper VRT with NoData handling
+            warp_options = gdal.WarpOptions(
+                format='VRT',
+                srcNodata=0,  # Assume 0 is nodata in source
+                dstNodata=0,  # Set 0 as nodata in destination
+                multithread=True
             )
 
-            gdal.Translate(str(temp_tif), str(cloud_file), options=translate_options)
-            cloud_file = temp_tif
-            temp_tif_created = True
+            gdal.Warp(str(temp_vrt_fixed), str(cloud_file), options=warp_options)
+            cloud_file = temp_vrt_fixed
 
-        # Open source file
+        # Open source file (now with proper NoData)
         src_ds = gdal.Open(str(cloud_file))
         if src_ds is None:
             raise RuntimeError(f"Could not open cloud file: {cloud_file}")
@@ -240,13 +243,14 @@ def create_binary_cloud_mask(
         logger.error(f"Failed to create binary cloud mask: {str(e)}")
         raise RuntimeError(f"Failed to create binary cloud mask: {str(e)}")
     finally:
-        # Clean up temporary GeoTIFF if created
-        if temp_tif_created and cloud_file != original_cloud_file and os.path.exists(cloud_file):
-            try:
-                os.remove(cloud_file)
-                logger.info(f"Cleaned up temporary cloud GeoTIFF")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary cloud GeoTIFF: {str(e)}")
+        # Clean up temporary files
+        for temp_file in temp_files:
+            if temp_file.exists():
+                try:
+                    os.remove(temp_file)
+                    logger.debug(f"Cleaned up temporary file: {temp_file.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary file {temp_file}: {str(e)}")
 
 
 def coregister_S2(
