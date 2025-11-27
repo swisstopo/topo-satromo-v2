@@ -1059,7 +1059,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     ])
 
                 if nodata_value is not None:
-                    cmd_downsample.extend(["-a_nodata", str(nodata_value)])
+                    cmd_downsample.extend(["-dstnodata", str(nodata_value)])
 
                 cmd_downsample.extend([str(temp_file), str(input_tif)])
 
