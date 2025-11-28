@@ -948,7 +948,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 cmd_oversample = [
                     "gdalwarp",
                     "-cutline", str(clipfile),
-                    "-crop_to_cutline",
+                    #"-crop_to_cutline", #IMHO not needed here
                     "-of", "GTiff",
                     "-co", "TILED=YES",
                     "-co", "BIGTIFF=YES",
@@ -1046,15 +1046,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
                     cmd_downsample.extend([
-                        "-cutline", str(clipfile),
-                        "-dstalpha",  # Creates Alpha mask for clean JPEG edges
+                        "-cutline", str(clipfile), # Clip again to ensure clean edges
+                        "-dstnodata", "0",  # For JPEG, set transparent NoData
+                        "-srcnodata", "0 0 0",  # For JPEG with alpha, treat black as NoData
                         "-co", "COMPRESS=JPEG",
                         "-co", f"QUALITY={quality}"
                     ])
-                    # For JPEG with alpha, use srcnodata to mark transparent areas
-                    if nodata_value is not None:
-                        cmd_downsample.extend(["-srcnodata", str(nodata_value)])
-                    breakpoint()
+     
                 else:
                     print(f"Using lossless DEFLATE compression")
                     cmd_downsample.extend([
