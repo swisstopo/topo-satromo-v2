@@ -806,6 +806,82 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # Loop over all orbits and process final steps
 
+    def get_raster_properties(input_file):
+        """
+        Extract resolution, datatype, and nodata value from a raster file.
+        Parameters:
+        -----------
+        input_file : str or Path
+            Path to the input raster file
+        Returns:
+        --------
+        dict : Dictionary containing:
+            - 'resolution': int or None (maximum of x/y resolution in map units)
+            - 'datatype': str or None (GDAL datatype string like 'Byte', 'Float32')
+            - 'nodata': float/int or None (nodata value)
+            - 'res_x': float or None (x resolution)
+            - 'res_y': float or None (y resolution)
+            - 'statistics': list of dict or None (statistics for each band)
+        """
+        try:
+            with rasterio.open(input_file) as src:
+                # Get metadata
+                meta = src.meta
+
+                # Get pixel size (resolution) - using absolute values
+                original_res_x = abs(src.transform[0])
+                original_res_y = abs(src.transform[4])
+                resolution = int(max(original_res_x, original_res_y)) if original_res_x and original_res_y else None
+
+                # Map rasterio dtype to GDAL dtype string
+                dtype_map = {
+                    'uint8': 'Byte',
+                    'uint16': 'UInt16',
+                    'int16': 'Int16',
+                    'uint32': 'UInt32',
+                    'int32': 'Int32',
+                    'float32': 'Float32',
+                    'float64': 'Float64'
+                }
+
+                # Get datatype from metadata
+                rasterio_dtype = str(meta['dtype']) if 'dtype' in meta else None
+                datatype = dtype_map.get(rasterio_dtype, None) if rasterio_dtype else None
+
+                # Get nodata value
+                nodata_value = meta.get('nodata', None)
+
+                # Get statistics for each band
+                band_stats = []
+                for band in range(1, meta['count'] + 1):
+                    stats = src.statistics(bidx=band, approx=True)  # min, max, mean, std
+                    band_stats.append({
+                        'band': band,
+                        'min': stats.min,
+                        'max': stats.max,
+                        'mean': stats.mean,
+                        'std': stats.std
+                    })
+
+                return {
+                    'resolution': resolution,
+                    'datatype': datatype,
+                    'nodata': nodata_value,
+                    'res_x': original_res_x,
+                    'res_y': original_res_y,
+                    'statistics': band_stats
+                }
+        except Exception as e:
+            print(f"Error reading raster properties: {e}")
+            return {
+                'resolution': None,
+                'datatype': None,
+                'nodata': None,
+                'res_x': None,
+                'res_y': None,
+                'statistics': None
+        }
+
     for orbit_num, timestamp in orbit_timestamp.items():
         print(f"Processing orbit {orbit_num} of {timestamp} ...")
 
@@ -820,67 +896,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         ##############################
         # Clip Data to Switzerland and Reproeject to CH1903LV95
         ## TODO no data value handling per data set
-
-        def get_raster_properties(input_file):
-            """
-            Extract resolution, datatype, and nodata value from a raster file.
-
-            Parameters:
-            -----------
-            input_file : str or Path
-                Path to the input raster file
-
-            Returns:
-            --------
-            dict : Dictionary containing:
-                - 'resolution': int or None (maximum of x/y resolution in map units)
-                - 'datatype': str or None (GDAL datatype string like 'Byte', 'Float32')
-                - 'nodata': float/int or None (nodata value)
-                - 'res_x': float or None (x resolution)
-                - 'res_y': float or None (y resolution)
-            """
-            try:
-                with rasterio.open(input_file) as src:
-                    # Get pixel size (resolution) - using absolute values
-                    original_res_x = abs(src.transform[0])
-                    original_res_y = abs(src.transform[4])
-                    resolution = int(max(original_res_x, original_res_y)) if original_res_x and original_res_y else None
-
-                    # Map rasterio dtype to GDAL dtype string
-                    dtype_map = {
-                        'uint8': 'Byte',
-                        'uint16': 'UInt16',
-                        'int16': 'Int16',
-                        'uint32': 'UInt32',
-                        'int32': 'Int32',
-                        'float32': 'Float32',
-                        'float64': 'Float64'
-                    }
-
-                    # Get datatype from first band
-                    rasterio_dtype = str(src.dtypes[0]) if src.dtypes else None
-                    datatype = dtype_map.get(rasterio_dtype, None) if rasterio_dtype else None
-
-                    # Get nodata value
-                    nodata_value = src.nodata
-
-                    return {
-                        'resolution': resolution,
-                        'datatype': datatype,
-                        'nodata': nodata_value,
-                        'res_x': original_res_x,
-                        'res_y': original_res_y
-                    }
-
-            except Exception as e:
-                print(f"Error reading raster properties: {e}")
-                return {
-                    'resolution': None,
-                    'datatype': None,
-                    'nodata': None,
-                    'res_x': None,
-                    'res_y': None
-                }
 
         def clip_resample_to_cog(
             input_tif,
@@ -902,8 +917,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             Args:
                 input_tif: Path to input raster (will be replaced with processed version)
                 clipfile: Path to clip shapefile/geojson
-                nodata_value: NoData value (optional)
-                datatype: GDAL data type (e.g. Float32, Int16, Byte) - auto-detected if None
+                nodata_value: NoData value (optional - will be auto-detected if None)
                 epsg: EPSG code for coordinate system
                 lossy: True for JPEG compression, False for DEFLATE compression
                 quality: JPEG quality (1-100), only relevant if lossy=True
@@ -914,9 +928,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             props = get_raster_properties(input_tif)
             resolution = props['resolution']
             datatype = props['datatype']
-            nodata_value = props['nodata']
-            print(f"Detected original resolution: {props['resolution']}m")
-            print(f"Using datatype: {props['datatype']}")
+            nodata_value = props['nodata']  # Get NoData from source
+
+            print(f"Detected original resolution: {resolution}m")
+            print(f"Using datatype: {datatype}")
+            print(f"Using nodata value: {nodata_value}")
 
             # Create single temp file path
             input_path = Path(input_tif)
@@ -937,19 +953,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     "-co", "TILED=YES",
                     "-co", "BIGTIFF=YES",
                     "-co", "COMPRESS=DEFLATE",
-                    "-wo", "NUM_THREADS=ALL_CPUS",
                     "-co", "NUM_THREADS=ALL_CPUS",
                     "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    "-multi", # Enable multi-threading
-                    "-wm", "2048", # Set memory limit to 2048 MB Without the -wm (working memory) parameter, GDAL defaults to a very small memory buffer (typically only 6-64 MB), which means: Many more passes through the data,Much more disk I/O,Significantly slower processing
                     "-tr", str(intermediate_res), str(intermediate_res),
                     "-r", "near",
                     "-ot", datatype,
                     "-overwrite"
                 ]
 
-                if nodata_value  is not None:
-                    cmd_oversample.extend(["-dstnodata", str(nodata_value)])
+                if nodata_value is not None:
+                    cmd_oversample.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
+                    cmd_oversample.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in output
 
                 cmd_oversample.extend([str(input_tif), str(temp_file)])
 
@@ -966,7 +980,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
 
                 props_oversampled = get_raster_properties(temp_file)
-                nodata_value = props_oversampled['nodata']
+                nodata_value = props_oversampled['nodata']  # Get NoData from step 1 output
+                print(f"Detected oversampled resolution: {props_oversampled['resolution']}m")
+                print(f"Using datatype: {props_oversampled['datatype']}")
+                print(f"Using nodata value: {nodata_value}")
 
                 cmd_reproject = [
                     "gdalwarp",
@@ -975,13 +992,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     "-co", "TILED=YES",
                     "-co", "BIGTIFF=YES",
                     "-co", "COMPRESS=DEFLATE",
-                    "-wo", "NUM_THREADS=ALL_CPUS",
                     "-co", "NUM_THREADS=ALL_CPUS",
                     "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    "-to", "ALLOW_BALLPARK=NO",#Disables "ballpark" transformations, which are approximate coordinate conversions used when no precise transformation exists between the source and target CRS
-                    "-to", "ONLY_BEST=YES", #forces GDAL/PROJ to use only the most accurate coordinate transformation available and fail if it cannot be used
-                    "-multi", # Enable multi-threading
-                    "-wm", "2048", # Set memory limit to 2048 MB Without the -wm (working memory) parameter, GDAL defaults to a very small memory buffer (typically only 6-64 MB), which means: Many more passes through the data,Much more disk I/O,Significantly slower processing
+                    "-to", "ALLOW_BALLPARK=NO",
+                    "-to", "ONLY_BEST=YES",
                     "-tr", str(intermediate_res), str(intermediate_res),
                     "-r", "bilinear",
                     "-ot", datatype,
@@ -989,9 +1003,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 ]
 
                 if nodata_value is not None:
-                    cmd_reproject.extend(["-dstnodata", str(nodata_value)])
+                    cmd_reproject.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
+                    cmd_reproject.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in output
 
-                # Use temp_file as both input and output (via intermediate step)
                 cmd_reproject.extend([str(temp_file), str(input_tif)])
 
                 print(f"Command: {' '.join(cmd_reproject)}")
@@ -1009,47 +1023,38 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
 
                 props_reprojected = get_raster_properties(temp_file)
-                nodata_value = props_reprojected['nodata']
+                nodata_value = props_reprojected['nodata']  # Get NoData from step 2 output
+                print(f"Detected reprojected resolution: {props_reprojected['resolution']}m")
+                print(f"Using datatype: {props_reprojected['datatype']}")
+                print(f"Using nodata value: {nodata_value}")
 
-
-                # The target resolution is simply the original resolution.
                 target_res = resolution
 
                 cmd_downsample = [
-                "gdalwarp",
-                        "-of", "COG",
-                        "-co", "NUM_THREADS=ALL_CPUS",
-                        "-co", "BIGTIFF=YES",
-                        "-wo", "NUM_THREADS=ALL_CPUS",
-                        "-co", "NUM_THREADS=ALL_CPUS",
-                        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                        "-multi", # Enable multi-threading
-                        "-wm", "2048", # Set memory limit to 2048 MB Without the -wm (working memory) parameter, GDAL defaults to a very small memory buffer (typically only 6-64 MB), which means: Many more passes through the data,Much more disk I/O,Significantly slower processing
-                        # "INIT_DEST=0" sets all bands (R, G, B, A) to 0 before processing.
-                        # This ensures the area outside the cutline is Black (0) and Transparent (0).
-                        "-wo", "INIT_DEST=0",
-                        # Resizing based on final resolution
-                        "-tr", str(target_res), str(target_res),
-                        # Resampling
-                        "-r", "bilinear",
-                        "-ot", datatype,
-                        "-overwrite"
+                    "gdalwarp",
+                    "-of", "COG",
+                    "-co", "BIGTIFF=YES",
+                    "-co", "NUM_THREADS=ALL_CPUS",
+                    "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                    "-tr", str(target_res), str(target_res),
+                    "-r", "bilinear",
+                    "-ot", datatype,
+                    "-overwrite"
                 ]
 
                 # Compression options
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
-                    breakpoint()
                     cmd_downsample.extend([
-                # --- Clipping and Transparency Flags, since we want no artefacts at the border ---
                         "-cutline", str(clipfile),
-                        "-crop_to_cutline",
-                        "-srcnodata", "0",
-                        "-dstalpha", # <-- Crucial: Creates Alpha mask for clean JPEG edges
-                        # Compression options
+                        "-dstalpha",  # Creates Alpha mask for clean JPEG edges
                         "-co", "COMPRESS=JPEG",
                         "-co", f"QUALITY={quality}"
                     ])
+                    # For JPEG with alpha, use srcnodata to mark transparent areas
+                    if nodata_value is not None:
+                        cmd_downsample.extend(["-srcnodata", str(nodata_value)])
+                    breakpoint()
                 else:
                     print(f"Using lossless DEFLATE compression")
                     cmd_downsample.extend([
@@ -1057,9 +1062,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         "-co", "PREDICTOR=2",
                         "-co", "ZLEVEL=2"
                     ])
-
-                if nodata_value is not None:
-                    cmd_downsample.extend(["-dstnodata", str(nodata_value)])
+                    # For lossless, preserve NoData value
+                    if nodata_value is not None:
+                        cmd_downsample.extend(["-srcnodata", str(nodata_value)])
+                        cmd_downsample.extend(["-dstnodata", str(nodata_value)])
 
                 cmd_downsample.extend([str(temp_file), str(input_tif)])
 
