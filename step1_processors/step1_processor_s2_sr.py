@@ -1047,12 +1047,12 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     print(f"Using JPEG compression with quality {quality}")
                     cmd_downsample.extend([
                         "-cutline", str(clipfile), # Clip again to ensure clean edges
-                        "-dstnodata", "0",  # For JPEG, set transparent NoData
-                        "-srcnodata", "0 0 0",  # For JPEG with alpha, treat black as NoData
+                        "-crop_to_cutline",
+                        "-dstalpha ",  # Create alpha band for nodata
                         "-co", "COMPRESS=JPEG",
-                        "-co", f"QUALITY={quality}"
-                    ])
-     
+                        "-co", f"QUALITY={quality}",
+                        "-co", "PHOTOMETRIC=YCBCR"                    ])
+
                 else:
                     print(f"Using lossless DEFLATE compression")
                     cmd_downsample.extend([
@@ -1087,7 +1087,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     temp_file.unlink()
 
         ##############################
-        # Clip Data to Switzerland and Reproeject to CH1903LV95
+        # Clip Data to Switzerland and Reproject to CH1903LV95
 
         def parse_sentinel2_filename(filename):
             """Parse Sentinel-2 mosaic filename including cloudmask."""
