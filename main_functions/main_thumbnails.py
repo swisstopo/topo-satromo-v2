@@ -192,11 +192,11 @@ def apply_overlays_and_export(
     output_file: Union[str, Path]
 ) -> Optional[str]:
     """
-    Overlay rivers and lakes, then export the raster to PNG.
+    Overlay rivers and lakes, then export the raster to JPEG.
 
     Args:
         input_file: Path to an intermediate raster for overlay.
-        output_file: Path for the final PNG thumbnail.
+        output_file: Path for the final JPEG thumbnail.
 
     Returns:
         Output file path as string on success, or None on failure.
