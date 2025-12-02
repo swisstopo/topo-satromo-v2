@@ -174,7 +174,7 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
 
     #create thumbnail url
     thumbnail_url = (domain+"ch.swisstopo."+product+"/" +
-                     id+"/thumbnail.jpg")
+                     id+"/thumbnail.png")
 
     #Create href for visual
     #COG Case for swisseo_s2-sr
@@ -266,8 +266,8 @@ def asset_create_title(asset, current):
     Returns:
         str: The created title.
     """
-    if asset == "thumbnail.jpg":
-        return "THUMBNAIL"
+    if asset == "thumbnail.png":
+        return "Thumbnail"
     else:
         # use case "current"
         if current is not None:
@@ -380,6 +380,12 @@ def asset_create_json_payload(id, asset_type, current, asset_title=None):
             "id": id,
             "title": title,
             "type": "application/vnd.apache.parquet"
+        }
+    elif asset_type == "PNG":
+        payload = {
+            "id": id,
+            "title": title,
+            "type": "image/png"
         }
     else:
         asset_type == "JPEG"
@@ -506,6 +512,8 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None,ass
         asset_type = 'JPEG'
     elif extension.lower() == 'geojson':
         asset_type = 'GEOJSON'
+    elif extension.lower() == 'png':
+        asset_type = 'PNG'
     elif extension.lower() == 'parquet':
         asset_type = 'PARQUET'
     else:

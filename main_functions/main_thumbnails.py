@@ -10,8 +10,8 @@ import configuration as config
 
 THUMBNAIL_SIZE = 256
 BUFFER_SIZE = 1024
-OUTPUT_FORMAT = "JPEG"
-THUMBNAIL_FILENAME = "thumbnail.jpg"
+OUTPUT_FORMAT = "PNG"
+THUMBNAIL_FILENAME = "thumbnail.png"
 TEMP_PREFIX = "output_thumbnail"
 gpkg_path= config.BUFFER
 layer_name="swissCauliflower3DRegio"
@@ -192,12 +192,11 @@ def apply_overlays_and_export(
     output_file: Union[str, Path]
 ) -> Optional[str]:
     """
-    Overlay rivers and lakes, then export the raster to JPEG.
+    Overlay rivers and lakes, then export the raster to PNG.
 
     Args:
         input_file: Path to an intermediate raster for overlay.
-        output_file: Path for the final JPEG thumbnail.
-
+        output_file: Path for the final PNG thumbnail.
     Returns:
         Output file path as string on success, or None on failure.
 
