@@ -3,7 +3,7 @@ import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing
+from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails
 from collections import defaultdict
 import requests
 import os
@@ -1175,7 +1175,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     oversample_factor=5
                 )
 
-        # clip_resample_to_cog("swisseo_s2-sr_v200_mosaic_2025-06-01t101041_tci_10m.tif",os.path.join(config.BUFFER),nodata_value=None,epsg=2056,lossy=True,quality=85,oversample_factor=5)
+        ##############################
+        # Generate Thumbnails
+        # check if there is a need to create thumbnail , if yes create it
+        thumbnail = main_thumbnails.create_thumbnail(
+                            f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
         ##############################
         # TODO Checkif current, if yes then rund upload below twice a day
@@ -1183,7 +1187,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Upload to STAC
-      
+
         # Process Sentinel files grouped by timestamp
         for timestamp, file_list in sorted(files_by_timestamp.items()):
             print(f"\n=== Processing timestamp: {timestamp} ===")
@@ -1200,7 +1204,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 band_title = band_names.get(band, band)
 
                 # STAC Upload
-                breakpoint()
+
                 main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
 
                 # Clean up Data file
@@ -1208,9 +1212,18 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     print(f"Cleaning up: {filename}")
                     Path(filename).unlink()
 
-        # Upload metadata fileuti
+        # Upload metadata file
         filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
+
+        # Clean up metadata file
+        if Path(filename).exists():
+                print(f"Cleaning up: {filename}")
+                Path(filename).unlink()
+
+        # Upload Thumbnail
+        filename=thumbnail
+        main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Thumbnail")
 
         # Clean up metadata file
         if Path(filename).exists():

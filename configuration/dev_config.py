@@ -48,6 +48,9 @@ ROI_BORDER_BUFFER = 5000  # Buffer around Switzerland
 # Switzerland border and lakes with 5km buffer :
 BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
 
+OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
+OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
+
 # No data value
 NODATA = 9999
 
