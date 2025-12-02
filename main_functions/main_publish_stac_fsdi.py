@@ -174,7 +174,7 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
 
     #create thumbnail url
     thumbnail_url = (domain+"ch.swisstopo."+product+"/" +
-                     id+"/thumbnail.png")
+                     id+"/thumbnail.jpg")
 
     #Create href for visual
     #COG Case for swisseo_s2-sr
