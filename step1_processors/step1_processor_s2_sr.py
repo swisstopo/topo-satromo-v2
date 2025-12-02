@@ -96,6 +96,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     processing_level = config.PRODUCT_S2_LEVEL_2A["processing_level"]
     # # Bucket
     copernicus_bucket = config.PRODUCT_S2_LEVEL_2A["copernicus_bucket"]
+    # # Coregistration results
+    s3_coreg_path = f"data/SENTINEL-2/COREGISTRATION/"
+
 
     ##############################
     # Test if corresponing Cloudscope+ data is in  empty asset list
@@ -885,8 +888,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     for orbit_num, timestamp in orbit_timestamp.items():
         print(f"Processing orbit {orbit_num} of {timestamp} ...")
 
-        ##############################
-        # TODO Upload pickle to S3
+
 
         ##############################
         # TODO Update METADATA json with
@@ -1225,10 +1227,25 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         filename=thumbnail
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Thumbnail")
 
-        # Clean up metadata file
+        # Clean up Thumbnailfile
         if Path(filename).exists():
                 print(f"Cleaning up: {filename}")
                 Path(filename).unlink()
+
+
+        ##############################
+        # Upload pickle to S3
+
+        filename=f"swisseo_s2-sr_v200_mosaic_{timestamp}_registration.pickle"
+        s3_key = os.path.join(s3_coreg_path, filename).replace("\\", "/")
+
+        main_utils.s3.upload_file(f"swisseo_s2-sr_v200_mosaic_{timestamp}_registration.pickle", config.S3_BUCKET_NAME, s3_key)
+
+        # Clean up pickle file
+        if Path(filename).exists():
+                print(f"Cleaning up: {filename}")
+                Path(filename).unlink()
+
 
         ##############################
         # TODO Upload to GEE
