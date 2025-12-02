@@ -171,8 +171,20 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
         # Define a regex pattern to match the date and 't'
         pattern = r'_\d{4}-\d{2}-\d{2}t\d{6}$'
         product = re.sub(pattern, '', title)
+
+    #create thumbnail url
     thumbnail_url = (domain+"ch.swisstopo."+product+"/" +
-                     id+"/thumbnail.jpg")
+                     id+"/thumbnail.png")
+
+    #Create href for visual
+    #COG Case for swisseo_s2-sr
+    if 'swisseo_s2-sr' in product:
+        asset = f"{product}_mosaic_{id}_tci_10m.tif"
+        HREF=f"https://map.geo.admin.ch/#/map?layers=COG|{domain}ch.swisstopo.{product}/{id}/{asset}"
+    #WMS CASE where we do have only WMS
+    else:
+        HREF= f"https://map.geo.admin.ch/index.html?layers=WMS||"+title+"||https://wms.geo.admin.ch/?item="+id+"||ch.swisstopo."+product
+
 
     payload = {
         "id": id,
@@ -186,9 +198,7 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
         },
         "links": [
             {
-                "href": "https://map.geo.admin.ch/index.html?layers=WMS||"+title+"||https://wms.geo.admin.ch/?item="+id+"||ch.swisstopo."+product,
-                # "href": "https://cms.geo.admin.ch/Topo/umweltbeobachtung/satromocogviewer.html?url="+domain+"ch.swisstopo."+product+"/" +
-                # id+"/ch.swisstopo."+product+"_mosaic_"+id+"_bands-10m.tif",
+                "href": HREF,
                 "rel": "visual"
             },
             {

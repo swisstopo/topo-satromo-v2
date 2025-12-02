@@ -1048,7 +1048,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     cmd_downsample.extend([
                         "-cutline", str(clipfile), # Clip again to ensure clean edges
                         "-crop_to_cutline",
-                        "-dstalpha ",  # Create alpha band for nodata
+                        "-dstalpha",  # Create alpha band for nodata
                         "-co", "COMPRESS=JPEG",
                         "-co", f"QUALITY={quality}",
                         "-co", "PHOTOMETRIC=YCBCR"                    ])
@@ -1088,6 +1088,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95
+        # TODO Clip with ORBIT perimeter gpkg as in v100
 
         def parse_sentinel2_filename(filename):
             """Parse Sentinel-2 mosaic filename including cloudmask."""
@@ -1182,8 +1183,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Upload to STAC
-        # TODO News WMS URL: replace with COGTIF
-
+      
         # Process Sentinel files grouped by timestamp
         for timestamp, file_list in sorted(files_by_timestamp.items()):
             print(f"\n=== Processing timestamp: {timestamp} ===")
@@ -1200,6 +1200,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 band_title = band_names.get(band, band)
 
                 # STAC Upload
+                breakpoint()
                 main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
 
                 # Clean up Data file
