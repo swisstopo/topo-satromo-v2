@@ -133,7 +133,7 @@ def resample_raster(
 def create_binary_cloud_mask(
     cloud_file: Union[str, Path],
     output_file: Union[str, Path],
-    cloud_threshold: int
+    cloudfree_class: int
 ) -> str:
     """
     Create a binary cloud mask from a cloud probability file.
@@ -141,7 +141,7 @@ def create_binary_cloud_mask(
     Args:
         cloud_file: Path to the cloud probability file.
         output_file: Path to the output binary mask file.
-        cloud_threshold: Threshold percentage for cloud detection.
+        cloudfree_class: Class number for cloudfree pixels.
 
     Returns:
         Path to the created binary mask.
@@ -153,7 +153,7 @@ def create_binary_cloud_mask(
     output_file = main_utils.ensure_path(output_file)
     main_utils.ensure_directory(output_file.parent)
 
-    logger.info(f"Creating binary cloud mask with threshold ≥{cloud_threshold}%")
+    logger.info(f"Creating binary cloud mask with classes ≠{cloudfree_class} as clouds ({cloudfree_class}: cloudfree, ≠{cloudfree_class}: cloudy)")
 
     # Use gdal_calc to create binary mask
     command = [
@@ -161,7 +161,7 @@ def create_binary_cloud_mask(
         '-A', str(cloud_file),
         '--overwrite',
         f'--outfile={output_file}',
-        f'--calc="A<={cloud_threshold}"',
+        f'--calc="A!={cloudfree_class}"',
         '--type=Byte',
         '--NoDataValue=None',
         '--co', 'COMPRESS=DEFLATE',
@@ -181,7 +181,7 @@ def create_binary_cloud_mask(
 def coregister_S2(
     acquisition_date: Union[str, datetime],
     orbit_nr: int,
-    cloud_threshold: Optional[int] = None
+    cloudfree_class: Optional[int] = None
 ) -> str:
     """
     Coregister a pre-mosaiced Sentinel-2 image using AROSICS.
@@ -205,8 +205,8 @@ def coregister_S2(
         acquisition_date_str = str(acquisition_date)
 
     # Get cloud threshold from config if not provided
-    if cloud_threshold is None:
-        cloud_threshold = config.AROSICS_CONFIG['csplus_threshold']
+    if cloudfree_class is None:
+        cloudfree_class = config.AROSICS_CONFIG['omnicloud_cloudfree_class']
 
     # Set up paths
     base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
@@ -218,11 +218,11 @@ def coregister_S2(
     # Find multiband files
     multiband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['multiband_mosaic_pattern_10m'])
     singleband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['singleband_mosaic_pattern_10m'])
-    csplus_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['cloudprob_mosaic_pattern'])
+    omnicloud_10m_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['singleband_mosaic_pattern']}_omnicloud.tif")
 
     # Find required files for coregistration
     mosaic_10m = glob.glob(singleband_mosaic_10m_pattern.replace('.vrt', '_clip.vrt'))
-    csplus_10m = glob.glob(csplus_10m_pattern.replace('.vrt', '_clip.vrt'))
+    omnicloud_10m = glob.glob(omnicloud_10m_pattern.replace('.tif', '_clip.vrt'))
 
 
     # File availability checks
@@ -231,16 +231,16 @@ def coregister_S2(
     elif len(mosaic_10m)>1: # If multiple
         raise ValueError(f"Found multiple (i.e. {len(mosaic_10m)}) files matching the pattern '{multiband_mosaic_10m_pattern}'")
 
-    if not csplus_10m:
+    if not omnicloud_10m:
         pass # Remove once CS+ is implemented
         #raise FileNotFoundError(f"No CSPlus data found matching {csplus_10m_pattern}")
-    elif len(csplus_10m)>1: # If multiple
-        raise ValueError(f"Found multiple (i.e. {len(csplus_10m)}) files matching the pattern '{csplus_10m_pattern}'")
+    elif len(omnicloud_10m)>1: # If multiple
+        raise ValueError(f"Found multiple (i.e. {len(omnicloud_10m)}) files matching the pattern '{omnicloud_10m_pattern}'")
 
     # Use the first file found
     mosaic_10m = mosaic_10m[0]
     try: # Remove once CS+ is implemented
-        csplus_10m = csplus_10m[0]
+        omnicloud_10m = omnicloud_10m[0]
     except: # Remove once CS+ is implemented
         pass # Remove once CS+ is implemented
 
@@ -257,8 +257,8 @@ def coregister_S2(
     formatted_time = date_obj.strftime("%Y-%m-%dt%H%M%S")
 
     logger.info(f"Using multiband mosaic file: {os.path.basename(mosaic_10m)}")
-    if csplus_10m:
-        logger.info(f"Using CSPlus file: {os.path.basename(csplus_10m)}")
+    if omnicloud_10m:
+        logger.info(f"Using OmniCloudMask file: {os.path.basename(omnicloud_10m)}")
     else:
         logger.warning("No cloud mask file found - proceeding without cloud masking")
 
@@ -287,15 +287,15 @@ def coregister_S2(
     if (os.path.exists(os.path.join(out_folder, out_name)) and
         os.path.exists(os.path.join(out_folder, out_name.replace(".tif", ".pickle")))):
         logger.info(f"Image already coregistered --> Skipping")
-        return os.path.join(out_folder, out_name)
+        return False, os.path.exists(os.path.join(out_folder, out_name.replace(".tif", ".pickle")))
 
     # Process cloud mask if available
     cloud_mask_path = None
-    if csplus_10m:
+    if omnicloud_10m:
         # Create binary cloud mask
-        cloud_bin_file = csplus_10m.replace('.vrt', '_bin.tif')
+        cloud_bin_file = omnicloud_10m.replace('.vrt', '_bin.tif')
         try:
-            cloud_mask_path = create_binary_cloud_mask(csplus_10m, cloud_bin_file, cloud_threshold)
+            cloud_mask_path = create_binary_cloud_mask(omnicloud_10m, cloud_bin_file, cloudfree_class)
 
             # Resample cloud mask to match multiband mosaic resolution
             gsd_multiband = main_utils.get_pixel_spacing(mosaic_10m)
@@ -588,8 +588,8 @@ def deshift_files(
     files_to_deshift = []
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_*_*m_clip.vrt")
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_omnicloud_clip.vrt")
-    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
-    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
+    #files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
+    #files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
 
     # Extract datetime from pickle filename
     pickle_basename = os.path.basename(pickle_path)
@@ -620,10 +620,10 @@ def deshift_files(
             suffix = f"{band_name}_{gsd}m"
         else:
             # Fallback for files without band info (like cloud masks or omnicloud)
-            if '_cloud_' in os.path.basename(file): # CS+
-                band_name = 'cloudmask'
-                suffix = f"{band_name}_10m"
-            elif '_omnicloud_' in os.path.basename(file): #Omnicloud
+            #if '_cloud_' in os.path.basename(file): # CS+
+            #    band_name = 'cloudmask'
+            #    suffix = f"{band_name}_10m"
+            if '_omnicloud_' in os.path.basename(file): #Omnicloud
                 band_name = 'omnicloudmask'
                 suffix = f"{band_name}_10m"
             else:
@@ -646,6 +646,27 @@ def deshift_files(
         output_paths.append(str(output_path))
 
     logger.info(f"Deshifted {len(output_paths)} files")
+
+    omnicloud_file = None
+    b04_file = None
+    
+    for path in output_paths:
+        if '_omnicloudmask_10m.tif' in path:
+            omnicloud_file = path
+        elif '_b04_10m.tif' in path:
+            b04_file = path
+    
+    if omnicloud_file and b04_file:
+        logger.info("Applying B04 noData mask to omnicloud file")
+        try:
+            main_utils.mask_raster_by_reference_nodata(omnicloud_file, b04_file)
+        except Exception as e:
+            logger.warning(f"Failed to apply B04 mask to omnicloud: {str(e)}")
+    elif omnicloud_file:
+        logger.warning("Omnicloud file found but B04 file missing - skipping B04 mask")
+    else:
+        logger.info("No omnicloud file to mask")
+
     return output_paths
 
 

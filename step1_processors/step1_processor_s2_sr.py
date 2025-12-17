@@ -781,8 +781,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # Run the command
         result = subprocess.run(cmd, check=True)
 
-        main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+
         success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         if success:

@@ -341,8 +341,7 @@ def reproject_tiles_to_UTM32N(acquisition_date: str, orbit_nr: int):
     data_folder = config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
     noData_value = None # Assuring a return even if no reprojection was needed
     s2_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.jp2'))
-    csplus_tiles = glob.glob(os.path.join(data_folder, f'R{orbit_nr:03d}', acquisition_date, '*T31*.tif'))
-    for file_in in s2_tiles + csplus_tiles:
+    for file_in in s2_tiles:
         info = main_utils.get_raster_info(file_in)
         file_out = file_in.replace('T31', 'T32')
         noData_value = reproject_to_UTM32N(file_in, file_out, resolution=[info['pixel_width'], info['pixel_height']])

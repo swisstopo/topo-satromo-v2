@@ -190,7 +190,7 @@ STAC_FSDI_API = '/api/stac/v0.9/'
 # using a reference image.
 
 AROSICS_CONFIG = {
-    'cloud_threshold': 65,
+    'omnicloud_cloudfree_class': 0,
     'csplus_threshold': 65,
     'cloud_nodata': 255,
     'grid_res_multiplier': 5,

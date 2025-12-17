@@ -568,15 +568,6 @@ def equalize_all_extents(
             else:
                 logger.warning(f"No file found for {band} at {resolution}m")
 
-    # Add csplus file
-    csplus_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['cloudprob_mosaic_pattern']}")
-    csplus_matches = glob.glob(csplus_pattern)
-
-    if csplus_matches:
-        files_to_process.extend(csplus_matches)
-    else:
-        raise FileNotFoundError(f"No cloud probability file found matching: {csplus_pattern}")
-
     # Add omnicloud file
     omnicloud_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['singleband_mosaic_pattern']}_omnicloud.tif")
     omnicloud_matches = glob.glob(omnicloud_pattern)
