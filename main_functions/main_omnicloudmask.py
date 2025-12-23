@@ -145,7 +145,7 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData
     default_kwargs = {
         'batch_size': 1,  # Reduced to 1 for large images
         'inference_dtype': 'bf16',  # Use bfloat16 for memory efficiency
-        'mosaic_device': 'cpu',  # Offload patch mosaicking to CPU to save GPU memory
+        #'mosaic_device': 'cpu',  # Offload patch mosaicking to CPU to save GPU memory
         'patch_size': 1000,  # Default patch size
         'patch_overlap': 300,  # Default overlap
         'no_data_value': noData_value,
