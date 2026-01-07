@@ -773,19 +773,19 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         )
 
         # # Creating cloud mask with omnicloudmask
-        # # Build the argument list
-        # cmd = [
-        #     config.AROSICS_CONFIG['omnicloudmask_venv_path'],
-        #     config.AROSICS_CONFIG['omnicloudmask_script_path'],
-        #     "--orbit", str(orbit_nr),
-        #     "--date", acquisition_date,
-        #     "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
-        # ]
+        # Build the argument list
+        cmd = [
+            config.AROSICS_CONFIG['omnicloudmask_venv_path'],
+            config.AROSICS_CONFIG['omnicloudmask_script_path'],
+            "--orbit", str(orbit_nr),
+            "--date", acquisition_date,
+            "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
+        ]
 
-        # # Run the command
-        # result = subprocess.run(cmd, check=True)
+        # Run the command
+        result = subprocess.run(cmd, check=True)
 
-        main_mosaicing.create_sentinel2_cloud_mosaic(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
         success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
@@ -799,7 +799,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             )
 
 
-
+    breakpoint()
     ##############################
     # Clean up Download folder
     if Path(copernicus_collection).exists():

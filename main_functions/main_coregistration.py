@@ -133,19 +133,15 @@ def resample_raster(
 def create_binary_cloud_mask(
     cloud_file: Union[str, Path],
     output_file: Union[str, Path],
-    cloud_threshold: int
+    cloudfree_class: int
 ) -> str:
     """
     Create a binary cloud mask from a cloud probability file.
-    For AROSICS: 0 = valid/no cloud, 1 = cloud/bad data
-    NoData areas are set to 0 (transparent/ignore) for AROSICS compatibility.
-
-    Uses Python API for platform independence and reliability.
 
     Args:
         cloud_file: Path to the cloud probability file.
         output_file: Path to the output binary mask file.
-        cloud_threshold: Threshold percentage for cloud detection.
+        cloudfree_class: Class number for cloudfree pixels.
 
     Returns:
         Path to the created binary mask.
@@ -157,106 +153,35 @@ def create_binary_cloud_mask(
     output_file = main_utils.ensure_path(output_file)
     main_utils.ensure_directory(output_file.parent)
 
-    logger.info(f"Creating binary cloud mask with threshold {cloud_threshold}%")
+    logger.info(f"Creating binary cloud mask with classes ≠{cloudfree_class} as clouds ({cloudfree_class}: cloudfree, ≠{cloudfree_class}: cloudy)")
 
-    # GDAL 3.11 FIX: Create a proper VRT with NoData defined at all levels
-    temp_files = []
+    # Use gdal_calc to create binary mask
+    command = [
+        'gdal_calc.py',
+        '-A', str(cloud_file),
+        '--overwrite',
+        f'--outfile={output_file}',
+        f'--calc="A!={cloudfree_class}"',
+        '--type=Byte',
+        '--NoDataValue=None',
+        '--co', 'COMPRESS=DEFLATE',
+        '--co', 'PREDICTOR=2',
+        '--co', 'NUM_THREADS=ALL_CPUS',
+        '--quiet'
+    ]
 
-    try:
-        # If input is a VRT, we need to fix NoData at all levels
-        if str(cloud_file).endswith('.vrt'):
-            logger.info(f"Processing VRT with NoData fix for GDAL 3.11 compatibility")
+    success, _, stderr = main_utils.run_gdal_command(command)
+    if not success:
+        logger.error(f"Failed to create cloud mask: {stderr}")
+        raise RuntimeError(f"Failed to create cloud mask: {stderr}")
 
-            # Create a temporary VRT with NoData set using gdalwarp (more robust than gdal_translate)
-            temp_vrt_fixed = cloud_file.parent / f"temp_fixed_{cloud_file.name}"
-            temp_files.append(temp_vrt_fixed)
-
-            # Use gdalwarp to create a proper VRT with NoData handling
-            warp_options = gdal.WarpOptions(
-                format='VRT',
-                srcNodata=0,  # Assume 0 is nodata in source
-                dstNodata=0,  # Set 0 as nodata in destination
-                multithread=True
-            )
-
-            gdal.Warp(str(temp_vrt_fixed), str(cloud_file), options=warp_options)
-            cloud_file = temp_vrt_fixed
-
-        # Open source file (now with proper NoData)
-        src_ds = gdal.Open(str(cloud_file))
-        if src_ds is None:
-            raise RuntimeError(f"Could not open cloud file: {cloud_file}")
-
-        # Read the data
-        band = src_ds.GetRasterBand(1)
-        data = band.ReadAsArray()
-        src_nodata = band.GetNoDataValue()
-
-        # Create binary mask for AROSICS: only 0 and 1 values
-        # 0 = valid data/no cloud (includes NoData areas as "ignore")
-        # 1 = cloud/bad data
-        mask = np.zeros_like(data, dtype=np.uint8)
-
-        if src_nodata is not None:
-            # Only mark clouds (above threshold) as 1
-            # NoData areas and valid areas both become 0 (AROSICS will ignore them)
-            nodata_mask = (data == src_nodata)
-            mask[(data > cloud_threshold) & ~nodata_mask] = 1
-        else:
-            # No NoData in source, just threshold
-            mask[data > cloud_threshold] = 1
-
-        # Create output file
-        driver = gdal.GetDriverByName('GTiff')
-        out_ds = driver.Create(
-            str(output_file),
-            src_ds.RasterXSize,
-            src_ds.RasterYSize,
-            1,
-            gdal.GDT_Byte,
-            options=['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS']
-        )
-
-        if out_ds is None:
-            raise RuntimeError(f"Could not create output file: {output_file}")
-
-        # Copy geotransform and projection
-        out_ds.SetGeoTransform(src_ds.GetGeoTransform())
-        out_ds.SetProjection(src_ds.GetProjection())
-
-        # Write the mask
-        out_band = out_ds.GetRasterBand(1)
-        out_band.WriteArray(mask)
-        # Don't set NoData for AROSICS compatibility - it expects only 0 and 1
-        out_band.FlushCache()
-
-        # Clean up
-        out_band = None
-        out_ds = None
-        src_ds = None
-
-        logger.info(f"Binary cloud mask created for AROSICS: 0=valid/no_cloud, 1=cloud/bad_data")
-
-        return str(output_file)
-
-    except Exception as e:
-        logger.error(f"Failed to create binary cloud mask: {str(e)}")
-        raise RuntimeError(f"Failed to create binary cloud mask: {str(e)}")
-    finally:
-        # Clean up temporary files
-        for temp_file in temp_files:
-            if temp_file.exists():
-                try:
-                    os.remove(temp_file)
-                    logger.debug(f"Cleaned up temporary file: {temp_file.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary file {temp_file}: {str(e)}")
+    return str(output_file)
 
 
 def coregister_S2(
     acquisition_date: Union[str, datetime],
     orbit_nr: int,
-    cloud_threshold: Optional[int] = None
+    cloudfree_class: Optional[int] = None
 ) -> str:
     """
     Coregister a pre-mosaiced Sentinel-2 image using AROSICS.
@@ -280,8 +205,8 @@ def coregister_S2(
         acquisition_date_str = str(acquisition_date)
 
     # Get cloud threshold from config if not provided
-    if cloud_threshold is None:
-        cloud_threshold = config.AROSICS_CONFIG['csplus_threshold']
+    if cloudfree_class is None:
+        cloudfree_class = config.AROSICS_CONFIG['omnicloud_cloudfree_class']
 
     # Set up paths
     base_path = main_utils.ensure_path(config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
@@ -293,11 +218,11 @@ def coregister_S2(
     # Find multiband files
     multiband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['multiband_mosaic_pattern_10m'])
     singleband_mosaic_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['singleband_mosaic_pattern_10m'])
-    csplus_10m_pattern = os.path.join(data_dir, config.AROSICS_CONFIG['cloudprob_mosaic_pattern'])
+    omnicloud_10m_pattern = os.path.join(data_dir, f"{config.AROSICS_CONFIG['singleband_mosaic_pattern']}_omnicloud.tif")
 
     # Find required files for coregistration
     mosaic_10m = glob.glob(singleband_mosaic_10m_pattern.replace('.vrt', '_clip.vrt'))
-    csplus_10m = glob.glob(csplus_10m_pattern.replace('.vrt', '_clip.vrt'))
+    omnicloud_10m = glob.glob(omnicloud_10m_pattern.replace('.tif', '_clip.vrt'))
 
 
     # File availability checks
@@ -306,16 +231,16 @@ def coregister_S2(
     elif len(mosaic_10m)>1: # If multiple
         raise ValueError(f"Found multiple (i.e. {len(mosaic_10m)}) files matching the pattern '{multiband_mosaic_10m_pattern}'")
 
-    if not csplus_10m:
+    if not omnicloud_10m:
         pass # Remove once CS+ is implemented
         #raise FileNotFoundError(f"No CSPlus data found matching {csplus_10m_pattern}")
-    elif len(csplus_10m)>1: # If multiple
-        raise ValueError(f"Found multiple (i.e. {len(csplus_10m)}) files matching the pattern '{csplus_10m_pattern}'")
+    elif len(omnicloud_10m)>1: # If multiple
+        raise ValueError(f"Found multiple (i.e. {len(omnicloud_10m)}) files matching the pattern '{omnicloud_10m_pattern}'")
 
     # Use the first file found
     mosaic_10m = mosaic_10m[0]
     try: # Remove once CS+ is implemented
-        csplus_10m = csplus_10m[0]
+        omnicloud_10m = omnicloud_10m[0]
     except: # Remove once CS+ is implemented
         pass # Remove once CS+ is implemented
 
@@ -332,8 +257,8 @@ def coregister_S2(
     formatted_time = date_obj.strftime("%Y-%m-%dt%H%M%S")
 
     logger.info(f"Using multiband mosaic file: {os.path.basename(mosaic_10m)}")
-    if csplus_10m:
-        logger.info(f"Using CSPlus file: {os.path.basename(csplus_10m)}")
+    if omnicloud_10m:
+        logger.info(f"Using OmniCloudMask file: {os.path.basename(omnicloud_10m)}")
     else:
         logger.warning("No cloud mask file found - proceeding without cloud masking")
 
@@ -362,15 +287,15 @@ def coregister_S2(
     if (os.path.exists(os.path.join(out_folder, out_name)) and
         os.path.exists(os.path.join(out_folder, out_name.replace(".tif", ".pickle")))):
         logger.info(f"Image already coregistered --> Skipping")
-        return os.path.join(out_folder, out_name)
+        return False, os.path.exists(os.path.join(out_folder, out_name.replace(".tif", ".pickle")))
 
     # Process cloud mask if available
     cloud_mask_path = None
-    if csplus_10m:
+    if omnicloud_10m:
         # Create binary cloud mask
-        cloud_bin_file = csplus_10m.replace('.vrt', '_bin.tif')
+        cloud_bin_file = omnicloud_10m.replace('.vrt', '_bin.tif')
         try:
-            cloud_mask_path = create_binary_cloud_mask(csplus_10m, cloud_bin_file, cloud_threshold)
+            cloud_mask_path = create_binary_cloud_mask(omnicloud_10m, cloud_bin_file, cloudfree_class)
 
             # Resample cloud mask to match multiband mosaic resolution
             gsd_multiband = main_utils.get_pixel_spacing(mosaic_10m)
@@ -536,59 +461,10 @@ def coreg_info_from_pickle(file_path: Union[str, Path]) -> Dict[str, Any]:
         logger.error(f"Error loading coregistration info: {str(e)}")
         raise ValueError(f"Invalid coregistration info file: {str(e)}")
 
-def create_vrt_with_nodata(src_vrt: Union[str, Path], nodata_value: float) -> str:
-    """
-    Create a temporary VRT file with NoData value explicitly set in all bands.
-
-    Args:
-        src_vrt: Path to source VRT.
-        nodata_value: NoData value to set.
-
-    Returns:
-        Path to temporary VRT with NoData set.
-
-    Raises:
-        RuntimeError: If VRT creation fails.
-    """
-    src_vrt = main_utils.ensure_path(src_vrt)
-    temp_vrt = src_vrt.parent / f"temp_nodata_{src_vrt.name}"
-
-    logger.info(f"Creating temporary VRT with NoData={nodata_value} for {src_vrt.name}")
-
-    try:
-        # First, use gdal_translate to create a basic VRT
-        command = [
-            "gdal_translate",
-            "-of", "VRT",
-            "-a_nodata", str(nodata_value),
-            str(src_vrt),
-            str(temp_vrt)
-        ]
-
-        success, _, stderr = main_utils.run_gdal_command(command)
-        if not success:
-            raise RuntimeError(f"Failed to create VRT with NoData: {stderr}")
-
-        # Now explicitly set NoData on all bands using GDAL API
-        ds = gdal.Open(str(temp_vrt), gdal.GA_Update)
-        if ds is not None:
-            for i in range(1, ds.RasterCount + 1):
-                band = ds.GetRasterBand(i)
-                band.SetNoDataValue(float(nodata_value))
-                band.FlushCache()
-            ds.FlushCache()
-            ds = None
-            logger.info(f"Explicitly set NoData={nodata_value} on all bands in VRT")
-
-        return str(temp_vrt)
-
-    except Exception as e:
-        logger.error(f"Failed to create VRT with NoData: {str(e)}")
-        raise RuntimeError(f"Failed to create VRT with NoData: {str(e)}")
 
 def deshift_image(
     im_target: Union[str, Path],
-    pickle_path: Union[str, Path],
+    pickle_path = Union[str, Path],
     **kwargs
 ) -> None:
     """
@@ -596,12 +472,12 @@ def deshift_image(
 
     Args:
         im_target: Path of the image to be de-shifted.
-        pickle_path: Path to pickle file with coregistration info.
+        coreg_info: The results of the co-registration (from COREG.coreg_info or COREG_LOCAL.coreg_info).
         **kwargs: Additional keyword arguments for DeShifter.DESHIFTER.
 
     Keyword Args:
         path_out (str): Output path for coregistered results.
-        fmt_out (str): Raster file format (default: 'GTIFF').
+        fmt_out (str): Raster file format (default: 'ENVI').
         out_crea_options (list): GDAL creation options.
         band2process (int): Band index to process (starts with 1).
         nodata (float): No data value.
@@ -624,6 +500,17 @@ def deshift_image(
     Raises:
         ValueError: If image cannot be opened or processed.
     """
+    # Example of using pickle for coregistration:
+    #
+    # Step 1: Save coregistration info to pickle file
+    # coreg_info_to_pickle(CRL.coreg_info, '/path/to/coreg_info.pkl')
+    #
+    # Step 2: Load coregistration info from pickle file later
+    # coreg_info_reloaded = coreg_info_from_pickle('/path/to/coreg_info.pkl')
+    #
+    # Step 3: Use reloaded info to deshift image
+    # deshift_image(image_to_deshift, coreg_info_reloaded, path_out='/path/to/output.tif')
+
     im_target = main_utils.ensure_path(im_target)
 
     logger.info(f"Deshifting image: {im_target}")
@@ -648,14 +535,9 @@ def deshift_image(
         if 'path_out' in kwargs:
             main_utils.ensure_directory(Path(kwargs['path_out']).parent)
 
-        # Remove STATISTICS from creation options (not supported by GTiff driver)
-        if 'out_crea_options' in kwargs:
-            kwargs['out_crea_options'] = [opt for opt in kwargs['out_crea_options']
-                                          if not opt.startswith('STATISTICS')]
-
-        # Default parameters if not specified
+        # Default parameters if not specified based on https://github.com/geostandards-ch/cog-best-practices#lossless-raster
         default_params = {
-            'fmt_out': 'GTIFF',
+            'fmt_out': 'COG',
             'out_crea_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
             'progress': True,
             'out_gsd': (tgt_gsd_x, tgt_gsd_y),
@@ -665,7 +547,7 @@ def deshift_image(
         # Update with defaults if not in kwargs
         for key, value in default_params.items():
             if key not in kwargs:
-                kwargs[key] = tuple(value) if isinstance(value, tuple) else value
+                kwargs[key] = tuple(value) if isinstance(value, tuple) else value # Making sure that tuples are preserved
 
         logger.info(f"Running DeShifter with parameters: {kwargs}")
         DeShifter.DESHIFTER(im2shift=str(im_target), coreg_results=coreg_info, **kwargs).correct_shifts()
@@ -706,8 +588,8 @@ def deshift_files(
     files_to_deshift = []
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_*_*m_clip.vrt")
     files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['singleband_mosaic_pattern']}{acquisition_date_str}*_omnicloud_clip.vrt")
-    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
-    files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
+    #files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip.vrt')}")
+    #files_to_deshift += glob.glob(f"{base_path}/{config.AROSICS_CONFIG['cloudprob_mosaic_pattern'].replace('.vrt', '_clip_bin.tif')}")
 
     # Extract datetime from pickle filename
     pickle_basename = os.path.basename(pickle_path)
@@ -725,65 +607,27 @@ def deshift_files(
     for file in files_to_deshift:
         logger.info(f"Processing: {os.path.basename(file)}")
 
-        # Get nodata value from file
+        # Get nodata value
         info = main_utils.get_raster_info(file)
-        original_nodata = info["bands"][0]["no_data_value"]
-
-        # GDAL 3.11 FIX: Determine appropriate nodata value based on file type
-        original_file = file
-        temp_vrt_created = False
-        nodata = None
-
-        # Determine appropriate nodata value based on file type and content
-        filename_lower = os.path.basename(file).lower()
-
-        if '_cloud' in filename_lower:
-            # Cloud masks: use 255 as NoData
-            nodata = 255
-            logger.info(f"Cloud mask detected, using NoData=255")
-        elif '_tci_' in filename_lower:
-            # TCI (RGB composite): use 65535 (outside byte range but valid for processing)
-            # This avoids conflict with actual RGB values which range 0-255
-            nodata = 65535
-            logger.info(f"TCI detected, using NoData=65535 to avoid value conflicts")
-        elif original_nodata is None:
-            # For other files without nodata, use 0
-            nodata = 0
-            logger.warning(f"NoData value was None, using 0")
-        else:
-            # Use existing nodata value
-            nodata = original_nodata
-
-        # For VRT files, always create a temporary VRT with explicit NoData
-        if file.endswith('.vrt'):
-            try:
-                file = create_vrt_with_nodata(file, nodata)
-                temp_vrt_created = True
-            except Exception as e:
-                logger.error(f"Failed to create temporary VRT: {str(e)}")
-                continue
+        nodata = info["bands"][0]["no_data_value"]
 
         # Extract band name and GSD from filename
-        match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(original_file))
+        # Pattern matches any band name (B02, B8A, AOT, SCL, TCI, etc.) followed by resolution
+        match = re.search(r'_([A-Z0-9]+)_(\d+)m', os.path.basename(file))
         if match:
             band_name = match.group(1).lower()
             gsd = match.group(2)
             suffix = f"{band_name}_{gsd}m"
         else:
-            # Fallback for files without band info
-            if '_cloud_' in filename_lower:
+            # Fallback for files without band info (like cloud masks or omnicloud)
+            #if '_cloud_' in os.path.basename(file): # CS+
+            #    band_name = 'cloudmask'
+            #    suffix = f"{band_name}_10m"
+            if '_omnicloud_' in os.path.basename(file): #Omnicloud
                 band_name = 'cloudmask'
-                suffix = f"{band_name}_10m"
-            elif '_omnicloud_' in filename_lower:
-                band_name = 'omnicloudmask'
                 suffix = f"{band_name}_10m"
             else:
                 logger.info(f"Unknown file in list for deshifting: {os.path.basename(file)}. Skipping.")
-                if temp_vrt_created and os.path.exists(file):
-                    try:
-                        os.remove(file)
-                    except Exception as e:
-                        logger.warning(f"Failed to remove temporary VRT: {str(e)}")
                 continue
 
         # Build output path at topmost level
@@ -791,29 +635,38 @@ def deshift_files(
         output_path = topmost_dir / output_filename
 
         # Deshift the image
-        try:
-            deshift_image(
-                im_target=file,
-                pickle_path=pickle_path,
-                path_out=str(output_path),
-                nodata=nodata,
-                **kwargs
-            )
+        deshift_image(
+            im_target=file,
+            pickle_path=pickle_path,
+            path_out=str(output_path),
+            nodata=nodata,
+            **kwargs
+        )
 
-            output_paths.append(str(output_path))
-
-        except Exception as e:
-            logger.error(f"Failed to deshift {os.path.basename(original_file)}: {str(e)}")
-        finally:
-            # Clean up temporary VRT if created
-            if temp_vrt_created and os.path.exists(file):
-                try:
-                    os.remove(file)
-                    logger.info(f"Cleaned up temporary VRT: {os.path.basename(file)}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary VRT {file}: {str(e)}")
+        output_paths.append(str(output_path))
 
     logger.info(f"Deshifted {len(output_paths)} files")
+
+    omnicloud_file = None
+    b04_file = None
+
+    for path in output_paths:
+        if '_cloudmask_10m.tif' in path:
+            omnicloud_file = path
+        elif '_b04_10m.tif' in path:
+            b04_file = path
+
+    if omnicloud_file and b04_file:
+        logger.info("Applying B04 noData mask to omnicloud file")
+        try:
+            main_utils.mask_raster_by_reference_nodata(omnicloud_file, b04_file)
+        except Exception as e:
+            logger.warning(f"Failed to apply B04 mask to omnicloud: {str(e)}")
+    elif omnicloud_file:
+        logger.warning("Omnicloud file found but B04 file missing - skipping B04 mask")
+    else:
+        logger.info("No omnicloud file to mask")
+
     return output_paths
 
 

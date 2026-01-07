@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import logging
 import re
+import glob
 import math
 import shutil
 
@@ -680,30 +681,30 @@ def get_collection_info_landsat(collection):
 def ensure_path(path: Union[str, Path]) -> Path:
     """
     Ensures a path is a proper Path object with normalized separators for the current OS.
-    
+
     Args:
         path: The path to normalize
-        
+
     Returns:
         A normalized Path object
     """
     # Convert to Path object if it's a string
     if isinstance(path, str):
         path = Path(path)
-    
+
     # Normalize path (handles different path separators)
     path = Path(os.path.normpath(str(path)))
-    
+
     return path
 
 
 def ensure_directory(path: Union[str, Path]) -> Path:
     """
     Ensures a directory exists, creating it if necessary.
-    
+
     Args:
         path: Directory path
-        
+
     Returns:
         Path object for the directory
     """
@@ -714,10 +715,10 @@ def ensure_directory(path: Union[str, Path]) -> Path:
 def run_gdal_command(command: List[str]) -> Tuple[bool, str, str]:
     """
     Run a GDAL command and capture its output.
-    
+
     Args:
         command: List of command arguments
-        
+
     Returns:
         Tuple of (success, stdout, stderr)
     """
@@ -732,38 +733,38 @@ def run_gdal_command(command: List[str]) -> Tuple[bool, str, str]:
         return process.returncode == 0, process.stdout, process.stderr
     except Exception as e:
         return False, "", str(e)
-    
+
 def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
     """
     Get basic information about a raster file using gdalinfo.
-    
+
     Args:
         raster_path: Path to the raster file
-        
+
     Returns:
         Dictionary with raster information (dimensions, extent, projection, etc.)
-        
+
     Raises:
         ValueError: If the raster cannot be opened
     """
     raster_path = ensure_path(raster_path)
-    
+
     # Run gdalinfo to get raster information
     command = ["gdalinfo", "-json", str(raster_path)]
     success, stdout, stderr = run_gdal_command(command)
-    
+
     if not success:
         logger.error(f"Failed to get information for raster: {raster_path}")
         raise ValueError(f"Failed to open raster: {raster_path}")
-    
+
     # Parse JSON output
     try:
         info = json.loads(stdout)
-        
+
         # Extract basic information
         width = info["size"][0]
         height = info["size"][1]
-        
+
         # Get geotransform
         geotransform = info["geoTransform"]
         minx = geotransform[0]
@@ -772,7 +773,7 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
         pixel_height = abs(geotransform[5])
         maxx = minx + pixel_width * width
         miny = maxy - pixel_height * height
-        
+
         # Get projection and EPSG
         projection = info["coordinateSystem"]["wkt"]
         epsg = None
@@ -780,7 +781,7 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
             epsg_match = re.search(r'EPSG:(\d+)', info["coordinateSystem"]["dataAxisToSRSAxisMapping"])
             if epsg_match:
                 epsg = int(epsg_match.group(1))
-        
+
         # Alternative method to get EPSG using projinfo
         if epsg is None:
             epsg_command = ["gdalsrsinfo", "-o", "epsg", str(raster_path)]
@@ -789,7 +790,7 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
                 epsg_match = re.search(r'EPSG:(\d+)', epsg_stdout)
                 if epsg_match:
                     epsg = int(epsg_match.group(1))
-        
+
         # Extract band information
         bands = []
         for i, band in enumerate(info["bands"], 1):
@@ -798,7 +799,7 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
                 "data_type": band.get("type", "Unknown"),
                 "no_data_value": band.get("noDataValue", None)
             })
-        
+
         return {
             "width": width,
             "height": height,
@@ -810,7 +811,7 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
             "geotransform": geotransform,
             "bands": bands
         }
-    
+
     except (json.JSONDecodeError, KeyError) as e:
         logger.error(f"Error parsing gdalinfo output: {e}")
         raise ValueError(f"Failed to parse raster information: {e}")
@@ -819,13 +820,13 @@ def get_raster_info(raster_path: Union[str, Path]) -> Dict[str, Any]:
 def get_pixel_spacing(raster_path: Union[str, Path]) -> Tuple[float, float]:
     """
     Get the pixel spacing (resolution) of a raster file.
-    
+
     Args:
         raster_path: Path to the raster file
-        
+
     Returns:
         Tuple of (x_resolution, y_resolution) in the raster's units
-        
+
     Raises:
         ValueError: If the pixel spacing cannot be determined
     """
@@ -840,13 +841,13 @@ def get_pixel_spacing(raster_path: Union[str, Path]) -> Tuple[float, float]:
 def get_extent_and_dimensions(raster_path: Union[str, Path]) -> Tuple[float, float, float, float, int, int]:
     """
     Get the extent and dimensions of a raster file.
-    
+
     Args:
         raster_path: Path to the raster file
-        
+
     Returns:
         Tuple of (minx, maxx, miny, maxy, width, height)
-        
+
     Raises:
         ValueError: If the extent and dimensions cannot be determined
     """
@@ -862,16 +863,16 @@ def get_extent_and_dimensions(raster_path: Union[str, Path]) -> Tuple[float, flo
 def parse_date(date_str: str) -> datetime:
     """
     Parse date string in various formats using dateutil.parser.
-    
+
     This function can handle a wide variety of date formats automatically,
     including ISO formats, common regional formats, and timestamps.
-    
+
     Args:
         date_str: Date string in virtually any common format
-        
+
     Returns:
         Datetime object
-        
+
     Raises:
         ValueError: If the date string cannot be parsed
     """
@@ -888,15 +889,15 @@ def parse_date(date_str: str) -> datetime:
             "%Y/%m/%d",
             "%Y-%m-%dT%H%M%S"
         ]
-        
+
         for fmt in formats:
             try:
                 return datetime.strptime(date_str, fmt)
             except ValueError:
                 continue
-        
+
         raise ValueError(f"Could not parse date: {date_str}")
-    
+
 
 def equalize_extents(
     common_extent: Tuple[float, float, float, float],
@@ -906,41 +907,41 @@ def equalize_extents(
     Clip the target image to a common extent that is aligned to a grid.
     The common extent should already be aligned to the coarsest GSD grid,
     ensuring compatibility with all finer resolution images.
-    
+
     Args:
         common_extent: Tuple of (minx, miny, maxx, maxy) representing the common aligned extent.
         im_target: The path to the target raster file (will be clipped).
-    
+
     Returns:
         Path to the clipped target as a VRT file.
-    
+
     Raises:
         RuntimeError: If clipping fails or the target doesn't overlap with the common extent.
     """
     im_target = ensure_path(im_target)
     minx_common, miny_common, maxx_common, maxy_common = common_extent
-    
+
     # Define output file name for target (same location, same name, but .vrt extension)
     output_target = im_target.with_name(im_target.stem + "_clip.vrt")
-    
+
     logger.info(f"Clipping target image to common extent: ({minx_common}, {miny_common}, {maxx_common}, {maxy_common})")
-    
+
     try:
         # Get extent of the target image
         minx_target, maxx_target, miny_target, maxy_target, _, _ = get_extent_and_dimensions(im_target)
-        
+
         # Get the target's GSD
         gsd_x_target, gsd_y_target = get_pixel_spacing(im_target)
-        
+
         # Check that target origin is aligned to multiples of its GSD
         tolerance = 1e-6
-        if (abs(minx_target % gsd_x_target) > tolerance or 
+        if (abs(minx_target % gsd_x_target) > tolerance or
             abs(miny_target % gsd_y_target) > tolerance):
             raise RuntimeError(f"Target image origin ({minx_target}, {miny_target}) is not aligned to multiples of its GSD ({gsd_x_target}, {gsd_y_target})")
-        
+
         # Verify that common extent is aligned to target's GSD
         # (This should always be true if common extent is aligned to coarsest GSD and target GSD divides into it)
-        if (abs(minx_common % gsd_x_target) > tolerance or 
+        if (abs(minx_common % gsd_x_target) > tolerance or
             abs(miny_common % gsd_y_target) > tolerance or
             abs(maxx_common % gsd_x_target) > tolerance or
             abs(maxy_common % gsd_y_target) > tolerance):
@@ -949,7 +950,7 @@ def equalize_extents(
                 f"is not aligned to target's GSD ({gsd_x_target}, {gsd_y_target}). "
                 f"This should not happen if common extent is aligned to coarsest GSD."
             )
-        
+
         # Check if there's overlap between target and common extent
         if (minx_common >= maxx_target or maxx_common <= minx_target or
             miny_common >= maxy_target or maxy_common <= miny_target):
@@ -957,7 +958,7 @@ def equalize_extents(
                 f"Target image extent ({minx_target}, {miny_target}, {maxx_target}, {maxy_target}) "
                 f"does not overlap with common extent ({minx_common}, {miny_common}, {maxx_common}, {maxy_common})"
             )
-        
+
         # Crop the target image to the common extent
         command_target = [
             "gdalwarp",
@@ -968,15 +969,15 @@ def equalize_extents(
             str(im_target),
             str(output_target)
         ]
-        
+
         success, _, stderr = run_gdal_command(command_target)
         if not success:
             logger.error(f"Failed to crop target image: {stderr}")
             raise RuntimeError(f"Failed to crop target image: {stderr}")
-        
+
         logger.info(f"Successfully clipped {im_target.name} to common extent")
         return str(output_target)
-        
+
     except Exception as e:
         logger.error(f"Error equalizing extents for {im_target}: {str(e)}")
         raise
