@@ -193,7 +193,7 @@ STAC_FSDI_API = '/api/stac/v0.9/'
 # using a reference image.
 
 AROSICS_CONFIG = {
-    'cloud_threshold': 65,
+    'omnicloud_cloudfree_class': 0,
     'csplus_threshold': 65,
     'cloud_nodata': 255,
     'grid_res_multiplier': 5,
@@ -215,6 +215,7 @@ AROSICS_CONFIG = {
     'cloudprob_tile_pattern': 'S2*_MSIL1C',
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
-    'omnicloudmask_venv_path': '.venv/omnicloud_venv/bin/python3',
-    'omnicloudmask_script_path': 'main_functions/main_omnicloudmask.py',
+    #'omnicloudmask_venv_path': os.path.join(".venv","omnicloud_venv","bin","python3"), #LINUX
+    'omnicloudmask_venv_path': os.path.join(".venv","Scripts","python.exe"), #WINDOWS
+    'omnicloudmask_script_path': os.path.join("main_functions","main_omnicloudmask.py"),
 }
