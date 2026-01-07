@@ -906,7 +906,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             epsg=2056,
             lossy=False,
             quality=85,
-            oversample_factor=5
+            oversample_factor=5,
+            orbit_nr=None
             ):
             """
             Clips, resamples and converts raster to COG format using multi-step oversampling.
@@ -924,6 +925,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 lossy: True for JPEG compression, False for DEFLATE compression
                 quality: JPEG quality (1-100), only relevant if lossy=True
                 oversample_factor: Oversampling factor (default: 5)
+                orbit_nr: Orbit number (for TCI masking/logging purposes)
             """
 
             # Read original resolution and datatype from input file
@@ -1047,8 +1049,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Compression options
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
+
+                    # Convert to Path object
+                    path = Path(clipfile)
+                    # Construct new filename with orbit number
+                    orbit_clipfile = path.parent / f"{path.stem}_{orbit_nr}{path.suffix}"
                     cmd_downsample.extend([
-                        "-cutline", str(clipfile), # Clip again to ensure clean edges
+                        "-cutline", str(orbit_clipfile), # Clip again to ensure clean edges
                         "-crop_to_cutline",
                         "-dstalpha",  # Create alpha band for nodata
                         "-co", "COMPRESS=JPEG",
@@ -1174,7 +1181,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     epsg=2056,
                     lossy=lossy,
                     quality=quality,
-                    oversample_factor=5
+                    oversample_factor=5,
+                    orbit_nr=orbit_num
                 )
 
         ##############################
@@ -1209,19 +1217,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
 
-                # Clean up Data file
-                if Path(filename).exists():
-                    print(f"Cleaning up: {filename}")
-                    Path(filename).unlink()
 
         # Upload metadata file
         filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
 
-        # Clean up metadata file
-        if Path(filename).exists():
-                print(f"Cleaning up: {filename}")
-                Path(filename).unlink()
 
         # Upload Thumbnail
         filename=thumbnail
@@ -1241,14 +1241,19 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         main_utils.s3.upload_file(f"swisseo_s2-sr_v200_mosaic_{timestamp}_registration.pickle", config.S3_BUCKET_NAME, s3_key)
 
-        # Clean up pickle file
-        if Path(filename).exists():
-                print(f"Cleaning up: {filename}")
-                Path(filename).unlink()
-
-
         ##############################
         # TODO Upload to GEE
+
+        ##############################
+        # Cleaning up files of orbit
+        pattern = f"*{timestamp}*.*"
+        # Clean up pickle file
+        for file in Path(".").glob(pattern):
+            print(f"Cleaning up: {file}")
+            file.unlink()
+
+
+
 
     breakpoint()
 
