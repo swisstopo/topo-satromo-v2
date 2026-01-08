@@ -647,25 +647,25 @@ def deshift_files(
 
     logger.info(f"Deshifted {len(output_paths)} files")
 
-    omnicloud_file = None
-    b04_file = None
+    # omnicloud_file = None
+    # b04_file = None
 
-    for path in output_paths:
-        if '_cloudmask_10m.tif' in path:
-            omnicloud_file = path
-        elif '_b04_10m.tif' in path:
-            b04_file = path
+    # for path in output_paths:
+    #     if '_cloudmask_10m.tif' in path:
+    #         omnicloud_file = path
+    #     elif '_b04_10m.tif' in path:
+    #         b04_file = path
 
-    if omnicloud_file and b04_file:
-        logger.info("Applying B04 noData mask to omnicloud file")
-        try:
-            main_utils.mask_raster_by_reference_nodata(omnicloud_file, b04_file)
-        except Exception as e:
-            logger.warning(f"Failed to apply B04 mask to omnicloud: {str(e)}")
-    elif omnicloud_file:
-        logger.warning("Omnicloud file found but B04 file missing - skipping B04 mask")
-    else:
-        logger.info("No omnicloud file to mask")
+    # if omnicloud_file and b04_file:
+    #     logger.info("Applying B04 noData mask to omnicloud file")
+    #     try:
+    #         main_utils.mask_raster_by_reference_nodata(omnicloud_file, b04_file)
+    #     except Exception as e:
+    #         logger.warning(f"Failed to apply B04 mask to omnicloud: {str(e)}")
+    # elif omnicloud_file:
+    #     logger.warning("Omnicloud file found but B04 file missing - skipping B04 mask")
+    # else:
+    #     logger.info("No omnicloud file to mask")
 
     return output_paths
 

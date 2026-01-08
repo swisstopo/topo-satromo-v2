@@ -54,7 +54,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # The switches enable / disable the execution of individual steps in this script
 
     # options': True, False - defines if we store the original data to S3 as backup
-    s3_backup = False
+    s3_backup = False # backup copernicus tiles data to S3
+    gpu_check = True# Check if a GPU system is available for processing, if not write to empty asset list and skip processing
 
     ##############################
     # TIME
@@ -218,9 +219,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # SYSTEM CHECK
     # Check if we have a system with GPU available for processing. If not we write to empty asset list that data is ready but we can not process it with the current system. This information will then be processed by the next run of the processing pipeline: A) read the empty asset list B) check if data is ready but not processed , remove it from the empty asset list C) process the data on a system with GPU
-    if not torch.cuda.is_available():
-        write_asset_as_empty(collection, day_to_process, 'Tiles ready awaiting HPC system run')
-        return
+    if gpu_check is True:
+        if not torch.cuda.is_available():
+            write_asset_as_empty(collection, day_to_process, 'Tiles ready awaiting HPC system run')
+            return
 
 
     ##############################
