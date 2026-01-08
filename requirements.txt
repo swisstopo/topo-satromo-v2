@@ -19,6 +19,7 @@ dill==0.4.0
 earthengine-api==1.7.0
 folium==0.20.0
 fonttools==4.60.1
+gdal==3.8.4
 geoarray==0.19.2
 geojson==3.2.0
 geopandas==1.1.1
