@@ -40,16 +40,16 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2025-06-01"
+        current_date_str = "2025-06-10"
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print("*****************************")
 
 
     # Define date to be used
-    current_date = ee.Date(current_date_str)
+    #current_date = ee.Date(current_date_str)
 
-    roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE)
+    #roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE)
 
     # Retrieve the step0 information from the config object and store it in a dictionary
     step0_product_dict = get_step0_dict()
@@ -85,8 +85,18 @@ if __name__ == "__main__":
                 #     [8.10, 47.18, 8.20, 47.25])  # 6221 Rickenbach
                 # roi = ee.Geometry.Rectangle(
                 #     [7.938447, 47.514378, 8.127522, 47.610846])
-                result = step1_processor_s2_sr.process_product_s2_sr(
-                      current_date_str,collection_ready)
+
+                # Check if STAC items already exist for the given date, against the step0_collection
+                api_path = getattr(config, 'STAC_FSDI_API')
+                collection = getattr(config, 'PRODUCT_S2_LEVEL_2A')['step0_collection']
+                stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
+                daily_items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date())
+                if len(daily_items) == 0:
+                    result = step1_processor_s2_sr.process_product_s2_sr(
+                        current_date_str,collection_ready)
+                else:
+                    print(f"STAC items already exist for date {current_date_str}: skipping processing.")
+                    result = f"PRODUCT_S2_LEVEL_2A: STAC items already exist for date {current_date_str}, skipping processing."
 
             elif product_to_be_processed == 'PRODUCT_VHI':
                 roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE)

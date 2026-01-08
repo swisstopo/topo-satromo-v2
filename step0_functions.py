@@ -6,6 +6,7 @@ import ee
 from datetime import datetime, timedelta
 from main_functions import main_utils
 from step0_processors import *
+from step1_processors import *
 
 def write_file(input_dict, output_file):
     """
@@ -47,6 +48,22 @@ def step0_main(step0_product_dict, current_date_str):
 
 
 def step0_check_collection(collection, temporal_coverage, current_date_str):
+    """
+    Check if assets are available for all dates in the temporal coverage period.
+
+    Supports three types of collections:
+    1. S3 paths (s3://...)
+    2. STAC catalog URLs (https://...)
+
+
+    Args:
+        collection: Path/URL to the collection
+        temporal_coverage: Number of days to check backwards
+        current_date_str: Current date as string (format: 'YYYY-MM-DD')
+
+    Returns:
+        bool: True if all assets are present, False otherwise
+    """
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
     # Check if the collection is stored on S3
@@ -56,7 +73,7 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         bucket_name = s3_path.split("/")[0]
         prefix = "/".join(s3_path.split("/")[1:])
 
-        # initialized S3
+        # Initialize S3
         main_utils.initialize_gee()
 
         # Use paginator to handle more than 1000 objects
@@ -73,116 +90,169 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
                     if date_str in obj['Key'] and obj['Key'].endswith('.tif')
                 ])
 
+    # Check if the collection is a STAC catalog URL
     else:
-        # Original Google Earth Engine list
-        list_asset_response = ee.data.listAssets({'parent': collection})
-        assets = list_asset_response['assets']
+        # Extract base URL and collection ID from the STAC URL
+        try:
+            # Use config.STAC_FSDI_API
+            api_path = getattr(config, 'STAC_FSDI_API')
+            stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
+            print(f"Querying STAC catalog: {stac_catalog_url}")
+            print(f"Collection ID: {collection_id}")
+        except ValueError as e:
+            print(f"Error parsing STAC URL: {e}")
+            return False
 
-    # asset_cleaning
+        # Query STAC for items on the target date
+        # We'll collect all items across the temporal coverage period
+        check_date = target_date - timedelta(days=temporal_coverage)
+        end_date = target_date
+
+        assets = []
+        while check_date <= end_date:
+            daily_items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
+            assets.extend(daily_items)
+            check_date += timedelta(days=1)
+
+    # For Earth Engine collections
+
+    # Asset cleaning (only for Earth Engine assets with 'properties' and 'date')
     if 'cleaning_older_than' in config.step0[collection]:
         cleaning_target_date = target_date + \
-            timedelta(
-                days=-1 * config.step0[collection]['cleaning_older_than'])
+            timedelta(days=-1 * config.step0[collection]['cleaning_older_than'])
+
         for asset in assets:
-            date = asset['properties']['date']
-            date_as_datetime = datetime.strptime(date, '%Y-%m-%d')
-            if date_as_datetime < cleaning_target_date:
-                print('remove asset {}'.format(date))
-                print(
-                    'XXX Actual asset deletion is not activated. Uncomment the code to do so XXXX')
-                # ee.data.deleteAsset(assetId=asset['id']) TODO uncomment this line to actually delete the assets
+            # Check if asset has the expected structure
+            if 'properties' in asset and 'date' in asset['properties']:
+                date = asset['properties']['date']
+                date_as_datetime = datetime.strptime(date, '%Y-%m-%d')
+
+                if date_as_datetime.date() < cleaning_target_date:
+                    print(f'Remove asset {date}')
+                    print('XXX Actual asset deletion is not activated. Uncomment the code to do so XXXX')
+                    # ee.data.deleteAsset(assetId=asset['id'])  # TODO: uncomment to actually delete
 
     # Check that asset is present for every date of the temporal coverage
-    check_date = target_date + timedelta(days=-1*temporal_coverage)
+    check_date = target_date - timedelta(days=temporal_coverage)
     end_date = target_date
     all_present = True
-    tasks = ee.data.listOperations()
+
 
     while check_date <= end_date:
         asset_prepared = check_if_asset_prepared(
-            collection, assets, check_date, tasks)
+            collection, assets, check_date)
+
         if not asset_prepared:
-            print('Asset not yet available for date {}'.format(check_date))
+            print(f'Asset not yet available for date {check_date}')
             all_present = False
+
         check_date += timedelta(days=1)
 
     return all_present
 
-def check_if_asset_prepared(collection, assets, check_date, tasks):
+def check_if_asset_prepared(collection, assets, check_date):
+    """
+    Check if an asset is prepared for a given date.
+
+    Supports two collection types:
+    1. S3 collections (CLOUD_SCORE_PLUS and others starting with s3://)
+    2. STAC collections (starting with http:// or https://)
+
+
+    Args:
+        collection: Collection path/URL
+        assets: List of assets
+        check_date: Date to check
+
+
+    Returns:
+        bool: True if asset is prepared, False otherwise
+    """
     # 1. we start by checking the state of the task
     #    (we start by that to fill the completed_tasks.csv if needed)
     # 2. if not running, check if the asset is already available
-    # 3. if not in the available asset list ,check if in empty_asset_list
+    # 3. if not in the available asset list, check if in empty_asset_list
     # 4. if not in running tasks, start task (if empty, write the empty_asset_list)
+
     check_date_str = check_date.strftime('%Y-%m-%d')
     print('checking date {}'.format(check_date))
-
-
-
-
     collection_basename = os.path.basename(collection)
-    if collection_basename == "CLOUD_SCORE_PLUS":
-        task_description=check_date.strftime('%Y%m%dT')
-    else:
-        task_description = collection_basename + '_' + check_date_str
 
-    for task in tasks:
+    # For STAC collections, extract the collection ID as basename
+    if collection.startswith("http://") or collection.startswith("https://"):
+        if '#/collections/' in collection:
+            collection_basename = collection.split('#/collections/')[1].strip('/')
+        elif '/collections/' in collection:
+            collection_basename = collection.split('/collections/')[1].strip('/')
+        else:
+            collection_basename = "STAC_COLLECTION"
 
-        if task_description not in task['metadata']['description']:
-            continue
-        if task['metadata']['state'] in ['PENDING', 'RUNNING']:
-            print('task {} still running, skipping asset creation'.format(
-                task_description))
-            return False
-        if task['metadata']['state'] in ['COMPLETE', 'SUCCEEDED']:
-            write_task_metadata_if_needed(task)
-            # we don't return here. Maybe the asset was deleted and need to be restored.
 
     # 1. check if in asset list
-
-    if collection_basename == "CLOUD_SCORE_PLUS":
-
+    # Handle STAC collections
+    if collection.startswith("http://") or collection.startswith("https://"):
         for asset in assets:
+            if 'datetime' in asset:
+                # Parse the datetime from the STAC item
+                asset_datetime = asset['datetime']
+                if isinstance(asset_datetime, str):
+                    # Handle ISO format strings
+                    asset_date = datetime.fromisoformat(
+                        asset_datetime.replace('Z', '+00:00')
+                    ).date()
+                else:
+                    asset_date = asset_datetime.date()
 
+                if asset_date == check_date:
+                    print('Collection {} READY for date {}'.format(
+                        collection, check_date_str))
+                    return True
+            elif 'properties' in asset and 'datetime' in asset['properties']:
+                # Alternative: datetime in properties
+                asset_datetime = asset['properties']['datetime']
+                if isinstance(asset_datetime, str):
+                    asset_date = datetime.fromisoformat(
+                        asset_datetime.replace('Z', '+00:00')
+                    ).date()
+                else:
+                    asset_date = asset_datetime.date()
+
+                if asset_date == check_date:
+                    print('Collection {} READY for date {}'.format(
+                        collection, check_date_str))
+                    return True
+        print('Item not found in STAC collection, continuing...')
+
+    # Handle S3 collections (CLOUD_SCORE_PLUS)
+    elif collection_basename == "CLOUD_SCORE_PLUS" or collection.startswith("s3://"):
+        for asset in assets:
             if check_date.strftime('%Y%m%dT') in asset:
                 print('Collection {} READY for date {}'.format(
                     collection, check_date_str))
                 return True
         print('Asset not found in S3 collection, continuing...')
-    else:
-        for asset in assets:
-            asset_date = asset['properties']['date']
-            if asset_date == check_date_str:
-                print('Collection {} READY for date {}'.format(
-                    collection, check_date_str))
-                return True
-        print('Asset not found in custom collection, continuing...')
+
+
 
     # 2. if not in asset list check if in empty_asset_list
     df = pd.read_csv(config.EMPTY_ASSET_LIST)
-
     df_selection = df[(df.collection == collection_basename)
                       & (df.date == check_date_str)]
-
     if len(df_selection) > 0:
         print('Date found in empty_asset_list, skipping date')
         return True
 
+    # 3. Start asset generation if not found and not for STAC collections
+    # # (STAC collections are read-only, we don't generate assets for them)
+    # if collection.startswith("http://") or collection.startswith("https://"):
+    #     print('STAC collection is read-only, cannot generate assets')
+    #     return False
 
     print('Starting asset generation for {} / {}'.format(collection, check_date_str))
     generate_single_date_function = eval(
         config.step0[collection]['step0_function'])
-    generate_single_date_function(check_date_str, collection, task_description)
+    generate_single_date_function(check_date_str, collection)
     return False
-
-
-def write_task_metadata_if_needed(task):
-    completed_task_df = pd.read_csv(config.GEE_COMPLETED_TASKS)
-    if task['name'] in completed_task_df.name.values:
-        return
-    file_task_id = os.path.basename(task['name'])
-    file_task_status = ee.data.getTaskStatus(file_task_id)[0]
-    write_file(file_task_status, config.GEE_COMPLETED_TASKS)
 
 
 def get_step0_dict():

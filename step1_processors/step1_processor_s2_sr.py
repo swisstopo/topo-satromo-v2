@@ -1,4 +1,5 @@
 import multiprocessing
+import torch
 import subprocess
 import numpy as np
 from datetime import datetime
@@ -40,8 +41,8 @@ from step0_processors.step0_utils import write_asset_as_empty
 # 5. Integrate corresponding CloudScore+ data
 # 6. Generate and update metadata files
 # 7. [TODO] Terrain shadow masking
-# 8. [TODO] Co-registration with AROSICS
-# 9. [TODO] STAC catalog generation
+# 8. Co-registration with AROSICS
+# 9. STAC catalog generation
 #
 # The script processes one mosaic image per day with automated quality checks and error handling.
 
@@ -101,13 +102,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     ##############################
-    # Test if corresponing Cloudscope+ data is in  empty asset list
-    no_csplus=main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'], day_to_process)
+    # Test if corresponing Cloudscope+ data is in  empty asset list TODO remove this check when Omnicloudmask is fully operational
+    # no_csplus=main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'], day_to_process)
 
-    if no_csplus:
-        if main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process) is False:
-            write_asset_as_empty(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process, 'No CloudScore+ data available')
-        return
+    # if no_csplus:
+    #     if main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process) is False:
+    #         write_asset_as_empty(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process, 'No CloudScore+ data available')
+    #     return
 
 
     ##############################
@@ -182,7 +183,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         write_asset_as_empty(collection, day_to_process, 'No candidate scene')
         return
 
-    # TODO check if already in  stac and check if online is a new processor / baseline
+    # TODO check if already in  stac,  check if online is a new processor / baseline
 
     ##############################
     # TILE Completness check
@@ -214,7 +215,12 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         write_asset_as_empty(collection, day_to_process, f'Tile upload incomplete: {sorted(non_valid_orbits)}')
         # continue processing the valid orbits
 
-
+    ##############################
+    # SYSTEM CHECK
+    # Check if we have a system with GPU available for processing. If not we write to empty asset list that data is ready but we can not process it with the current system. This information will then be processed by the next run of the processing pipeline: A) read the empty asset list B) check if data is ready but not processed , remove it from the empty asset list C) process the data on a system with GPU
+    if not torch.cuda.is_available():
+        write_asset_as_empty(collection, day_to_process, 'Tiles ready awaiting HPC system run')
+        return
 
 
     ##############################
@@ -623,131 +629,131 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     ##############################
-    # Copy corresponding CS+ to local
-    # TODO maybe to reduce cost: Check if the URL exists before copying with requests and not with boto: this is to reduce the costs of s3 access. keep in mind that we want in this case access the CF distribution on int and not on prod
+    # Copy corresponding CS+ to local TODO remove when omnicloudmask is fully operational
+    #  maybe to reduce cost: Check if the URL exists before copying with requests and not with boto: this is to reduce the costs of s3 access. keep in mind that we want in this case access the CF distribution on int and not on prod
 
-    # S3 config
-    s3_path_info = config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection']
-    path_parts = s3_path_info[5:].split('/', 1)
-    bucket_name = path_parts[0]
-    s3_prefix = path_parts[1] if len(path_parts) > 1 else ""
+    # # S3 config
+    # s3_path_info = config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection']
+    # path_parts = s3_path_info[5:].split('/', 1)
+    # bucket_name = path_parts[0]
+    # s3_prefix = path_parts[1] if len(path_parts) > 1 else ""
 
-    # Pattern to match JP2 filename format: T31TGM_20250423T104041_AOT_60m.jp2
-    jp2_pattern = r'^([A-Z0-9]{6})_(\d{8}T\d{6})_.*\.jp2$'
+    # # Pattern to match JP2 filename format: T31TGM_20250423T104041_AOT_60m.jp2
+    # jp2_pattern = r'^([A-Z0-9]{6})_(\d{8}T\d{6})_.*\.jp2$'
 
-    # CloudScore+ pattern: both .tif and _metadata.json files
-    def make_cloudscore_pattern(timestamp, tile_id):
-        return rf'.*{re.escape(timestamp)}_.*_{re.escape(tile_id)}_.*(_metadata\.json|\.tif)$'
+    # # CloudScore+ pattern: both .tif and _metadata.json files
+    # def make_cloudscore_pattern(timestamp, tile_id):
+    #     return rf'.*{re.escape(timestamp)}_.*_{re.escape(tile_id)}_.*(_metadata\.json|\.tif)$'
 
-    # Find JP2 directories and extract tile info
-    tile_to_directory_map = {}
+    # # Find JP2 directories and extract tile info
+    # tile_to_directory_map = {}
 
-    # Print
-    print(f"Downloading {bucket_name} CloudScore+ files")
-    for root, dirs, files in os.walk(copernicus_collection):
-        jp2_files = [f for f in files if f.lower().endswith('.jp2')]
+    # # Print
+    # print(f"Downloading {bucket_name} CloudScore+ files")
+    # for root, dirs, files in os.walk(copernicus_collection):
+    #     jp2_files = [f for f in files if f.lower().endswith('.jp2')]
 
-        if jp2_files:
-            #print(f"Processing directory: {root}")
+    #     if jp2_files:
+    #         #print(f"Processing directory: {root}")
 
-            # Extract tile info from first matching JP2 file per tile
-            for filename in jp2_files:
-                match = re.match(jp2_pattern, filename, re.IGNORECASE)
-                if match:
-                    tile_id = match.group(1)
-                    timestamp = match.group(2)
-                    tile_key = (tile_id, timestamp)
+    #         # Extract tile info from first matching JP2 file per tile
+    #         for filename in jp2_files:
+    #             match = re.match(jp2_pattern, filename, re.IGNORECASE)
+    #             if match:
+    #                 tile_id = match.group(1)
+    #                 timestamp = match.group(2)
+    #                 tile_key = (tile_id, timestamp)
 
-                    if tile_key not in tile_to_directory_map:
-                        tile_to_directory_map[tile_key] = root
-                        # print(f"Found tile {tile_id}, timestamp {timestamp}")
+    #                 if tile_key not in tile_to_directory_map:
+    #                     tile_to_directory_map[tile_key] = root
+    #                     # print(f"Found tile {tile_id}, timestamp {timestamp}")
 
-    # Process each tile and download CloudScore+ files
-    if tile_to_directory_map:
-        # print(f"\nProcessing {len(tile_to_directory_map)} unique tile/timestamp combinations")
+    # # Process each tile and download CloudScore+ files
+    # if tile_to_directory_map:
+    #     # print(f"\nProcessing {len(tile_to_directory_map)} unique tile/timestamp combinations")
 
-        for (tile_id, timestamp), source_directory in tile_to_directory_map.items():
-            # print(f"\nSearching CloudScore+ for {tile_id}, {timestamp} -> {source_directory}")
+    #     for (tile_id, timestamp), source_directory in tile_to_directory_map.items():
+    #         # print(f"\nSearching CloudScore+ for {tile_id}, {timestamp} -> {source_directory}")
 
-            # Search S3 for matching files
-            paginator = main_utils.s3.get_paginator('list_objects_v2')
-            pattern = make_cloudscore_pattern(timestamp, tile_id)
-            matching_files = []
+    #         # Search S3 for matching files
+    #         paginator = main_utils.s3.get_paginator('list_objects_v2')
+    #         pattern = make_cloudscore_pattern(timestamp, tile_id)
+    #         matching_files = []
 
-            try:
-                for page in paginator.paginate(Bucket=bucket_name, Prefix=s3_prefix):
-                    if 'Contents' in page:
-                        for obj in page['Contents']:
-                            filename = os.path.basename(obj['Key'])
-                            if re.search(pattern, filename, re.IGNORECASE):
-                                matching_files.append(obj['Key'])
-            except Exception as e:
-                print(f"Error searching S3: {e}")
-                write_asset_as_empty(collection, day_to_process, 'Error searching CloudsScore tile')
-                return
+    #         try:
+    #             for page in paginator.paginate(Bucket=bucket_name, Prefix=s3_prefix):
+    #                 if 'Contents' in page:
+    #                     for obj in page['Contents']:
+    #                         filename = os.path.basename(obj['Key'])
+    #                         if re.search(pattern, filename, re.IGNORECASE):
+    #                             matching_files.append(obj['Key'])
+    #         except Exception as e:
+    #             print(f"Error searching S3: {e}")
+    #             write_asset_as_empty(collection, day_to_process, 'Error searching CloudsScore tile')
+    #             return
 
-            # Download matching files
-            if matching_files:
-                #print(f"Downloading {len(matching_files)} CloudScore+ files")
-                os.makedirs(source_directory, exist_ok=True)
+    #         # Download matching files
+    #         if matching_files:
+    #             #print(f"Downloading {len(matching_files)} CloudScore+ files")
+    #             os.makedirs(source_directory, exist_ok=True)
 
-                for key in matching_files:
-                    try:
-                        filename = os.path.basename(key)
-                        local_path = os.path.join(source_directory, filename)
-                        main_utils.s3.download_file(bucket_name, key, local_path)
-                        #print(f"Downloaded {filename}")
-                    except Exception as e:
-                        print(f"Error downloading {key}: {e}")
-                        write_asset_as_empty(collection, day_to_process, 'Error downloading CloudsScore tile')
-                        return
-            else:
-                print(f"No CloudScore+ files found")
-                write_asset_as_empty(collection, day_to_process, 'missing CloudsScore tile')
-                return
-    else:
-        print("No valid JP2 files found")
-        write_asset_as_empty(collection, day_to_process, 'No valid local tiles files found')
-        return
+    #             for key in matching_files:
+    #                 try:
+    #                     filename = os.path.basename(key)
+    #                     local_path = os.path.join(source_directory, filename)
+    #                     main_utils.s3.download_file(bucket_name, key, local_path)
+    #                     #print(f"Downloaded {filename}")
+    #                 except Exception as e:
+    #                     print(f"Error downloading {key}: {e}")
+    #                     write_asset_as_empty(collection, day_to_process, 'Error downloading CloudsScore tile')
+    #                     return
+    #         else:
+    #             print(f"No CloudScore+ files found")
+    #             write_asset_as_empty(collection, day_to_process, 'missing CloudsScore tile')
+    #             return
+    # else:
+    #     print("No valid JP2 files found")
+    #     write_asset_as_empty(collection, day_to_process, 'No valid local tiles files found')
+    #     return
 
-    ##############################
-    # Add CS+ metadata to each orbit's metadata JSON file
+    # ##############################
+    # # Add CS+ metadata to each orbit's metadata JSON file
 
-    for orbit_num, timestamp in orbit_timestamp.items():
-        ts=timestamp.replace('-', '')[:8]
-        orbit_dir = os.path.join(copernicus_collection, f"R{int(orbit_num):03d}", ts)
-        metadata_filename = f"swisseo_s2-sr_v200_mosaic_{timestamp}_metadata.json"
-        metadata_path =  metadata_filename
+    # for orbit_num, timestamp in orbit_timestamp.items():
+    #     ts=timestamp.replace('-', '')[:8]
+    #     orbit_dir = os.path.join(copernicus_collection, f"R{int(orbit_num):03d}", ts)
+    #     metadata_filename = f"swisseo_s2-sr_v200_mosaic_{timestamp}_metadata.json"
+    #     metadata_path =  metadata_filename
 
-        # Find all _metadata.json files for CloudScore+ in the orbit directory
-        csplus_metadata_files = []
-        if os.path.exists(orbit_dir):
-            csplus_metadata_files = [os.path.join(orbit_dir, f)
-                                   for f in os.listdir(orbit_dir)
-                                   if f.endswith("_metadata.json")]
+    #     # Find all _metadata.json files for CloudScore+ in the orbit directory
+    #     csplus_metadata_files = []
+    #     if os.path.exists(orbit_dir):
+    #         csplus_metadata_files = [os.path.join(orbit_dir, f)
+    #                                for f in os.listdir(orbit_dir)
+    #                                if f.endswith("_metadata.json")]
 
-        # Build the SOURCE_CLOUDSCOREPLUS structure
-        source_csplus = {"GRANULES": {}}
-        for cs_file in csplus_metadata_files:
-            try:
-                with open(cs_file, "r") as f:
-                    csplus_data = json.load(f)
-                # Extract granule ID from filename without _metadata.json and path
-                granule_id = os.path.basename(cs_file).split("_metadata.json")[0]
-                source_csplus["GRANULES"][granule_id] = csplus_data
-            except Exception as e:
-                print(f"Error reading CS+ metadata {cs_file}: {e}")
+    #     # Build the SOURCE_CLOUDSCOREPLUS structure
+    #     source_csplus = {"GRANULES": {}}
+    #     for cs_file in csplus_metadata_files:
+    #         try:
+    #             with open(cs_file, "r") as f:
+    #                 csplus_data = json.load(f)
+    #             # Extract granule ID from filename without _metadata.json and path
+    #             granule_id = os.path.basename(cs_file).split("_metadata.json")[0]
+    #             source_csplus["GRANULES"][granule_id] = csplus_data
+    #         except Exception as e:
+    #             print(f"Error reading CS+ metadata {cs_file}: {e}")
 
-        # Update the orbit metadata with CloudScore+ data
-        if os.path.exists(metadata_path):
-            try:
-                with open(metadata_path, "r") as f:
-                    orbit_metadata = json.load(f)
-                orbit_metadata["SOURCE_CLOUDSCOREPLUS"] = source_csplus
-                with open(metadata_path, "w") as f:
-                    json.dump(orbit_metadata, f, indent=2)
-            except Exception as e:
-                print(f"Error updating metadata file {metadata_path}: {e}")
+    #     # Update the orbit metadata with CloudScore+ data
+    #     if os.path.exists(metadata_path):
+    #         try:
+    #             with open(metadata_path, "r") as f:
+    #                 orbit_metadata = json.load(f)
+    #             orbit_metadata["SOURCE_CLOUDSCOREPLUS"] = source_csplus
+    #             with open(metadata_path, "w") as f:
+    #                 json.dump(orbit_metadata, f, indent=2)
+    #         except Exception as e:
+    #             print(f"Error updating metadata file {metadata_path}: {e}")
 
 
 
@@ -757,7 +763,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     ##############################
-    # TODO COREGISTRATION AROSICS
+    # COREGISTRATION AROSICS
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
     orbit_nrs = [int(orbit) for orbit in grouped_results.keys()]
 
@@ -799,7 +805,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             )
 
 
-    breakpoint()
+
     ##############################
     # Clean up Download folder
     if Path(copernicus_collection).exists():

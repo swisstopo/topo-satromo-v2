@@ -4,7 +4,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import boto3
 import requests
 import ee
-import datetime
 import csv
 import os
 import json
@@ -16,6 +15,8 @@ from pathlib import Path
 import subprocess
 import logging
 import re
+from datetime import datetime, timedelta
+from pystac_client import Client
 import glob
 import math
 import shutil
@@ -59,17 +60,17 @@ def initialize_gee():
     if run_type == 2:
         # Initialize GEE and authenticate using the service account key file
 
-        # Read the service account key file
-        with open(config.GOOGLE_SECRETS, "r") as f:
-            data = json.load(f)
+        # # Read the service account key file
+        # with open(config.GOOGLE_SECRETS, "r") as f:
+        #     data = json.load(f)
 
-        # Authenticate with Google using the service account key file
-        gauth = GoogleAuth()
-        gauth.service_account_file = config.GOOGLE_SECRETS
-        gauth.service_account_email = data["client_email"]
-        gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            gauth.service_account_file, scopes=scopes
-        )
+        # # Authenticate with Google using the service account key file
+        # gauth = GoogleAuth()
+        # gauth.service_account_file = config.GOOGLE_SECRETS
+        # gauth.service_account_email = data["client_email"]
+        # gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
+        #     gauth.service_account_file, scopes=scopes
+        # )
         # Load AWS credentials from JSON
         with open(config.S3_SECRETS, "r") as f:
             aws_creds = json.load(f)
@@ -81,20 +82,20 @@ def initialize_gee():
     else:
         # Run other code using secrets from GitHub Action
         # This script is running on GitHub
-        gauth = GoogleAuth()
-        google_client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
-        google_client_secret = json.loads(google_client_secret)
-        gauth.service_account_email = google_client_secret["client_email"]
-        google_client_secret_str = json.dumps(google_client_secret)
+        # gauth = GoogleAuth()
+        # google_client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+        # google_client_secret = json.loads(google_client_secret)
+        # gauth.service_account_email = google_client_secret["client_email"]
+        # google_client_secret_str = json.dumps(google_client_secret)
 
-        # Write the JSON string to a temporary key file
-        gauth.service_account_file = "keyfile.json"
-        with open(gauth.service_account_file, "w") as f:
-            f.write(google_client_secret_str)
+        # # Write the JSON string to a temporary key file
+        # gauth.service_account_file = "keyfile.json"
+        # with open(gauth.service_account_file, "w") as f:
+        #     f.write(google_client_secret_str)
 
-        gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            gauth.service_account_file, scopes=scopes
-        )
+        # gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
+        #     gauth.service_account_file, scopes=scopes
+        # )
         # Write S3
         s3_secrets_str = os.environ.get('S3_SECRETS')
         aws_creds = json.loads(s3_secrets_str)
@@ -104,22 +105,22 @@ def initialize_gee():
         copernicus_creds = json.loads(copernicus_secrets_str)
 
     # Create the GCS client
-    global storage_client
-    storage_client = storage.Client.from_service_account_json(
-            gauth.service_account_file)
+    # global storage_client
+    # storage_client = storage.Client.from_service_account_json(
+    #         gauth.service_account_file)
 
-    # Initialize Google Earth Engine
-    credentials = ee.ServiceAccountCredentials(
-        gauth.service_account_email, gauth.service_account_file
-    )
-    ee.Initialize(credentials)
+    # # Initialize Google Earth Engine
+    # credentials = ee.ServiceAccountCredentials(
+    #     gauth.service_account_email, gauth.service_account_file
+    # )
+    # ee.Initialize(credentials)
 
-    # Test if GEE initialization is successful
-    image = ee.Image("NASA/NASADEM_HGT/001")
-    title = image.get("title").getInfo()
+    # # Test if GEE initialization is successful
+    # image = ee.Image("NASA/NASADEM_HGT/001")
+    # title = image.get("title").getInfo()
 
-    if title != "NASADEM: NASA NASADEM Digital Elevation 30m":
-        print("GEE initialization FAILED")
+    # if title != "NASADEM: NASA NASADEM Digital Elevation 30m":
+    #     print("GEE initialization FAILED")
 
     # Initialize S3 client with credentials
     global s3
@@ -981,3 +982,143 @@ def equalize_extents(
     except Exception as e:
         logger.error(f"Error equalizing extents for {im_target}: {str(e)}")
         raise
+
+def get_stac_items_for_date(stac_catalog_url: str, collection_id: str, target_date: datetime.date) -> List[Dict[str, Any]]:
+    """
+    Query a STAC catalog for items from a specific collection on a specific date.
+
+    Args:
+        stac_catalog_url: Base URL of the STAC catalog (e.g., 'https://data.geo.admin.ch/api/stac/v0.9/')
+        collection_id: Collection ID (e.g., 'ch.swisstopo.swisseo_s2-sr_v200')
+        target_date: Date to query for (datetime.date object)
+
+    Returns:
+        List of STAC items (as dictionaries) for the specified date
+    """
+    # Open the STAC catalog
+    catalog = Client.open(stac_catalog_url)
+
+    # Add conformance classes for Swisstopo "finish" STAC implementation
+    catalog.add_conforms_to("COLLECTIONS")
+    catalog.add_conforms_to("ITEM_SEARCH")
+
+    # Define the time range for the query (single day)
+    start_datetime = datetime.combine(target_date, datetime.min.time())
+    end_datetime = datetime.combine(target_date, datetime.max.time())
+
+    # Format datetime strings for STAC query
+    datetime_str = f"{start_datetime.isoformat()}Z/{end_datetime.isoformat()}Z"
+
+    # Search for items in the collection
+    search = catalog.search(
+        collections=[collection_id],
+        datetime=datetime_str
+    )
+
+    # Collect all items
+    items = []
+    for item in search.items():
+        items.append({
+            'id': item.id,
+            'properties': item.properties,
+            'assets': item.assets,
+            'geometry': item.geometry,
+            'bbox': item.bbox,
+            'datetime': item.datetime
+        })
+
+    return items
+
+
+def check_stac_collection_availability(stac_catalog_url: str, collection_id: str,
+                                       target_date: datetime.date,
+                                       temporal_coverage: int) -> tuple[bool, List[datetime.date]]:
+    """
+    Check if STAC items are available for all dates in the temporal coverage period.
+
+    Args:
+        stac_catalog_url: Base URL of the STAC catalog
+        collection_id: Collection ID to check
+        target_date: End date of the temporal coverage
+        temporal_coverage: Number of days to check backwards from target_date
+
+    Returns:
+        Tuple of (all_present: bool, missing_dates: List[datetime.date])
+    """
+    # Open catalog with conformance classes
+    catalog = Client.open(stac_catalog_url)
+    catalog.add_conforms_to("COLLECTIONS")
+    catalog.add_conforms_to("ITEM_SEARCH")
+
+    check_date = target_date - timedelta(days=temporal_coverage)
+    end_date = target_date
+    all_present = True
+    missing_dates = []
+
+    while check_date <= end_date:
+        items = get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
+
+        if not items or len(items) == 0:
+            print(f'No STAC items found for date {check_date}')
+            all_present = False
+            missing_dates.append(check_date)
+        else:
+            print(f'Found {len(items)} STAC item(s) for date {check_date}')
+
+        check_date += timedelta(days=1)
+
+    return all_present, missing_dates
+
+
+def extract_collection_id_from_url(stac_url: str, config_api_path: str = '/api/stac/v0.9/') -> tuple[str, str]:
+    """
+    Extract the base URL and collection ID from a STAC collection URL.
+
+    Supports both formats:
+    - Viewer URL: 'https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200'
+    - Viewer URL: 'https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200'
+    - API URL: 'https://sys-data.int.bgdi.ch/api/stac/v0.9/' (Integration)
+    - API URL: 'https://data.geo.admin.ch/api/stac/v0.9/' (Production)
+
+    For viewer URLs, automatically converts to the API endpoint using the base domain.
+
+    Args:
+        stac_url: Full STAC collection URL or just the collection ID
+        config_api_path: API path from config (e.g., config.STAC_FSDI_API)
+
+    Returns:
+        Tuple of (api_base_url, collection_id)
+    """
+    # If it's just a collection ID without URL, need to know which environment
+    if not stac_url.startswith('http'):
+        raise ValueError(f"URL must include base domain. Got: {stac_url}")
+
+    # Handle viewer URLs like https://sys-data.int.bgdi.ch/#/collections/...
+    if '#/collections/' in stac_url:
+        # Extract the base domain and collection ID
+        base_domain = stac_url.split('#')[0].rstrip('/')
+        collection_id = stac_url.split('#/collections/')[1].strip('/')
+
+        # Build API URL using the same base domain + config API path
+        api_url = base_domain + config_api_path
+        if not api_url.endswith('/'):
+            api_url += '/'
+
+        return api_url, collection_id
+
+    # Handle API URLs like https://sys-data.int.bgdi.ch/api/stac/v0.9/collections/...
+    if '/collections/' in stac_url:
+        base_part = stac_url.split('/collections/')[0]
+        collection_id = stac_url.split('/collections/')[1].strip('/')
+
+        # Ensure base URL ends with /
+        if not base_part.endswith('/'):
+            base_part += '/'
+
+        return base_part, collection_id
+
+    # If no collection specified, assume it's just the base API URL
+    if stac_url.endswith('/'):
+        return stac_url, ''
+    else:
+        return stac_url + '/', ''
