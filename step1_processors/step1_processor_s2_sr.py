@@ -865,13 +865,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Get statistics for each band
                 band_stats = []
                 for band in range(1, meta['count'] + 1):
-                    stats = src.statistics(bidx=band, approx=True)  # min, max, mean, std
+                    stats_list = src.stats(bidx=band, approx=True)  # min, max, mean, std
+                    stats = stats_list[0]  # stats() returns a list, get first element
                     band_stats.append({
                         'band': band,
-                        'min': stats.min,
-                        'max': stats.max,
-                        'mean': stats.mean,
-                        'std': stats.std
+                        'min': stats['min'],
+                        'max': stats['max'],
+                        'mean': stats['mean'],
+                        'std': stats['std']
                     })
 
                 return {
