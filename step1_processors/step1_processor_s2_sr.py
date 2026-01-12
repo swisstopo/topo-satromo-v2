@@ -1048,8 +1048,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
 
                 # Clip on BBOX of extent buffer to reduce file size for processing
-                breakpoint()
-                # Convert to Path object
                 # Wrap the string in Path() first
                 buffer_path = Path(config.BUFFER)
                 # Construct new filename with orbit number
