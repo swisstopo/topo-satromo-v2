@@ -16,6 +16,7 @@ import shutil
 import re
 import rasterio
 import glob
+import geopandas as gpd
 
 
 from step0_processors.step0_utils import write_asset_as_empty
@@ -690,10 +691,12 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     def get_raster_properties(input_file):
         """
         Extract resolution, datatype, and nodata value from a raster file.
+
         Parameters:
         -----------
         input_file : str or Path
             Path to the input raster file
+
         Returns:
         --------
         dict : Dictionary containing:
@@ -702,7 +705,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             - 'nodata': float/int or None (nodata value)
             - 'res_x': float or None (x resolution)
             - 'res_y': float or None (y resolution)
-            - 'statistics': list of dict or None (statistics for each band)
+            - 'statistics': list of dict or None (band numbers)
         """
         try:
             with rasterio.open(input_file) as src:
@@ -731,19 +734,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 # Get nodata value
                 nodata_value = meta.get('nodata', None)
+                # Convert nodata to int for integer data types
+                if nodata_value is not None and rasterio_dtype in ['uint8', 'uint16', 'int16', 'uint32', 'int32']:
+                    nodata_value = int(nodata_value)
 
-                # Get statistics for each band
+                # Get band information
                 band_stats = []
                 for band in range(1, meta['count'] + 1):
-                    stats_list = src.stats(bidx=band, approx=True)  # min, max, mean, std
-                    stats = stats_list[0]  # stats() returns a list, get first element
-                    band_stats.append({
-                        'band': band,
-                        'min': stats['min'],
-                        'max': stats['max'],
-                        'mean': stats['mean'],
-                        'std': stats['std']
-                    })
+                    band_stats.append({'band': band})
 
                 return {
                     'resolution': resolution,
@@ -753,6 +751,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     'res_y': original_res_y,
                     'statistics': band_stats
                 }
+
         except Exception as e:
             print(f"Error reading raster properties: {e}")
             return {
@@ -762,7 +761,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 'res_x': None,
                 'res_y': None,
                 'statistics': None
-        }
+            }
 
     for orbit_num, timestamp in orbit_timestamp.items():
         print(f"Processing orbit {orbit_num} of {timestamp} ...")
@@ -775,7 +774,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # - cloudshadow percentage
 
         ##############################
-        # Clip Data to Switzerland and Reproeject to CH1903LV95
+        # Clip Data to Switzerland and Reproject to CH1903LV95
         ## TODO no data value handling per data set
 
         def clip_resample_to_cog(
@@ -928,13 +927,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Compression options
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
-
-                    # Convert to Path object
-                    path = Path(clipfile)
-                    # Construct new filename with orbit number
-                    orbit_clipfile = path.parent / f"{path.stem}_{orbit_nr}{path.suffix}"
                     cmd_downsample.extend([
-                        "-cutline", str(orbit_clipfile), # Clip again to ensure clean edges
+                        "-cutline", str(clipfile), # Clip again to ensure clean edges
                         "-crop_to_cutline",
                         "-dstalpha",  # Create alpha band for nodata
                         "-co", "COMPRESS=JPEG",
@@ -1053,9 +1047,50 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
 
+                # Clip on BBOX of extent buffer to reduce file size for processing
+                breakpoint()
+                # Convert to Path object
+                # Wrap the string in Path() first
+                buffer_path = Path(config.BUFFER)
+                # Construct new filename with orbit number
+                orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_nr}{buffer_path.suffix}")
+                # Get bounds from GeoPackage
+                gdf = gpd.read_file(orbit_clipfile)
+                bounds_2056 = gdf.total_bounds  # in EPSG:2056
+
+                # Transform bounds to EPSG:32632
+                from shapely.geometry import box
+                bbox_gdf = gpd.GeoDataFrame(
+                    geometry=[box(*bounds_2056)],
+                    crs='EPSG:2056'
+                )
+                bbox_utm = bbox_gdf.to_crs('EPSG:32632')
+                bounds = bbox_utm.total_bounds  # Now in EPSG:32632
+
+                # Temporary output filename
+                temp_filename = str(filename) + ".tmp"
+
+                cmd = [
+                    'gdal_translate',
+                    '-of', 'GTiff',  # Explicitly specify GeoTIFF format
+                    '-projwin', str(bounds[0]), str(bounds[3]), str(bounds[2]), str(bounds[1]),
+                    str(filename),
+                    temp_filename
+                ]
+
+                # Run with error capture
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                # Replace original with clipped version
+                os.remove(filename)
+                os.rename(temp_filename, filename)
+
+                print(f"Original file  clipped to BBOX of : {filename}")
+
+                #Clip, resample and convert to COG
                 clip_resample_to_cog(
                     filename,
-                    os.path.join(config.BUFFER),
+                    orbit_clipfile,
                     nodata_value=None,
                     epsg=2056,
                     lossy=lossy,
