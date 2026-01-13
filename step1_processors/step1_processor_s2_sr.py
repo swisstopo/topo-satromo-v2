@@ -1051,7 +1051,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Wrap the string in Path() first
                 buffer_path = Path(config.BUFFER)
                 # Construct new filename with orbit number
-                orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_nr}{buffer_path.suffix}")
+                orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_num}{buffer_path.suffix}")
                 # Get bounds from GeoPackage
                 gdf = gpd.read_file(orbit_clipfile)
                 bounds_2056 = gdf.total_bounds  # in EPSG:2056
@@ -1167,6 +1167,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
 
-    breakpoint()
+
 
     print("end of function")
