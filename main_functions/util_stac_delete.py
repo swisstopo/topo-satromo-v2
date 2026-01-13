@@ -1,15 +1,21 @@
 """
-STAC Asset and Item Deletion Script
+STAC Asset and Item Deletion Script (Interactive Version)
 
-This script deletes assets and items from a STAC (SpatioTemporal Asset Catalog) API. It first deletes all assets
-associated with an item and then deletes the item itself if all its assets were successfully deleted.
+This script deletes assets and items from a STAC (SpatioTemporal Asset Catalog) API.
+It provides an interactive menu to either:
+1. Delete all items from a specific collection
+2. Delete a specific item by its ID
+
+The script first deletes all assets associated with an item and then deletes the item itself
+if all its assets were successfully deleted.
 
 Author: David Oesch
 Date: 2025-02-18
+Modified: 2026-01-13
 License: MIT License
 
 Usage:
-    python util_stac_delete.py
+    python util_stac_delete_interactive.py
 
 Dependencies:
     - pystac_client
@@ -22,24 +28,33 @@ Functions:
     - load_credentials(config_path: str) -> tuple
     - setup_stac_client(url: str) -> pystac_client.Client
     - get_swisseo_collections(client: pystac_client.Client, collection_del: str) -> Generator
+    - list_collections(client: pystac_client.Client) -> List[str]
     - get_collection_items_assets(collection) -> List[Dict]
+    - get_single_item_assets(client: pystac_client.Client, collection_id: str, item_id: str) -> List[Dict]
     - delete_asset(base_url: str, collection_id: str, item_id: str, asset_key: str, auth: tuple) -> bool
     - delete_item(base_url: str, collection_id: str, item_id: str, auth: tuple) -> bool
     - delete_items_and_assets(base_url: str, items_assets: List[Dict], auth: tuple) -> Dict[str, List[str]]
+    - prompt_deletion_mode() -> str
+    - prompt_collection_selection(client: pystac_client.Client) -> str
+    - prompt_item_id() -> str
+    - confirm_deletion(deletion_type: str, target: str, item_count: int) -> bool
     - main() -> Dict[str, List[str]]
 
 Example:
     To run the script, simply execute:
-    python util_stac_delete.py
+    python util_stac_delete_interactive.py
 """
 
 import pystac_client
-from typing import Dict, List, Generator
+from typing import Dict, List, Generator, Optional
 import logging
 import requests
 from urllib.parse import urljoin
 import json
 
+# Configuration
+base_url = "https://sys-data.int.bgdi.ch/api/stac/v0.9/"
+config_path = r"C:\temp\satromo-dev\secrets\stac_fsdi-int.json"
 
 def load_credentials(config_path: str) -> tuple:
     """
@@ -59,6 +74,7 @@ def load_credentials(config_path: str) -> tuple:
         logging.error(f"Error loading credentials: {str(e)}")
         raise
 
+
 def setup_stac_client(url) -> pystac_client.Client:
     """
     Initialize and setup STAC client with required conformance
@@ -74,20 +90,36 @@ def setup_stac_client(url) -> pystac_client.Client:
     client.add_conforms_to("ITEM_SEARCH")
     return client
 
-def get_swisseo_collections(client: pystac_client.Client,collection_del) -> Generator:
+
+def get_swisseo_collections(client: pystac_client.Client, collection_del: str) -> Generator:
     """
-    Retrieve all SwissEO collections
+    Retrieve all SwissEO collections matching the given pattern
 
     Args:
         client (pystac_client.Client): STAC client
+        collection_del (str): Collection pattern to match
 
     Returns:
         Generator: Generator of SwissEO collections
     """
     return (
         collection for collection in client.get_collections()
-        if collection_del in collection.id.lower()
+        if collection_del.lower() in collection.id.lower()
     )
+
+
+def list_collections(client: pystac_client.Client) -> List[str]:
+    """
+    List all available collections
+
+    Args:
+        client (pystac_client.Client): STAC client
+
+    Returns:
+        List[str]: List of collection IDs
+    """
+    return [collection.id for collection in client.get_collections()]
+
 
 def get_collection_items_assets(collection) -> List[Dict]:
     """
@@ -119,6 +151,46 @@ def get_collection_items_assets(collection) -> List[Dict]:
 
     return items_assets
 
+
+def get_single_item_assets(client: pystac_client.Client, collection_id: str, item_id: str) -> Optional[List[Dict]]:
+    """
+    Get assets for a single specific item
+
+    Args:
+        client (pystac_client.Client): STAC client
+        collection_id (str): Collection ID
+        item_id (str): Item ID
+
+    Returns:
+        Optional[List[Dict]]: List containing a single dictionary with item and its assets, or None if not found
+    """
+    try:
+        collection = client.get_collection(collection_id)
+        item = collection.get_item(item_id)
+
+        if item is None:
+            return None
+
+        item_assets = {
+            'item_id': item.id,
+            'collection_id': collection.id,
+            'assets': {}
+        }
+
+        for asset_key, asset in item.get_assets().items():
+            item_assets['assets'][asset_key] = {
+                'href': asset.href,
+                'type': asset.media_type,
+                'roles': asset.roles if hasattr(asset, 'roles') else []
+            }
+
+        return [item_assets]
+
+    except Exception as e:
+        logging.error(f"Error retrieving item {item_id} from collection {collection_id}: {str(e)}")
+        return None
+
+
 def delete_asset(base_url: str, collection_id: str, item_id: str, asset_key: str, auth: tuple) -> bool:
     """
     Delete a specific asset from an item
@@ -134,13 +206,14 @@ def delete_asset(base_url: str, collection_id: str, item_id: str, asset_key: str
         bool: True if deletion was successful, False otherwise
     """
     delete_url = urljoin(base_url, f"collections/{collection_id}/items/{item_id}/assets/{asset_key}")
-    print("deleting asset: ", asset_key)
+    print(f"Deleting asset: {asset_key}")
     try:
         response = requests.delete(delete_url, auth=auth)
         return response.status_code in [200, 204]
     except Exception as e:
         logging.error(f"Error deleting asset {asset_key} from item {item_id}: {str(e)}")
         return False
+
 
 def delete_item(base_url: str, collection_id: str, item_id: str, auth: tuple) -> bool:
     """
@@ -156,13 +229,14 @@ def delete_item(base_url: str, collection_id: str, item_id: str, auth: tuple) ->
         bool: True if deletion was successful, False otherwise
     """
     delete_url = urljoin(base_url, f"collections/{collection_id}/items/{item_id}")
-    print("deleting item: ", item_id)
+    print(f"Deleting item: {item_id}")
     try:
         response = requests.delete(delete_url, auth=auth)
         return response.status_code in [200, 204]
     except Exception as e:
         logging.error(f"Error deleting item {item_id}: {str(e)}")
         return False
+
 
 def delete_items_and_assets(base_url: str, items_assets: List[Dict], auth: tuple) -> Dict[str, List[str]]:
     """
@@ -210,15 +284,149 @@ def delete_items_and_assets(base_url: str, items_assets: List[Dict], auth: tuple
 
     return results
 
+
+def prompt_deletion_mode() -> str:
+    """
+    Prompt user to select deletion mode
+
+    Returns:
+        str: 'collection' or 'item'
+    """
+    print("\n" + "="*60)
+    print("STAC DELETION TOOL")
+    print("="*60)
+    print("\nSelect deletion mode:")
+    print("  1. Delete all items from a collection")
+    print("  2. Delete a specific item")
+    print()
+
+    while True:
+        choice = input("Enter your choice (1 or 2): ").strip()
+        if choice == '1':
+            return 'collection'
+        elif choice == '2':
+            return 'item'
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+
+
+def prompt_collection_selection(client: pystac_client.Client) -> str:
+    """
+    Prompt user to select or enter a collection ID
+
+    Args:
+        client (pystac_client.Client): STAC client
+
+    Returns:
+        str: Collection ID or pattern
+    """
+    print("\n" + "-"*60)
+    print("COLLECTION SELECTION")
+    print("-"*60)
+    print("\nFetching available collections...")
+
+    try:
+        collections = list_collections(client)
+        print(f"\nFound {len(collections)} collections:")
+        for i, col_id in enumerate(collections, 1):
+            print(f"  {i}. {col_id}")
+    except Exception as e:
+        logging.warning(f"Could not list collections: {str(e)}")
+        collections = []
+
+    print("\nOptions:")
+    print("  - Enter a collection ID or pattern (e.g., 'ch.swisstopo.swisseo_s2-sr_v200')")
+    if collections:
+        print("  - Enter a number to select from the list above")
+    print()
+
+    while True:
+        choice = input("Enter collection ID/pattern or number: ").strip()
+
+        if not choice:
+            print("Please enter a valid collection ID or number.")
+            continue
+
+        # Check if it's a number
+        if choice.isdigit() and collections:
+            idx = int(choice) - 1
+            if 0 <= idx < len(collections):
+                return collections[idx]
+            else:
+                print(f"Invalid number. Please enter a number between 1 and {len(collections)}.")
+        else:
+            return choice
+
+
+def prompt_item_id() -> tuple:
+    """
+    Prompt user to enter collection ID and item ID
+
+    Returns:
+        tuple: (collection_id, item_id)
+    """
+    print("\n" + "-"*60)
+    print("ITEM SELECTION")
+    print("-"*60)
+    print()
+
+    collection_id = input("Enter collection ID: ").strip()
+    while not collection_id:
+        print("Collection ID cannot be empty.")
+        collection_id = input("Enter collection ID: ").strip()
+
+    item_id = input("Enter item ID: ").strip()
+    while not item_id:
+        print("Item ID cannot be empty.")
+        item_id = input("Enter item ID: ").strip()
+
+    return collection_id, item_id
+
+
+def confirm_deletion(deletion_type: str, target: str, item_count: int) -> bool:
+    """
+    Ask user to confirm deletion
+
+    Args:
+        deletion_type (str): 'collection' or 'item'
+        target (str): Collection ID/pattern or item ID
+        item_count (int): Number of items that will be deleted
+
+    Returns:
+        bool: True if user confirms, False otherwise
+    """
+    print("\n" + "="*60)
+    print("DELETION CONFIRMATION")
+    print("="*60)
+
+    if deletion_type == 'collection':
+        print(f"\nYou are about to delete ALL items from collection(s) matching: {target} on {base_url}")
+        print(f"Total items to be deleted: {item_count}")
+    else:
+        print(f"\nYou are about to delete item: {target} on {base_url}")
+        print(f"Number of assets in this item: {item_count}")
+
+    print("\n⚠️  WARNING: This action cannot be undone! ⚠️")
+    print()
+
+    confirmation = input('Type "I AGREE" (exactly) to proceed with deletion: ')
+
+    return confirmation == "I AGREE"
+
+
 def main():
+    """
+    Main function to orchestrate the deletion process
+
+    Returns:
+        Dict[str, List[str]]: Summary of deletion results
+    """
     # Setup logging
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     logger = logging.getLogger(__name__)
-
-    base_url="https://sys-data.int.bgdi.ch/api/stac/v0.9/"
-    config_path = r"C:\temp\satromo-dev\secrets\stac_fsdi-int.json"
-    COLLECTION_DEL="ch.swisstopo.swisseo_s2-sr_v200"
-
 
 
 
@@ -231,44 +439,96 @@ def main():
         client = setup_stac_client(base_url)
         logger.info("STAC client initialized successfully")
 
-        # Get all assets from all collections
+        # Prompt for deletion mode
+        mode = prompt_deletion_mode()
+
+        # Collect items to delete based on mode
         all_assets = []
+        target_description = ""
 
-        for collection in get_swisseo_collections(client,COLLECTION_DEL):
-            logger.info(f"Processing collection: {collection.id}")
+        if mode == 'collection':
+            collection_pattern = prompt_collection_selection(client)
+            target_description = f"collection(s) matching '{collection_pattern}'"
 
-            try:
-                collection_assets = get_collection_items_assets(collection)
-                all_assets.extend(collection_assets)
-                logger.info(f"Found {len(collection_assets)} items in collection {collection.id}")
+            logger.info(f"Searching for collections matching: {collection_pattern}")
 
-            except Exception as e:
-                logger.error(f"Error processing collection {collection.id}: {str(e)}")
-                continue
+            for collection in get_swisseo_collections(client, collection_pattern):
+                logger.info(f"Processing collection: {collection.id}")
 
-        logger.info(f"Total number of items to process: {len(all_assets)}")
+                try:
+                    collection_assets = get_collection_items_assets(collection)
+                    all_assets.extend(collection_assets)
+                    logger.info(f"Found {len(collection_assets)} items in collection {collection.id}")
+                except Exception as e:
+                    logger.error(f"Error processing collection {collection.id}: {str(e)}")
+                    continue
 
-        # Delete assets and items
-        while input('Type "I agree" to continue: ') != "I agree":
-            print("You must type 'I agree' exactly to proceed.")
+            if not all_assets:
+                print(f"\n❌ No items found matching collection pattern: {collection_pattern}")
+                return None
 
-        print("Continuing... with deleting")
+        else:  # mode == 'item'
+            collection_id, item_id = prompt_item_id()
+            target_description = f"item '{item_id}' from collection '{collection_id}'"
+
+            logger.info(f"Retrieving item {item_id} from collection {collection_id}")
+
+            item_assets = get_single_item_assets(client, collection_id, item_id)
+
+            if item_assets is None or len(item_assets) == 0:
+                print(f"\n❌ Item '{item_id}' not found in collection '{collection_id}'")
+                return None
+
+            all_assets = item_assets
+            logger.info(f"Found item with {len(item_assets[0]['assets'])} assets")
+
+        # Calculate total asset count
+        total_assets = sum(len(item['assets']) for item in all_assets)
+
+        logger.info(f"Total items to process: {len(all_assets)}")
+        logger.info(f"Total assets to delete: {total_assets}")
+
+        # Confirm deletion
+        if not confirm_deletion(mode, target_description, len(all_assets)):
+            print("\n❌ Deletion cancelled by user")
+            return None
+
+        # Perform deletion
+        print("\n" + "="*60)
+        print("STARTING DELETION PROCESS")
+        print("="*60 + "\n")
+
         results = delete_items_and_assets(base_url, all_assets, auth)
 
         # Log summary
-        logger.info("Deletion Summary:")
-        logger.info(f"Successfully deleted assets: {len(results['successful_asset_deletions'])}")
-        logger.info(f"Failed asset deletions: {len(results['failed_asset_deletions'])}")
-        logger.info(f"Successfully deleted items: {len(results['successful_item_deletions'])}")
-        logger.info(f"Failed item deletions: {len(results['failed_item_deletions'])}")
+        print("\n" + "="*60)
+        print("DELETION SUMMARY")
+        print("="*60)
+        print(f"Successfully deleted assets: {len(results['successful_asset_deletions'])}")
+        print(f"Failed asset deletions: {len(results['failed_asset_deletions'])}")
+        print(f"Successfully deleted items: {len(results['successful_item_deletions'])}")
+        print(f"Failed item deletions: {len(results['failed_item_deletions'])}")
+
+        if results['failed_asset_deletions']:
+            print("\n⚠️  Failed asset deletions:")
+            for asset in results['failed_asset_deletions']:
+                print(f"  - {asset}")
+
+        if results['failed_item_deletions']:
+            print("\n⚠️  Failed item deletions:")
+            for item in results['failed_item_deletions']:
+                print(f"  - {item}")
 
         return results
 
+    except KeyboardInterrupt:
+        print("\n\n❌ Operation cancelled by user (Ctrl+C)")
+        return None
     except Exception as e:
         logger.error(f"Error in main execution: {str(e)}")
         raise
 
+
 if __name__ == "__main__":
     results = main()
-
-    print("done")
+    print("\n✅ Script execution completed")
