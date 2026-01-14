@@ -1,6 +1,8 @@
 import rasterio
 import numpy as np
 from pathlib import Path
+import subprocess
+import sys
 
 def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
                         nodata_value=0,
@@ -9,10 +11,11 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
                         max_r=3.0,
                         mid_r=0.13,
                         sat=1.2,
-                        gamma=1.8):
+                        gamma=1.8,
+                        create_cog=True):
     """
     Create an enhanced RGB composite from Sentinel-2 L2A bands.
-    Exact Python implementation of the Sentinel Hub JavaScript enhancement algorithm: https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/l2a_optimized/
+    Exact Python implementation of the Sentinel Hub JavaScript enhancement algorithm based on https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/l2a_optimized/ .
 
     Parameters:
     -----------
@@ -38,11 +41,13 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         Saturation enhancement factor (default: 1.2)
     gamma : float, optional
         Gamma correction value (default: 1.8)
+    create_cog : bool, optional
+        If True, convert output to Cloud-Optimized GeoTIFF using gdal_translate (default: True)
 
     Returns:
     --------
     str
-        Path to the created output file
+        Path to the created output file (COG if create_cog=True)
 
     Notes:
     ------
@@ -110,15 +115,8 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     valid_pixels = ~nodata_mask
 
     print(f"Valid pixels: {100*valid_pixels.sum()/nodata_mask.size:.1f}%")
-    print(f"NoData pixels: {100*nodata_mask.sum()/nodata_mask.size:.1f}%")
-
-    print(f"\nRaw values (before conversion):")
-    print(f"B04 - Min: {b04_raw[valid_pixels].min():.1f}, Max: {b04_raw[valid_pixels].max():.1f}, Mean: {b04_raw[valid_pixels].mean():.1f}")
-    print(f"B03 - Min: {b03_raw[valid_pixels].min():.1f}, Max: {b03_raw[valid_pixels].max():.1f}, Mean: {b03_raw[valid_pixels].mean():.1f}")
-    print(f"B02 - Min: {b02_raw[valid_pixels].min():.1f}, Max: {b02_raw[valid_pixels].max():.1f}, Mean: {b02_raw[valid_pixels].mean():.1f}")
 
     # Convert to reflectance: reflectance = (raw * scale) + offset
-    # For SwissEO: reflectance = (raw * 0.0001) - 0.1
     b04 = (b04_raw * scale) + offset
     b03 = (b03_raw * scale) + offset
     b02 = (b02_raw * scale) + offset
@@ -128,56 +126,49 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     b03[nodata_mask] = 0
     b02[nodata_mask] = 0
 
-    print(f"\nReflectance (after scale + offset):")
-    print(f"B04 - Min: {b04[valid_pixels].min():.4f}, Max: {b04[valid_pixels].max():.4f}, Mean: {b04[valid_pixels].mean():.4f}")
-    print(f"B03 - Min: {b03[valid_pixels].min():.4f}, Max: {b03[valid_pixels].max():.4f}, Mean: {b03[valid_pixels].mean():.4f}")
-    print(f"B02 - Min: {b02[valid_pixels].min():.4f}, Max: {b02[valid_pixels].max():.4f}, Mean: {b02[valid_pixels].mean():.4f}")
+    print(f"\nReflectance range:")
+    print(f"B04: {b04[valid_pixels].min():.4f} - {b04[valid_pixels].max():.4f}")
+    print(f"B03: {b03[valid_pixels].min():.4f} - {b03[valid_pixels].max():.4f}")
+    print(f"B02: {b02[valid_pixels].min():.4f} - {b02[valid_pixels].max():.4f}")
 
-    # Check for negative values
-    neg_b04 = (b04[valid_pixels] < 0).sum()
-    neg_b03 = (b03[valid_pixels] < 0).sum()
-    neg_b02 = (b02[valid_pixels] < 0).sum()
-    if neg_b04 > 0 or neg_b03 > 0 or neg_b02 > 0:
-        print(f"\nNegative reflectance values found (will be clipped to 0):")
-        print(f"B04: {neg_b04} pixels, B03: {neg_b03} pixels, B02: {neg_b02} pixels")
-        # Clip negative values to 0
-        b04 = np.clip(b04, 0, None)
-        b03 = np.clip(b03, 0, None)
-        b02 = np.clip(b02, 0, None)
+    # Clip negative values to 0
+    b04 = np.clip(b04, 0, None)
+    b03 = np.clip(b03, 0, None)
+    b02 = np.clip(b02, 0, None)
 
-    # Apply enhancement pipeline (EXACT as in JS)
+    # Apply enhancement pipeline
     print(f"\nApplying enhancement: max_r={max_r}, mid_r={mid_r}, sat={sat}, gamma={gamma}")
 
-    # Step 1: s_adj (contrast + gamma) for each band
     r_adj = s_adj(b04)
     g_adj = s_adj(b03)
     b_adj = s_adj(b02)
 
-    print(f"After s_adj: R={r_adj[valid_pixels].mean():.4f}, G={g_adj[valid_pixels].mean():.4f}, B={b_adj[valid_pixels].mean():.4f}")
-
-    # Step 2: Saturation enhancement
     r_enh, g_enh, b_enh = sat_enh(r_adj, g_adj, b_adj)
 
-    print(f"After saturation: R={r_enh[valid_pixels].mean():.4f}, G={g_enh[valid_pixels].mean():.4f}, B={b_enh[valid_pixels].mean():.4f}")
-
-    # Step 3: Convert to sRGB
     r_final = srgb(r_enh)
     g_final = srgb(g_enh)
     b_final = srgb(b_enh)
 
-    print(f"After sRGB: R={r_final[valid_pixels].mean():.4f}, G={g_final[valid_pixels].mean():.4f}, B={b_final[valid_pixels].mean():.4f}")
-
-    # Scale to 0-255 for 8-bit output
+    # Scale to 0-255
     r_byte = (np.clip(r_final, 0, 1) * 255).astype(np.uint8)
     g_byte = (np.clip(g_final, 0, 1) * 255).astype(np.uint8)
     b_byte = (np.clip(b_final, 0, 1) * 255).astype(np.uint8)
 
-    print(f"\nFinal bytes (0-255): R={r_byte[valid_pixels].mean():.1f}, G={g_byte[valid_pixels].mean():.1f}, B={b_byte[valid_pixels].mean():.1f}")
+    print(f"Final byte values: R={r_byte[valid_pixels].mean():.1f}, G={g_byte[valid_pixels].mean():.1f}, B={b_byte[valid_pixels].mean():.1f}")
 
     # Apply nodata mask
     r_byte[nodata_mask] = nodata_value
     g_byte[nodata_mask] = nodata_value
     b_byte[nodata_mask] = nodata_value
+
+    # Determine temporary or final output path
+    if create_cog:
+        # Write to temporary file first
+        temp_output = str(Path(output_path).with_suffix('.temp.tif'))
+        final_output = str(output_path)
+    else:
+        temp_output = str(output_path)
+        final_output = str(output_path)
 
     # Update profile for RGB output
     profile.update(
@@ -188,8 +179,9 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         photometric='rgb'
     )
 
-    # Write output
-    with rasterio.open(output_path, 'w', **profile) as dst:
+    # Write initial output
+    print(f"\nWriting to: {temp_output}")
+    with rasterio.open(temp_output, 'w', **profile) as dst:
         dst.write(r_byte, 1)
         dst.write(g_byte, 2)
         dst.write(b_byte, 3)
@@ -197,8 +189,55 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
                            rasterio.enums.ColorInterp.green,
                            rasterio.enums.ColorInterp.blue]
 
-    print(f"\n✓ Enhanced RGB image created: {output_path}")
-    return str(output_path)
+    # Convert to COG if requested
+    if create_cog:
+        print(f"\nConverting to Cloud-Optimized GeoTIFF...")
+
+        gdal_translate_cmd = [
+            "gdal_translate",
+            "-of", "COG",
+            "-co", "BIGTIFF=YES",
+            "-co", "NUM_THREADS=ALL_CPUS",
+            "-co", "COMPRESS=JPEG",
+            "-co", "QUALITY=85",
+            "-co", "PHOTOMETRIC=YCBCR",
+            "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+            "-a_nodata", str(nodata_value),
+            temp_output,
+            final_output
+        ]
+
+        try:
+            result = subprocess.run(
+                gdal_translate_cmd,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            print("COG conversion successful!")
+            if result.stdout:
+                print(result.stdout)
+
+            # Remove temporary file
+            import os
+            os.remove(temp_output)
+            print(f"Removed temporary file: {temp_output}")
+
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: COG conversion failed!")
+            print(f"Command: {' '.join(gdal_translate_cmd)}")
+            print(f"Return code: {e.returncode}")
+            print(f"STDOUT: {e.stdout}")
+            print(f"STDERR: {e.stderr}")
+            print(f"\nKeeping non-COG file: {temp_output}")
+            final_output = temp_output
+        except FileNotFoundError:
+            print("ERROR: gdal_translate not found. Is GDAL installed and in PATH?")
+            print(f"Keeping non-COG file: {temp_output}")
+            final_output = temp_output
+
+    print(f"\n✓ Enhanced RGB image created: {final_output}")
+    return final_output
 
 
 if __name__ == "__main__":
@@ -208,10 +247,10 @@ if __name__ == "__main__":
     b04_file = f"{base_path}\\{base_name}_b04_10m.tif"
     b03_file = f"{base_path}\\{base_name}_b03_10m.tif"
     b02_file = f"{base_path}\\{base_name}_b02_10m.tif"
-    output_file = f"{base_path}\\{base_name}_rgb_swisseo_correct.tif"
+    output_file = f"{base_path}\\{base_name}_rgb_cog.tif"
 
-    # SwissEO correct scaling
-    print("=== SwissEO Correct Scaling (scale=0.0001, offset=-0.1) ===")
+    # Create enhanced RGB with COG output
+    print("=== Creating Enhanced RGB with COG ===")
     create_enhanced_rgb(
         b04_path=b04_file,
         b03_path=b03_file,
@@ -223,5 +262,6 @@ if __name__ == "__main__":
         max_r=3.0,
         mid_r=0.13,
         sat=1.2,
-        gamma=1.8
+        gamma=1.8,
+        create_cog=True
     )
