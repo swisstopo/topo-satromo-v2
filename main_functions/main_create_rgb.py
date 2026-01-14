@@ -3,21 +3,16 @@ import numpy as np
 from pathlib import Path
 
 def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
-                        cloud_mask_path=None,
                         nodata_value=0,
+                        scale=0.0001,
+                        offset=-0.1,
                         max_r=3.0,
                         mid_r=0.13,
                         sat=1.2,
-                        gamma=1.8,
-                        lower_percentile=2,
-                        upper_percentile=98,
-                        shadow_lift=0.25):
+                        gamma=1.8):
     """
-    Create an enhanced RGB composite from Sentinel-2 L2A bands using the Sentinel Hub
-    enhancement algorithm with percentile-based normalization.
-
-    This function replicates the visual enhancement from the JavaScript code used in
-    Sentinel Hub   https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/l2a_optimized/, adapted for SwissEO Surface Reflectance data.
+    Create an enhanced RGB composite from Sentinel-2 L2A bands.
+    Exact Python implementation of the Sentinel Hub JavaScript enhancement algorithm: https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/l2a_optimized/
 
     Parameters:
     -----------
@@ -29,10 +24,12 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         Path to Band 2 (Blue) GeoTIFF file
     output_path : str or Path
         Path for output RGB GeoTIFF file
-    cloud_mask_path : str or Path, optional
-        Path to cloud mask raster. For SwissEO: 1=cloud, 3=shadow
     nodata_value : int, optional
-        NoData value for output (default: 0)
+        NoData value (default: 0)
+    scale : float, optional
+        Scale factor for reflectance calculation (default: 0.0001 for SwissEO)
+    offset : float, optional
+        Offset for reflectance calculation (default: -0.1 for SwissEO)
     max_r : float, optional
         Maximum reflectance value for contrast enhancement (default: 3.0)
     mid_r : float, optional
@@ -41,27 +38,16 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         Saturation enhancement factor (default: 1.2)
     gamma : float, optional
         Gamma correction value (default: 1.8)
-    lower_percentile : float, optional
-        Lower percentile for stretch (default: 2)
-    upper_percentile : float, optional
-        Upper percentile for stretch (default: 98)
-    shadow_lift : float, optional
-        Amount to brighten shadows/dark areas like lakes (0.0-0.5, default: 0.25)
 
     Returns:
     --------
     str
         Path to the created output file
 
-    Example:
-    --------
-    >>> create_enhanced_rgb(
-    ...     b04_path="B04.tif",
-    ...     b03_path="B03.tif",
-    ...     b02_path="B02.tif",
-    ...     output_path="rgb_enhanced.tif",
-    ...     cloud_mask_path="cloudmask.tif"
-    ... )
+    Notes:
+    ------
+    Reflectance is calculated as: reflectance = (raw_value * scale) + offset
+    For SwissEO: reflectance = (raw_value * 0.0001) - 0.1
     """
 
     # Constants from JS code
@@ -77,6 +63,7 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         """Contrast enhancement with highlight compression"""
         ar = clip(a / max_c)
         denominator = ar * (2 * tx / max_c - 1) - tx / max_c
+        # Avoid division by zero
         denominator = np.where(np.abs(denominator) < 1e-10, 1e-10, denominator)
         return ar * (ar * (tx / max_c + ty - 1) - ty) / denominator
 
@@ -104,101 +91,88 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
                        1.055 * np.power(np.clip(c, 0, 1), 0.41666666666) - 0.055)
 
     # Read bands
-    print("Reading input bands...")
+    print(f"Reading input bands with scale={scale}, offset={offset}...")
     with rasterio.open(b04_path) as src_b04:
         b04_raw = src_b04.read(1).astype(np.float32)
         profile = src_b04.profile.copy()
-        b04_nodata = src_b04.nodata if src_b04.nodata is not None else 0
+        b04_nodata = src_b04.nodata if src_b04.nodata is not None else nodata_value
 
     with rasterio.open(b03_path) as src_b03:
         b03_raw = src_b03.read(1).astype(np.float32)
-        b03_nodata = src_b03.nodata if src_b03.nodata is not None else 0
+        b03_nodata = src_b03.nodata if src_b03.nodata is not None else nodata_value
 
     with rasterio.open(b02_path) as src_b02:
         b02_raw = src_b02.read(1).astype(np.float32)
-        b02_nodata = src_b02.nodata if src_b02.nodata is not None else 0
+        b02_nodata = src_b02.nodata if src_b02.nodata is not None else nodata_value
 
-    # Build basic NoData mask
+    # Build NoData mask
     nodata_mask = (b04_raw == b04_nodata) | (b03_raw == b03_nodata) | (b02_raw == b02_nodata)
-    nodata_mask |= (b04_raw < 100) | (b03_raw < 100) | (b02_raw < 100)
-
-    # Read cloud mask if provided
-    cloud_pixels = np.zeros(b04_raw.shape, dtype=bool)
-    shadow_pixels = np.zeros(b04_raw.shape, dtype=bool)
-
-    if cloud_mask_path:
-        print(f"Reading cloud mask: {cloud_mask_path}")
-        with rasterio.open(cloud_mask_path) as src_cloud:
-            cloud_mask_raw = src_cloud.read(1)
-            cloud_pixels = (cloud_mask_raw == 1)
-            shadow_pixels = (cloud_mask_raw == 3)
-
-            print(f"Clouds: {100*cloud_pixels.sum()/cloud_mask_raw.size:.1f}%, Shadows: {100*shadow_pixels.sum()/cloud_mask_raw.size:.1f}%")
-
-    # Clear land pixels for percentile calculation (exclude clouds and shadows)
-    clear_land_pixels = ~(nodata_mask | cloud_pixels | shadow_pixels)
     valid_pixels = ~nodata_mask
 
-    print(f"Clear land pixels for statistics: {100*clear_land_pixels.sum()/nodata_mask.size:.1f}%")
+    print(f"Valid pixels: {100*valid_pixels.sum()/nodata_mask.size:.1f}%")
+    print(f"NoData pixels: {100*nodata_mask.sum()/nodata_mask.size:.1f}%")
 
-    if clear_land_pixels.sum() < 100:
-        print("WARNING: Very few clear pixels, using all valid pixels")
-        clear_land_pixels = valid_pixels
+    print(f"\nRaw values (before conversion):")
+    print(f"B04 - Min: {b04_raw[valid_pixels].min():.1f}, Max: {b04_raw[valid_pixels].max():.1f}, Mean: {b04_raw[valid_pixels].mean():.1f}")
+    print(f"B03 - Min: {b03_raw[valid_pixels].min():.1f}, Max: {b03_raw[valid_pixels].max():.1f}, Mean: {b03_raw[valid_pixels].mean():.1f}")
+    print(f"B02 - Min: {b02_raw[valid_pixels].min():.1f}, Max: {b02_raw[valid_pixels].max():.1f}, Mean: {b02_raw[valid_pixels].mean():.1f}")
 
-    # Convert to reflectance (SwissEO uses scale factor 10000)
-    b04 = b04_raw / 10000.0
-    b03 = b03_raw / 10000.0
-    b02 = b02_raw / 10000.0
+    # Convert to reflectance: reflectance = (raw * scale) + offset
+    # For SwissEO: reflectance = (raw * 0.0001) - 0.1
+    b04 = (b04_raw * scale) + offset
+    b03 = (b03_raw * scale) + offset
+    b02 = (b02_raw * scale) + offset
 
-    # Apply percentile stretch based on clear land only
-    print(f"\nApplying percentile stretch ({lower_percentile}%-{upper_percentile}%) with shadow lift={shadow_lift}")
+    # Set nodata pixels to 0
+    b04[nodata_mask] = 0
+    b03[nodata_mask] = 0
+    b02[nodata_mask] = 0
 
-    # Calculate percentiles from clear land pixels
-    b04_low = np.percentile(b04[clear_land_pixels], lower_percentile)
-    b04_high = np.percentile(b04[clear_land_pixels], upper_percentile)
+    print(f"\nReflectance (after scale + offset):")
+    print(f"B04 - Min: {b04[valid_pixels].min():.4f}, Max: {b04[valid_pixels].max():.4f}, Mean: {b04[valid_pixels].mean():.4f}")
+    print(f"B03 - Min: {b03[valid_pixels].min():.4f}, Max: {b03[valid_pixels].max():.4f}, Mean: {b03[valid_pixels].mean():.4f}")
+    print(f"B02 - Min: {b02[valid_pixels].min():.4f}, Max: {b02[valid_pixels].max():.4f}, Mean: {b02[valid_pixels].mean():.4f}")
 
-    b03_low = np.percentile(b03[clear_land_pixels], lower_percentile)
-    b03_high = np.percentile(b03[clear_land_pixels], upper_percentile)
+    # Check for negative values
+    neg_b04 = (b04[valid_pixels] < 0).sum()
+    neg_b03 = (b03[valid_pixels] < 0).sum()
+    neg_b02 = (b02[valid_pixels] < 0).sum()
+    if neg_b04 > 0 or neg_b03 > 0 or neg_b02 > 0:
+        print(f"\nNegative reflectance values found (will be clipped to 0):")
+        print(f"B04: {neg_b04} pixels, B03: {neg_b03} pixels, B02: {neg_b02} pixels")
+        # Clip negative values to 0
+        b04 = np.clip(b04, 0, None)
+        b03 = np.clip(b03, 0, None)
+        b02 = np.clip(b02, 0, None)
 
-    b02_low = np.percentile(b02[clear_land_pixels], lower_percentile)
-    b02_high = np.percentile(b02[clear_land_pixels], upper_percentile)
+    # Apply enhancement pipeline (EXACT as in JS)
+    print(f"\nApplying enhancement: max_r={max_r}, mid_r={mid_r}, sat={sat}, gamma={gamma}")
 
-    # Apply shadow lift (reduces lower bound to brighten dark areas)
-    if shadow_lift > 0:
-        b04_low = b04_low * (1 - shadow_lift)
-        b03_low = b03_low * (1 - shadow_lift)
-        b02_low = b02_low * (1 - shadow_lift)
-
-    # Apply stretch to all pixels
-    b04 = (b04 - b04_low) / (b04_high - b04_low)
-    b03 = (b03 - b03_low) / (b03_high - b03_low)
-    b02 = (b02 - b02_low) / (b02_high - b02_low)
-
-    # Clip to 0-1
-    b04 = np.clip(b04, 0, 1)
-    b03 = np.clip(b03, 0, 1)
-    b02 = np.clip(b02, 0, 1)
-
-    # Apply enhancement pipeline
-    print(f"Applying enhancement: max_r={max_r}, mid_r={mid_r}, sat={sat}, gamma={gamma}")
+    # Step 1: s_adj (contrast + gamma) for each band
     r_adj = s_adj(b04)
     g_adj = s_adj(b03)
     b_adj = s_adj(b02)
 
-    # Saturation enhancement
+    print(f"After s_adj: R={r_adj[valid_pixels].mean():.4f}, G={g_adj[valid_pixels].mean():.4f}, B={b_adj[valid_pixels].mean():.4f}")
+
+    # Step 2: Saturation enhancement
     r_enh, g_enh, b_enh = sat_enh(r_adj, g_adj, b_adj)
 
-    # Convert to sRGB
+    print(f"After saturation: R={r_enh[valid_pixels].mean():.4f}, G={g_enh[valid_pixels].mean():.4f}, B={b_enh[valid_pixels].mean():.4f}")
+
+    # Step 3: Convert to sRGB
     r_final = srgb(r_enh)
     g_final = srgb(g_enh)
     b_final = srgb(b_enh)
 
-    # Scale to 0-255
+    print(f"After sRGB: R={r_final[valid_pixels].mean():.4f}, G={g_final[valid_pixels].mean():.4f}, B={b_final[valid_pixels].mean():.4f}")
+
+    # Scale to 0-255 for 8-bit output
     r_byte = (np.clip(r_final, 0, 1) * 255).astype(np.uint8)
     g_byte = (np.clip(g_final, 0, 1) * 255).astype(np.uint8)
     b_byte = (np.clip(b_final, 0, 1) * 255).astype(np.uint8)
 
-    print(f"Final bytes (clear land): R={r_byte[clear_land_pixels].mean():.1f}, G={g_byte[clear_land_pixels].mean():.1f}, B={b_byte[clear_land_pixels].mean():.1f}")
+    print(f"\nFinal bytes (0-255): R={r_byte[valid_pixels].mean():.1f}, G={g_byte[valid_pixels].mean():.1f}, B={b_byte[valid_pixels].mean():.1f}")
 
     # Apply nodata mask
     r_byte[nodata_mask] = nodata_value
@@ -228,28 +202,26 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
 
 
 if __name__ == "__main__":
-    # Example usage with SwissEO data
     base_path = r"D:\temp\github\topo-satromo-v2"
     base_name = "swisseo_s2-sr_v200_mosaic_2025-06-01t101041"
 
     b04_file = f"{base_path}\\{base_name}_b04_10m.tif"
     b03_file = f"{base_path}\\{base_name}_b03_10m.tif"
     b02_file = f"{base_path}\\{base_name}_b02_10m.tif"
-    cloud_mask_file = f"{base_path}\\{base_name}_cloudmask_10m.tif"
-    output_file = f"{base_path}\\{base_name}_rgb_enhanced.tif"
+    output_file = f"{base_path}\\{base_name}_rgb_swisseo_correct.tif"
 
+    # SwissEO correct scaling
+    print("=== SwissEO Correct Scaling (scale=0.0001, offset=-0.1) ===")
     create_enhanced_rgb(
         b04_path=b04_file,
         b03_path=b03_file,
         b02_path=b02_file,
         output_path=output_file,
-        cloud_mask_path=cloud_mask_file,
         nodata_value=0,
+        scale=0.0001,
+        offset=-0.1,
         max_r=3.0,
         mid_r=0.13,
         sat=1.2,
-        gamma=1.8,
-        lower_percentile=2,
-        upper_percentile=98,
-        shadow_lift=0.25
+        gamma=1.8
     )
