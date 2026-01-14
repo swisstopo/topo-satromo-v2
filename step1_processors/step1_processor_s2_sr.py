@@ -1011,8 +1011,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             }
 
 
-        # Get all .tif files in current directory
-        tif_files = glob.glob('*.tif')
+        # get all .tif files in the current folder
+        all_tifs = glob.glob("*.tif")
+
+        # keep only those whose filename (without the directory) contains the timestamp ( if we have multiple  orbits in the same folder)
+        tif_files = [f for f in all_tifs if timestamp in os.path.basename(f)]
 
         # Parse and group by timestamp
         files_by_timestamp = defaultdict(list)
@@ -1046,7 +1049,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     quality = 100
 
                 print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
-
+                
                 # Clip on BBOX of extent buffer to reduce file size for processing
                 # Wrap the string in Path() first
                 buffer_path = Path(config.BUFFER)
