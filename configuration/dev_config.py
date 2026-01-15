@@ -87,7 +87,7 @@ SENTINEL2_BAND_NAMES = {
     'B03': "Green (band 3) - 10m",
     'B04': "Red (band 4) - 10m",
     'B08': "NIR 1 (band 8) - 10m",
-    'TCI': "True color image (TCI) - 10m",
+    # 'TCI': "True color image (TCI) - 10m",
     'CLOUDMASK': "Cloud mask - 10m",
     'B05': "Red edge 1 (band 5) - 20m",
     'B06': "Red edge 2 (band 6) - 20m",

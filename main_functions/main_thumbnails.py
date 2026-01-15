@@ -277,15 +277,46 @@ def get_raster_bounds(raster_path: str) -> Tuple[str, str, str, str]:
             str(int(bounds.top)),
         )
 
+def calculate_thumbnail_size(input_file: str, max_size: int) -> Tuple[int, int]:
+    """
+    Calculate thumbnail dimensions while preserving aspect ratio.
+
+    Args:
+        input_file: Path to input raster
+        max_size: Maximum dimension (width or height)
+
+    Returns:
+        Tuple of (width, height) for thumbnail
+    """
+    with rasterio.open(input_file) as src:
+        width = src.width
+        height = src.height
+
+        # Calculate aspect ratio
+        aspect_ratio = width / height
+
+        if width > height:
+            # Landscape orientation
+            thumb_width = max_size
+            thumb_height = int(max_size / aspect_ratio)
+        else:
+            # Portrait orientation
+            thumb_height = max_size
+            thumb_width = int(max_size * aspect_ratio)
+
+    return thumb_width, thumb_height
 
 def create_thumbnail_s2_sr(input_file: str, gpkg_path: str, layer_name: str) -> Optional[str]:
     """Create thumbnail for Sentinel-2 Surface Reflectance 10m bands."""
     try:
+        # Calculate size preserving aspect ratio
+        thumb_width, thumb_height = calculate_thumbnail_size(input_file, THUMBNAIL_SIZE)
+
         # Resize to thumbnail size (input is already RGB 8-bit)
         run_gdal_command([
             "gdal_translate",
             "-of", "GTiff",
-            "-outsize", str(THUMBNAIL_SIZE), str(THUMBNAIL_SIZE),
+            "-outsize", str(thumb_width), str(thumb_height),
             "-co", "COMPRESS=DEFLATE",
             input_file,
             f"{TEMP_PREFIX}RGB_resized.tif",
@@ -360,12 +391,15 @@ def create_thumbnail_indexed(
             input_for_thumbnail = input_file
             nodata_arg = []
 
+        # Calculate size preserving aspect ratio
+        thumb_width, thumb_height = calculate_thumbnail_size(input_file, THUMBNAIL_SIZE)
+
         # Create thumbnail
         run_gdal_command([
             "gdal_translate",
             "-b", "1",
             "-of", "GTiff",
-            "-outsize", str(THUMBNAIL_SIZE), str(THUMBNAIL_SIZE),
+            "-outsize", str(thumb_width), str(thumb_height),
             *nodata_arg,
             input_for_thumbnail,
             f"{TEMP_PREFIX}.tif",

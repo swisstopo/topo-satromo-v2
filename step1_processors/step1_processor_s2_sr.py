@@ -4,7 +4,7 @@ import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails
+from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb
 from collections import defaultdict
 import requests
 import os
@@ -1049,7 +1049,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     quality = 100
 
                 print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
-                
+
                 # Clip on BBOX of extent buffer to reduce file size for processing
                 # Wrap the string in Path() first
                 buffer_path = Path(config.BUFFER)
@@ -1099,10 +1099,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     oversample_factor=5,
                     orbit_nr=orbit_num
                 )
+        ##############################
+        # Generate TCI
+        main_create_rgb.create_enhanced_rgb(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b04_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b03_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b02_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif")
 
         ##############################
         # Generate Thumbnails
         # check if there is a need to create thumbnail , if yes create it
+        
         thumbnail = main_thumbnails.create_thumbnail(
                             f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
@@ -1112,7 +1116,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Upload to STAC
-
         # Process Sentinel files grouped by timestamp
         for timestamp, file_list in sorted(files_by_timestamp.items()):
             print(f"\n=== Processing timestamp: {timestamp} ===")
