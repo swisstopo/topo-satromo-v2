@@ -834,7 +834,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     "-of", "GTiff",
                     "-co", "TILED=YES",
                     "-co", "BIGTIFF=YES",
-                    "-co", "COMPRESS=DEFLATE",
+                    #"-co", "COMPRESS=DEFLATE",
                     "-co", "NUM_THREADS=ALL_CPUS",
                     "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-tr", str(intermediate_res), str(intermediate_res),
@@ -873,7 +873,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     "-of", "GTiff",
                     "-co", "TILED=YES",
                     "-co", "BIGTIFF=YES",
-                    "-co", "COMPRESS=DEFLATE",
+                    #"-co", "COMPRESS=DEFLATE",
                     "-co", "NUM_THREADS=ALL_CPUS",
                     "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-to", "ALLOW_BALLPARK=NO",
@@ -919,6 +919,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     "-co", "NUM_THREADS=ALL_CPUS",
                     "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-tr", str(target_res), str(target_res),
+                    "-tap",  # Target Aligned Pixels
                     "-r", "bilinear",
                     "-ot", datatype,
                     "-overwrite"
@@ -1101,12 +1102,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 )
         ##############################
         # Generate TCI
-        main_create_rgb.create_enhanced_rgb(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b04_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b03_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b02_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif")
+
+        buffer_path = Path(config.BUFFER)
+        # Construct new filename with orbit number
+        orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_num}{buffer_path.suffix}")
+        # Generate TCI from B04,B03,B02
+        main_create_rgb.create_enhanced_rgb(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b04_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b03_10m.tif", f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_b02_10m.tif", orbit_clipfile,f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif")
 
         ##############################
         # Generate Thumbnails
         # check if there is a need to create thumbnail , if yes create it
-        
+
         thumbnail = main_thumbnails.create_thumbnail(
                             f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
