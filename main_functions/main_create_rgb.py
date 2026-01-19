@@ -1,11 +1,11 @@
 import rasterio
+import rasterio.mask
 import numpy as np
 from pathlib import Path
 import subprocess
-import sys
+import geopandas as gpd
 
-def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
-                        nodata_value=0,
+def create_enhanced_rgb(b04_path, b03_path, b02_path, clip_orbit, output_path,
                         scale=0.0001,
                         offset=-0.1,
                         max_r=3.0,
@@ -25,10 +25,10 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         Path to Band 3 (Green) GeoTIFF file
     b02_path : str or Path
         Path to Band 2 (Blue) GeoTIFF file
+    clip_orbit : str or Path
+        Path to orbit clipping GPKG/vector file with polygon defining valid pixels (like dataMask in JS)
     output_path : str or Path
         Path for output RGB GeoTIFF file
-    nodata_value : int, optional
-        NoData value (default: 0)
     scale : float, optional
         Scale factor for reflectance calculation (default: 0.0001 for SwissEO)
     offset : float, optional
@@ -53,6 +53,9 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     ------
     Reflectance is calculated as: reflectance = (raw_value * scale) + offset
     For SwissEO: reflectance = (raw_value * 0.0001) - 0.1
+
+    The clip_orbit polygon defines the data mask (valid pixels), similar to dataMask in the original JS code.
+    All pixels outside this polygon are treated as NoData.
     """
 
     # Constants from JS code
@@ -60,13 +63,13 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     g_off_pow = g_off ** gamma
     g_off_range = (1 + g_off) ** gamma - g_off_pow
 
-    def clip(s):
+    def clip_func(s):
         """Clip values to 0-1 range"""
         return np.clip(s, 0, 1)
 
     def adj(a, tx, ty, max_c):
         """Contrast enhancement with highlight compression"""
-        ar = clip(a / max_c)
+        ar = clip_func(a / max_c)
         denominator = ar * (2 * tx / max_c - 1) - tx / max_c
         # Avoid division by zero
         denominator = np.where(np.abs(denominator) < 1e-10, 1e-10, denominator)
@@ -84,9 +87,9 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         """Saturation enhancement"""
         avg_s = (r + g + b) / 3.0 * (1 - sat)
         return (
-            clip(avg_s + r * sat),
-            clip(avg_s + g * sat),
-            clip(avg_s + b * sat)
+            clip_func(avg_s + r * sat),
+            clip_func(avg_s + g * sat),
+            clip_func(avg_s + b * sat)
         )
 
     def srgb(c):
@@ -95,26 +98,42 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
                        12.92 * c,
                        1.055 * np.power(np.clip(c, 0, 1), 0.41666666666) - 0.055)
 
-    # Read bands
-    print(f"Reading input bands with scale={scale}, offset={offset}...")
+    # Read the clip orbit polygon (dataMask equivalent)
+    print(f"Reading clip orbit polygon from: {clip_orbit}")
+    gdf = gpd.read_file(clip_orbit)
+    geometries = gdf.geometry.values
+    print(f"Loaded {len(geometries)} polygon(s) for masking")
+
+    # Read bands and apply mask
+    print(f"Reading and masking input bands with scale={scale}, offset={offset}...")
+
     with rasterio.open(b04_path) as src_b04:
-        b04_raw = src_b04.read(1).astype(np.float32)
+        # Mask with polygon
+        b04_masked, b04_transform = rasterio.mask.mask(src_b04, geometries, crop=True, filled=False)
+        b04_raw = b04_masked[0].astype(np.float32)
         profile = src_b04.profile.copy()
-        b04_nodata = src_b04.nodata if src_b04.nodata is not None else nodata_value
+
+        # Get mask (True = valid pixels inside polygon, False = outside/nodata)
+        data_mask = ~b04_masked.mask[0]
 
     with rasterio.open(b03_path) as src_b03:
-        b03_raw = src_b03.read(1).astype(np.float32)
-        b03_nodata = src_b03.nodata if src_b03.nodata is not None else nodata_value
+        b03_masked, _ = rasterio.mask.mask(src_b03, geometries, crop=True, filled=False)
+        b03_raw = b03_masked[0].astype(np.float32)
+        # Combine masks (pixel is valid only if valid in all bands)
+        data_mask = data_mask & ~b03_masked.mask[0]
 
     with rasterio.open(b02_path) as src_b02:
-        b02_raw = src_b02.read(1).astype(np.float32)
-        b02_nodata = src_b02.nodata if src_b02.nodata is not None else nodata_value
+        b02_masked, _ = rasterio.mask.mask(src_b02, geometries, crop=True, filled=False)
+        b02_raw = b02_masked[0].astype(np.float32)
+        # Combine masks
+        data_mask = data_mask & ~b02_masked.mask[0]
 
-    # Build NoData mask
-    nodata_mask = (b04_raw == b04_nodata) | (b03_raw == b03_nodata) | (b02_raw == b02_nodata)
-    valid_pixels = ~nodata_mask
+    # Invert to get nodata_mask (True = NoData, False = valid)
+    nodata_mask = ~data_mask
+    valid_pixels = data_mask
 
-    print(f"Valid pixels: {100*valid_pixels.sum()/nodata_mask.size:.1f}%")
+    print(f"Valid pixels (inside polygon): {100*valid_pixels.sum()/data_mask.size:.1f}%")
+    print(f"NoData pixels (outside polygon): {100*nodata_mask.sum()/data_mask.size:.1f}%")
 
     # Convert to reflectance: reflectance = (raw * scale) + offset
     b04 = (b04_raw * scale) + offset
@@ -126,10 +145,11 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     b03[nodata_mask] = 0
     b02[nodata_mask] = 0
 
-    print(f"\nReflectance range:")
-    print(f"B04: {b04[valid_pixels].min():.4f} - {b04[valid_pixels].max():.4f}")
-    print(f"B03: {b03[valid_pixels].min():.4f} - {b03[valid_pixels].max():.4f}")
-    print(f"B02: {b02[valid_pixels].min():.4f} - {b02[valid_pixels].max():.4f}")
+    if valid_pixels.sum() > 0:
+        print(f"\nReflectance range (valid pixels only):")
+        print(f"B04: {b04[valid_pixels].min():.4f} - {b04[valid_pixels].max():.4f}")
+        print(f"B03: {b03[valid_pixels].min():.4f} - {b03[valid_pixels].max():.4f}")
+        print(f"B02: {b02[valid_pixels].min():.4f} - {b02[valid_pixels].max():.4f}")
 
     # Clip negative values to 0
     b04 = np.clip(b04, 0, None)
@@ -154,12 +174,13 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
     g_byte = (np.clip(g_final, 0, 1) * 255).astype(np.uint8)
     b_byte = (np.clip(b_final, 0, 1) * 255).astype(np.uint8)
 
-    print(f"Final byte values: R={r_byte[valid_pixels].mean():.1f}, G={g_byte[valid_pixels].mean():.1f}, B={b_byte[valid_pixels].mean():.1f}")
+    if valid_pixels.sum() > 0:
+        print(f"Final byte values (valid pixels): R={r_byte[valid_pixels].mean():.1f}, G={g_byte[valid_pixels].mean():.1f}, B={b_byte[valid_pixels].mean():.1f}")
 
-    # Apply nodata mask
-    r_byte[nodata_mask] = nodata_value
-    g_byte[nodata_mask] = nodata_value
-    b_byte[nodata_mask] = nodata_value
+    # Apply nodata mask - set to 0
+    r_byte[nodata_mask] = 0
+    g_byte[nodata_mask] = 0
+    b_byte[nodata_mask] = 0
 
     # Determine temporary or final output path
     if create_cog:
@@ -170,12 +191,15 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
         temp_output = str(output_path)
         final_output = str(output_path)
 
-    # Update profile for RGB output
+    # Update profile for RGB output (use the cropped dimensions and transform)
     profile.update(
         dtype=rasterio.uint8,
         count=3,
+        height=b04_raw.shape[0],
+        width=b04_raw.shape[1],
+        transform=b04_transform,
         compress='lzw',
-        nodata=nodata_value,
+        nodata=0,
         photometric='rgb'
     )
 
@@ -199,10 +223,10 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, output_path,
             "-co", "BIGTIFF=YES",
             "-co", "NUM_THREADS=ALL_CPUS",
             "-co", "COMPRESS=JPEG",
-            "-co", "QUALITY=85",
+            "-co", "QUALITY=95",
             "-co", "PHOTOMETRIC=YCBCR",
             "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-            "-a_nodata", str(nodata_value),
+            "-a_nodata", "0",
             temp_output,
             final_output
         ]
@@ -247,6 +271,7 @@ if __name__ == "__main__":
     b04_file = f"{base_path}\\{base_name}_b04_10m.tif"
     b03_file = f"{base_path}\\{base_name}_b03_10m.tif"
     b02_file = f"{base_path}\\{base_name}_b02_10m.tif"
+    clip_orbit_file = f"{base_path}\\assets\\swissboundary_buffer_5000m_22.gpkg"  # Your clip polygon
     output_file = f"{base_path}\\{base_name}_rgb_cog.tif"
 
     # Create enhanced RGB with COG output
@@ -255,8 +280,8 @@ if __name__ == "__main__":
         b04_path=b04_file,
         b03_path=b03_file,
         b02_path=b02_file,
+        clip_orbit=clip_orbit_file,
         output_path=output_file,
-        nodata_value=0,
         scale=0.0001,
         offset=-0.1,
         max_r=3.0,
