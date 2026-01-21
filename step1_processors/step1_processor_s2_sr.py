@@ -1206,7 +1206,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 # Get band title using config
                 band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
-                band_title = band_names.get(band, band)
+
+                if band == 'TCI':
+                    band_title = "True color image – 10m"
+                else:
+                    band_title = band_names.get(band, band)
 
                 # STAC Upload
 
