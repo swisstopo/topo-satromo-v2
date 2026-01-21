@@ -431,6 +431,58 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             print(f"Warning: Could not parse folder name: {folder_name}")
             return None, None
 
+    def merge_jp2_with_gdal_merge(existing_file, new_file, output_file):
+        """Merge two JP2 files using gdal_merge with NoData=0 handling."""
+        # Two Step appproach 1. Driver Limitations (The "Random Access" Problem) and 2. Performance and CPU Usage
+        try:
+            print(f"    Merging duplicate files: {os.path.basename(existing_file)}")
+
+            temp_tif = output_file.replace('.jp2', '_merged.tif')
+
+            command = [
+                "gdal_merge",
+                "-o", temp_tif,
+                "-n", "0",
+                "-a_nodata", "0",
+                "-init", "0",
+                existing_file,
+                new_file
+            ]
+
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+
+            if result.returncode != 0:
+                print(f"    Error in gdal_merge: {result.stderr}")
+                if os.path.exists(temp_tif):
+                    os.remove(temp_tif)
+                return False
+
+            translate_cmd = [
+                'gdal_translate',
+                '-of', 'JP2OpenJPEG',
+                '-co', 'QUALITY=100',
+                '-a_nodata', '0',
+                temp_tif,
+                output_file
+            ]
+
+            result = subprocess.run(translate_cmd, capture_output=True, text=True, timeout=300)
+
+            if os.path.exists(temp_tif):
+                os.remove(temp_tif)
+
+            if result.returncode != 0:
+                print(f"    Error converting to JP2: {result.stderr}")
+                return False
+
+            print(f"    Successfully merged files with NoData handling")
+            return True
+
+        except Exception as e:
+            print(f"    Error in merge process: {e}")
+            return False
+
+
     def move_copernicus_data(temp_folder, collection_folder):
         """
         Process Copernicus data folders and copy relevant JP2 files.
@@ -441,62 +493,81 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         """
 
         # Define the file endings we're looking for based on the config
-        target_endings = [f'{band}_{res}m.jp2' for res, bands in config.SENTINEL2_BAND_CONFIG.items() for band in bands]
-
+        target_endings = [f'{band}_{res}m.jp2'
+                        for res, bands in config.SENTINEL2_BAND_CONFIG.items()
+                        for band in bands]
         # Find all subdirectories in temp folder that match Sentinel-2 naming pattern
         pattern = f"{temp_folder}/**/*.SAFE"
         sentinel_folders = glob.glob(pattern, recursive=True)
 
         if not sentinel_folders:
             print(f"No Sentinel-2 folders found in {temp_folder}")
-            return
+            return 1
 
-        # print(f"Found {len(sentinel_folders)} Sentinel-2 folders")
+        print(f"Found {len(sentinel_folders)} Sentinel-2 folders")
 
         for folder_path in sentinel_folders:
             if not os.path.isdir(folder_path):
                 continue
 
             folder_name = os.path.basename(folder_path)
-            # print(f"\nProcessing folder: {folder_name}")
+            print(f"\nProcessing folder: {folder_name}")
 
-            # Parse folder name to extract orbit and date
+             # Parse folder name to extract orbit and date
             orbit, date = parse_copernicus_folder_name(folder_name)
-
             if orbit is None or date is None:
                 print(f"Skipping folder {folder_name} - could not parse name")
                 continue
 
-            # print(f"  Orbit: {orbit}, Date: {date}")
-
-            # Create output directory
+            print(f"  Orbit: {orbit}, Date: {date}")
+             # Create output directory
             output_dir = os.path.join(collection_folder, orbit, date)
             os.makedirs(output_dir, exist_ok=True)
-            # print(f"  Output directory: {output_dir}")
+            print(f"  Output directory: {output_dir}")
 
             # Find all T*.jp2 files in the folder (including subdirectories)
             jp2_pattern = os.path.join(folder_path, "**", "T*.jp2")
             jp2_files = glob.glob(jp2_pattern, recursive=True)
 
             copied_count = 0
+            merged_count = 0
+            skipped_count = 0
 
             for jp2_file in jp2_files:
                 file_name = os.path.basename(jp2_file)
-
                 # Check if file ends with any of our target endings
                 for ending in target_endings:
                     if file_name.endswith(ending):
                         try:
                             destination = os.path.join(output_dir, file_name)
-                            shutil.move(jp2_file, destination)
-                            # print(f"    Moved: {file_name}")
-                            copied_count += 1
-                            break  # Found a match, no need to check other endings
+
+                            if os.path.exists(destination):
+                                print(f"    Granule duplicated detected: {file_name}")
+                                temp_merged = destination + '.merged_temp.jp2'
+
+                                if merge_jp2_with_gdal_merge(destination, jp2_file, temp_merged):
+                                    backup_file = destination + '.backup'
+                                    shutil.move(destination, backup_file)
+                                    shutil.move(temp_merged, destination)
+                                    os.remove(backup_file)
+                                    merged_count += 1
+                                else:
+                                    print(f"    Merge failed, keeping original file")
+                                    if os.path.exists(temp_merged):
+                                        os.remove(temp_merged)
+                                    skipped_count += 1
+                            else:
+                                shutil.move(jp2_file, destination)
+                                copied_count += 1
+
+                            break # Found a match, no need to check other endings
+
                         except Exception as e:
-                            print(f"    Error copying {file_name}: {e}")
+                            print(f"    Error processing {file_name}: {e}")
                             return 0
 
-            #print(f"  Total files copied: {copied_count}")
+            print(f"  Files copied: {copied_count}, merged: {merged_count}, skipped: {skipped_count}")
+
         return 1
 
     move_stats= move_copernicus_data("temp", copernicus_collection)
