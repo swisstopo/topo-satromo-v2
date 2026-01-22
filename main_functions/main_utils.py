@@ -3,13 +3,11 @@ from pydrive.auth import GoogleAuth
 from oauth2client.service_account import ServiceAccountCredentials
 import boto3
 import requests
-import ee
 import csv
 import os
 import json
 import pandas as pd
 import dateutil
-from google.cloud import storage
 from typing import Dict, List, Optional, Tuple, Union, Any
 from pathlib import Path
 import subprocess
@@ -17,6 +15,8 @@ import logging
 import re
 from datetime import datetime, timedelta
 from pystac_client import Client
+import json
+
 import glob
 import math
 import shutil
@@ -285,199 +285,8 @@ def addINDEX(image, bands, index_name):
     return image_with_index
 
 
-def maskOutside(image, aoi):
-    """
-    Masks the areas outside the specified region of interest (AOI) in an image.
-
-    Args:
-        image: The image to be masked.
-        aoi: The region of interest (AOI) to keep in the image.
-
-    Returns:
-        The image with the areas outside the AOI masked.
-    """
-    # Create a constant image with a value of 1, clip it to the AOI, and use it as a mask
-    # add .not() after mask() to mask inside
-    mask = ee.Image.constant(1).clip(aoi).mask()
-
-    # Apply the mask to the image
-    return image.updateMask(mask)
-
-# Function to analyse the number of sceneds first and last day
 
 
-def get_collection_info(collection):
-    """
-    Retrieves information about an image collection.
-
-    Args:
-        collection: The image collection to retrieve information from.
-
-    Returns:
-        A tuple containing the first date, last date, and total number of images in the collection.
-        Returns (None, None, 0) for empty collections.
-    """
-    # Sort the collection by date in ascending order
-
-    sorted_collection = collection.sort('system:time_start')
-
-    # Get the first and last image from the sorted collection
-    first_image = sorted_collection.first()
-    last_image = sorted_collection.sort('system:time_start', False).first()
-
-    try:
-        # Get the count of images in the collection
-        image_count = collection.size().getInfo()
-        # Get the dates of the first and last image
-        first_date = ee.Date(first_image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
-        last_date = ee.Date(last_image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
-    except ee.EEException:
-        image_count = 0
-        # Handle cases where date information might be missing
-        first_date = None
-        last_date = None
-
-    # Return the first date, last date, and total number of scenes
-    return first_date, last_date, image_count
-
-
-def get_quadrants(roi):
-    """
-    Divide a region of interest into quadrants.
-
-    Parameters:
-    roi (ee.Geometry): Region of interest.
-
-    Returns:
-    dict: Dictionary with the quadrants (quadrant1, quadrant2, quadrant3, quadrant4).
-    """
-    # Calculate the bounding box of the region
-    bounds = roi.bounds()
-
-    # Get the coordinates of the bounding box
-
-    bbox = bounds.coordinates().getInfo()[0]
-
-    # Extract the coordinates
-    min_x, min_y = bbox[0]
-    max_x, max_y = bbox[2]
-
-    # Calculate the midpoints
-    mid_x = (min_x + max_x) / 2
-    mid_y = (min_y + max_y) / 2
-
-    # Define the quadrants
-    quadrant1 = ee.Geometry.Rectangle(min_x, min_y, mid_x, mid_y)
-    quadrant2 = ee.Geometry.Rectangle(mid_x, min_y, max_x, mid_y)
-    quadrant3 = ee.Geometry.Rectangle(min_x, mid_y, mid_x, max_y)
-    quadrant4 = ee.Geometry.Rectangle(mid_x, mid_y, max_x, max_y)
-
-    return {
-        "quadrant1": quadrant1,
-        "quadrant2": quadrant2,
-        "quadrant3": quadrant3,
-        "quadrant4": quadrant4
-    }
-
-
-def start_export(image, scale, description, region, filename_prefix, crs):
-    """
-    Starts an export task to export an image to Google Drive or Google Cloud Storage
-
-
-    Args:
-        image: The image to be exported.
-        scale: The scale of the exported image.
-        description: The description of the export task.
-        region: The region of interest (ROI) to export.
-        filename_prefix: The prefix to be used for the exported file.
-        crs: The coordinate reference system (CRS) of the exported image.
-        GCS=False : If set to true, an GCS will be used for output
-
-    Returns:
-        None
-    """
-
-    # Export in GEE
-    # TODO Getting S2_mosaic.projection() makes no sense, it will always be a computed image, with 1 degree scale and EPSG 4326, unless manually reprojected.
-    #  Use projection() from one of the original images instead, e.g., S2_collection.first().projection(), *after the aoi/date filters but before mapping any transformation function* then
-    #  work with the corresponding CrsTtransform derived from it  crs:'EPSG:32632',   crsTransform: '[10,0,0,0,10,0]'
-
-    if config.GDRIVE_TYPE == "GCS":
-        # print("GCS export")
-        task = ee.batch.Export.image.toCloudStorage(
-            image=image,
-            description=description,
-            scale=scale,
-            region=region,
-            fileNamePrefix=filename_prefix,
-            maxPixels=1e13,
-            crs=crs,
-            fileFormat="GeoTIFF",
-            bucket=config.GCLOUD_BUCKET
-        )
-    else:
-        # print("Drive export")
-        task = ee.batch.Export.image.toDrive(
-            image=image,
-            description=description,
-            scale=scale,
-            region=region,
-            fileNamePrefix=filename_prefix,
-            maxPixels=1e13,
-            crs=crs,
-            fileFormat="GeoTIFF"
-        )
-    # OPTION Export in GEE with UTM32
-    # for images covering that UTM zone this will be the best, but for the neighbouring UTM zones, images will be reprojected. So, for mosaics for larger areas spanning multiple UTM zones maybe some alternative projection is more convenient.
-    # task = ee.batch.Export.image.toDrive(
-    #    image=image,
-    #    description=description,
-    #    #scale=scale,
-    #    "region=region,"
-    #    fileNamePrefix=filename_prefix,
-    #    maxPixels=1e13,
-    #    crs = 'EPSG:32632',
-    #    crsTransform = '[10,0,300000,0,-10,5200020]',
-    #    fileFormat ="GeoTIFF"
-    # )
-
-    # OPTION: only reproject but without scale use this code, based on https://developers.google.com/earth-engine/guides/exporting#setting_scal
-    # projection = image.projection().getInfo()
-    # task = ee.batch.Export.image.toDrive(
-    #     image=image,
-    #     description=description,
-    #     "region "= "region",
-    #     fileNamePrefix=filename_prefix,
-    #     crs=crs,
-    #     maxPixels=1e13,
-    #     fileFormat = "GeoTIFF",
-    #     crsTransform = projection['transform']
-    # )
-
-    task.start()
-
-    # Get Task ID
-    task_id = task.status()["id"]
-    print("Exporting  with Task ID:", task_id +
-          f" file {filename_prefix} to {config.GDRIVE_TYPE}...")
-
-    # Save Task ID and filename to a text file
-    header = ["Task ID", "Filename"]
-    data = [task_id, filename_prefix]
-
-    # Check if the file already exists
-    file_exists = os.path.isfile(config.GEE_RUNNING_TASKS)
-
-    with open(config.GEE_RUNNING_TASKS, "a", newline="") as f:
-        writer = csv.writer(f)
-
-        # Write the header if the file is newly created
-        if not file_exists:
-            writer.writerow(header)
-
-        # Write the data
-        writer.writerow(data)
 
 
 def check_product_status(product_name):
@@ -575,108 +384,6 @@ def update_product_status_file(input_dict, output_file):
 
     # Return None
     return None
-
-
-def prepare_export(roi, productitem, productasset, productname, scale, image, sensor_stats, current_date_str):
-    """
-    Prepare the export of the image by splitting it into quadrants and starting the export tasks.
-    It also generates product status information, updates the product status file,
-    and writes the product description to a CSV file.
-
-    Args:
-        roi (ee.Geometry): Region of interest for the export.
-        productitem (str): Timestamp of assets YYYYMMDThhmmss, "YYYYMMDDT235959" for a day
-        productasset (str): Base filename for the exported files.
-        productname (str): Product name of the exported files.
-        scale (str): Scalenumber in [m] of the exported file
-        image (ee.Image): Image to be exported.
-        sensor_stats (list): List containing sensor statistics.
-        current_date_str (str): Current date in string format.
-
-    Returns:
-        None
-    """
-
-    # Get current Processor Version from GitHub
-    processor_version = get_github_info()
-
-    # Define the quadrants to split into 4 regions
-    quadrants = get_quadrants(roi)
-
-    for quadrant_name, quadrant in quadrants.items():
-        # Create filename for each quadrant
-        filename_q = productasset + quadrant_name
-        # Start the export for each quadrant
-
-        start_export(image, int(scale),
-                     productasset, quadrant, filename_q, config.OUTPUT_CRS)
-
-    # Generate product status information
-    product_status = {
-        'Product': productname,
-        'LastSceneDate': sensor_stats[1],
-        'RunDate': current_date_str,
-        'Status': "RUNNING"
-    }
-
-    # Update the product status file
-    update_product_status_file(product_status, config.LAST_PRODUCT_UPDATES)
-
-    # Get Product info from config
-    product = get_product_from_techname(productname)
-
-    # Update the product  file
-    header = ["Product", "Item", "Asset", "DateFirstScene", "DateLastScene",
-              "NumberOfScenes", "DateItemGeneration", "ProcessorHashLink", "ProcessorReleaseVersion", "GeocatID"]
-    data = [productname, productitem, productasset, str(sensor_stats[0]), str(
-        sensor_stats[1]), str(sensor_stats[2]), current_date_str, processor_version["GithubLink"], processor_version["ReleaseVersion"], product['geocat_id']]
-
-    # Create swisstopo_data dictionary
-    swisstopo_data = {"header": header, "data": data}
-
-    # Create swisstopo_data dictionary with uppercase keys
-    swisstopo_data = {key.upper(): value for key, value in zip(header, data)}
-
-    # Adding extracting image info
-    image_info = ee.Image(image).getInfo()
-
-    # Convert keys to uppercase and add prefix
-    image_info_gee = {"GEE_" + key.upper(): value for key,
-                      value in image_info.items()}
-
-    # Add swisstopo_data to image_info_gee
-    image_info_gee["SWISSTOPO"] = swisstopo_data
-
-    # Export the dictionary as JSON
-    with open(os.path.join(config.PROCESSING_DIR, productasset + "_metadata.json"), 'w') as json_file:
-        json.dump(image_info_gee, json_file)
-
-    return None
-
-
-def get_collection_info_landsat(collection):
-    """
-    Retrieves information about an image collection for the line of Landsat satellites
-
-    Args:
-        collection: The landsat image collection to retrieve information from.
-
-    Returns:
-        A tuple containing the first date, last date, and total number of images in the collection.
-        Returns (None, None, 0) for empty collections.
-    """
-    # Sort the collection by date in ascending order
-    index_list = collection.aggregate_array('system:index')
-
-    dates_list = [dateutil.parser.parse(i.split('_')[-1]) for i in index_list.getInfo()]
-
-    # Get the first and last image and size of image collection
-    image_count = len(dates_list) if len(dates_list)>0 else 0
-    first_date = min(dates_list) if image_count>0 else None
-    last_date = max(dates_list) if image_count>0 else None
-
-    # Return the first date, last date, and total number of scenes
-    return first_date, last_date, image_count
 
 
 def ensure_path(path: Union[str, Path]) -> Path:
@@ -1122,3 +829,56 @@ def extract_collection_id_from_url(stac_url: str, config_api_path: str = '/api/s
         return stac_url, ''
     else:
         return stac_url + '/', ''
+
+def metadata_add_entry(
+    json_file: str,
+    path: str,
+    key: str,
+    value: Any,
+    separator: str = "\\"
+) -> dict:
+    """
+    Fügt einen Eintrag in eine verschachtelte JSON-Struktur hinzu.
+
+    Args:
+        json_file: Pfad zur JSON-Datei
+        path: Pfad zur Zielgruppe (z.B. "SOURCE\\PROPERTIES" oder "PROPERTIES")
+        key: Name des hinzuzufügenden Eintrags
+        value: Wert des Eintrags
+        separator: Trennzeichen für den Pfad (Standard: "\\")
+
+    Returns:
+        dict: Aktualisierte JSON-Daten
+
+    Beispiele:
+        # Einfacher Pfad
+        metadata_add_entry("data.json", "PROPERTIES", "CLOUDCOVER", 23.5)
+
+        # Verschachtelter Pfad
+        metadata_add_entry("data.json", "SOURCE\\PROPERTIES", "CLOUDCOVER", 23.5)
+
+        # Mehrfach verschachtelt
+        metadata_add_entry("data.json", "SOURCE\\PROPERTIES\\METADATA", "CLOUDCOVER", 23.5)
+    """
+    # JSON-Datei laden
+    with open(json_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # Pfad in Teile aufteilen
+    path_parts = [p.strip() for p in path.split(separator) if p.strip()]
+
+    # Verschachtelte Struktur durchlaufen/erstellen
+    current_level = data
+    for part in path_parts:
+        if part not in current_level:
+            current_level[part] = {}
+        current_level = current_level[part]
+
+    # Wert hinzufügen (überschreibt vorhandene Werte)
+    current_level[key] = value
+
+    # JSON-Datei speichern
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    return data
