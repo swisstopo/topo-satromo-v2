@@ -128,8 +128,6 @@ PRODUCT_VHI = {
     "temporal_coverage": 7,  # Days 
     "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_vhi_v200",
-    "no_data": 255, # TODO: check if needed in context with V2
-    "missing_data": 110, # TODO: check if needed in context with V2
     "asset_size": 2, # TODO: check if needed in context with V2
     'NDVI_reference_data': 'projects/satromo-prod/assets/col/1991-2020_NDVI_SWISS',
     'LST_reference_data': 'projects/satromo-prod/assets/col/1991-2020_LST_SWISS',

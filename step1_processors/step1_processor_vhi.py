@@ -43,8 +43,21 @@ print("********* processing {} *********".format(product_name))
 # SWITCHES
 # Enable/disable execution of individual steps
 
+workWithPercentiles = True
+# options: True, False - defines if the p05 and p95 percentiles of the reference data sets are used,
+# otherwise the min and max will be used (False)
+
 ##############################
 # CONFIGURATION / PARAMETERS
+no_data = 255 # Value used for pixels with no input data
+missing_data = 110 # Value used for pixels where data is missing (e.g., cloud-covered areas)
+
+alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
+
+if workWithPercentiles is True:
+    CI_method = '5th_and_95th_percentile'
+else:
+    CI_method = 'min_and_max'
 
 ##############################
 # TIME
