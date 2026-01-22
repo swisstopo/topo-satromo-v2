@@ -20,7 +20,7 @@ earthengine-api==1.7.0
 fiona
 folium==0.20.0
 fonttools==4.60.1
-gdal==3.8.4
+gdal
 geoarray==0.19.2
 geojson==3.2.0
 geopandas==1.1.1
@@ -95,5 +95,5 @@ urllib3==2.5.0
 wget==3.2
 xarray==2025.10.1
 xyzservices==2025.10.0
-./secrets/gdal-3.11.4-cp311-cp311-win_amd64.whl ; sys_platform == 'win32'
+./secrets/gdal-3.11.4-cp312-cp312-win_amd64.whl ; sys_platform == 'win32'
 
