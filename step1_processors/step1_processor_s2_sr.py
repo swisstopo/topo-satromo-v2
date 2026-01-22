@@ -4,7 +4,7 @@ import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb
+from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb,main_cloudpercentage
 from collections import defaultdict
 import requests
 import os
@@ -339,7 +339,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         return
 
 
-    # TODO check if tile is mostly no data and in case of multiple identical tileIDs verify if their merge is not full of no data: to solve this with A B and C: Download all tiles, check with a 60m band if the orbit covers Switzerland and no area is "empty": meaning that the area in the orbit intersection with Switzerland has no/little no data
+    # TODO check if atile is mostly no data : meaning that a granule is missing and we have to wait until a second or athird granule is here.
 
     ##############################
     # Backup data to S3
@@ -1187,9 +1187,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         thumbnail = main_thumbnails.create_thumbnail(
                             f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
+
+        ##############################
+        # Calculate Cloud Percentage: TODO maybe do check afte arosics to deletescenes with too much cloud (eg gt than 98%)
+        cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
+        print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
+
+        #add cloudcover to metadata json
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json",cloudcover)
+
         ##############################
         # TODO Checkif current, if yes then rund upload below twice a day
-
 
         ##############################
         # Upload to STAC
