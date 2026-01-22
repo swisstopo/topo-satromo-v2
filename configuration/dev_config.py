@@ -127,7 +127,7 @@ PRODUCT_VHI = {
     "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc",
     "temporal_coverage": 7,  # Days 
     "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
-    "product_name": "ch.swisstopo.swisseo_vhi_v100",
+    "product_name": "ch.swisstopo.swisseo_vhi_v200",
     "no_data": 255, # TODO: check if needed in context with V2
     "missing_data": 110, # TODO: check if needed in context with V2
     "asset_size": 2, # TODO: check if needed in context with V2
