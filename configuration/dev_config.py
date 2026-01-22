@@ -28,7 +28,7 @@ GCLOUD_BUCKET = "s2_sr_registration_swiss"
 # set S3 path
 S3_BUCKET_NAME = "satromoint"
 #S3_BUCKET_NAME = "s3-topo-satromo-prod"
-S3_BUCKET_PATH="data"
+S3_BUCKET_PATH = "data"
 
 
 
@@ -52,7 +52,7 @@ OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
 # No data value
-NODATA = 9999
+# NODATA = 9999
 
 
 
@@ -73,10 +73,11 @@ PRODUCT_S2_LEVEL_CSPLUS = {
     "temporal_coverage": 1,  # Days
     # "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
 }
+
 #  ch.swisstopo.swisseo_s2-sr
 #Sentinel-2 L2A Band configurations
 SENTINEL2_BAND_CONFIG ={
-    10:['B02', 'B03', 'B04', 'B08', 'TCI',], # 10m bands: BLUE, GREEN, RED, NIR
+    10:['B02', 'B03', 'B04', 'B08',], # 10m bands: BLUE, GREEN, RED, NIR
     20:['B05', 'B06', 'B07', 'B8A', 'B11', 'B12', 'SCL',], # 20m bands: SWIR and RedEdge bands and SCL
     60:['B01', 'B09', 'AOT',] # 60m bands: Coastal Aerosol  Water Vapor and Aerosol
 }
@@ -87,7 +88,7 @@ SENTINEL2_BAND_NAMES = {
     'B03': "Green (band 3) - 10m",
     'B04': "Red (band 4) - 10m",
     'B08': "NIR 1 (band 8) - 10m",
-    # 'TCI': "True color image (TCI) - 10m",
+    # 'TCI': "True color image (TCI) - 10m", # TCI calculated by ourselves to avoid oversaturation over snow and clouds
     'CLOUDMASK': "Cloud mask - 10m",
     'B05': "Red edge 1 (band 5) - 20m",
     'B06': "Red edge 2 (band 6) - 20m",
@@ -109,14 +110,14 @@ PRODUCT_S2_LEVEL_2A = {
     "asset_size": 5, # TODO: check if needed in context with V2
     "spatial_scale_export_mask": 10, # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
-    "no_data": 9999,
+    # "no_data": 9999,
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    "copernicus_collection": "sentinel-2-l2a",# Copernnicus STAC Collection
-    "baseline_version": "04.00",    # Baseline Version greater than
+    "copernicus_collection": "sentinel-2-l2a", # Copernnicus STAC Collection
+    "baseline_version": "04.00",  # Baseline Version greater than !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     "processing_level": "L2A",  #  Processing Level
     "copernicus_bucket": "eodata", # Copernicus S3 bucket
-    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v100
@@ -124,17 +125,17 @@ PRODUCT_VHI = {
     # TODO: check if needed in context with step0
     "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
     "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc",
-    "temporal_coverage": 7,  # Days
-    "spatial_scale_export": 10,  # Meters
+    "temporal_coverage": 7,  # Days 
+    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_vhi_v100",
-    "no_data": 255,
-    "missing_data": 110,
-    "asset_size": 2,
+    "no_data": 255, # TODO: check if needed in context with V2
+    "missing_data": 110, # TODO: check if needed in context with V2
+    "asset_size": 2, # TODO: check if needed in context with V2
     'NDVI_reference_data': 'projects/satromo-prod/assets/col/1991-2020_NDVI_SWISS',
     'LST_reference_data': 'projects/satromo-prod/assets/col/1991-2020_LST_SWISS',
     'LST_current_data': 'projects/satromo-prod/assets/col/LST_SWISS',
     "step1_collection": 'projects/satromo-prod/assets/col/VHI_SWISS',
-    #"step0_collection": "projects/satromo-prod/assets/col/S2_SR_HARMONIZED_SWISS"
+    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing
@@ -172,7 +173,7 @@ step0 = {
     f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
         'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
         # cleaning_older_than: 2 # entry used to clean assets
-    }
+    } # TODO: check if needed in context with V2
 }
 
 

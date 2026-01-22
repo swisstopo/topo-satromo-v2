@@ -99,7 +99,7 @@ if __name__ == "__main__":
                     result = f"PRODUCT_S2_LEVEL_2A: STAC items already exist for date {current_date_str}, skipping processing."
 
             elif product_to_be_processed == 'PRODUCT_VHI':
-                roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE)
+                roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE) # TODO: doesn't work with GEE anymore, must be fixed
                 # roi = ee.Geometry.Rectangle(
                 #     [8.10, 47.18, 8.20, 47.25])  # 6221 Rickenbach
                 # roi = ee.Geometry.Rectangle(
