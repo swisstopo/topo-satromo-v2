@@ -1193,7 +1193,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
         print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
 
-        #add cloudcover to metadata json 
+        #add cloudcover to metadata json
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
 
         ##############################
@@ -1204,6 +1204,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         # Process Sentinel files grouped by timestamp
         for timestamp, file_list in sorted(files_by_timestamp.items()):
             print(f"\n=== Processing timestamp: {timestamp} ===")
+
+            # We add TCI to the list
+            file_list.append({
+                'timestamp': timestamp,
+                'band': 'TCI',
+                'resolution': 10,
+                'filename': f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif"
+            })
 
             # TCI last, resolution descending (bigger first), bands Z to A, so it is alphabetically in STAC
             file_list.sort(key=lambda x: (x['band'] == 'TCI', x['resolution'], x['band']), reverse=True)
