@@ -214,7 +214,7 @@ AROSICS_CONFIG = {
     'cloudprob_tile_pattern': 'S2*_MSIL1C',
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
-    #'omnicloudmask_venv_path': os.path.join(".venv","omnicloud_venv","bin","python3"), #LINUX
-    'omnicloudmask_venv_path': os.path.join(".venv","Scripts","python.exe"), #WINDOWS
+    'omnicloudmask_venv_path': os.path.join(".venv","bin","python3"), #LINUX
+    #'omnicloudmask_venv_path': os.path.join(".venv","Scripts","python.exe"), #WINDOWS
     'omnicloudmask_script_path': os.path.join("main_functions","main_omnicloudmask.py"),
 }
