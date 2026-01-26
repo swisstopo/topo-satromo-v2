@@ -240,7 +240,7 @@ def check_if_asset_prepared(collection, assets, check_date):
                       & (df.date == check_date_str)]
     if len(df_selection) > 0:
         print('Date found in empty_asset_list, skipping date')
-        return True
+        return False #in Version 1 this was True, but logically it should be False in V1 might not work with VHI
 
     # 3. Start asset generation if not found and not for STAC collections
     # # (STAC collections are read-only, we don't generate assets for them)
