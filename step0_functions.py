@@ -136,19 +136,26 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
     check_date = target_date - timedelta(days=temporal_coverage)
     end_date = target_date
     all_present = True
-
+    has_any_real_data = False  # Track if we found at least one date with actual data
 
     while check_date <= end_date:
-        asset_prepared = check_if_asset_prepared(
+        asset_status = check_if_asset_prepared(
             collection, assets, check_date)
 
-        if not asset_prepared:
+        # asset_status returns: 'ready', 'empty', or 'not_ready'
+        if asset_status == 'not_ready':
             print(f'Asset not yet available for date {check_date}')
             all_present = False
+        elif asset_status == 'ready':
+            has_any_real_data = True
 
         check_date += timedelta(days=1)
 
-    return all_present
+    # Only mark collection as ready if:
+    # 1. All dates are accounted for (either ready or empty)
+    # 2. At least one date has actual data (not all dates are empty)
+    return all_present and has_any_real_data
+
 
 def check_if_asset_prepared(collection, assets, check_date):
     """
@@ -166,7 +173,7 @@ def check_if_asset_prepared(collection, assets, check_date):
 
 
     Returns:
-        bool: True if asset is prepared, False otherwise
+        str: 'ready' if asset exists, 'empty' if in empty list, 'not_ready' if needs generation
     """
     # 1. we start by checking the state of the task
     #    (we start by that to fill the completed_tasks.csv if needed)
@@ -206,7 +213,7 @@ def check_if_asset_prepared(collection, assets, check_date):
                 if asset_date == check_date:
                     print('Collection {} READY for date {}'.format(
                         collection, check_date_str))
-                    return True
+                    return 'ready'
             elif 'properties' in asset and 'datetime' in asset['properties']:
                 # Alternative: datetime in properties
                 asset_datetime = asset['properties']['datetime']
@@ -220,7 +227,7 @@ def check_if_asset_prepared(collection, assets, check_date):
                 if asset_date == check_date:
                     print('Collection {} READY for date {}'.format(
                         collection, check_date_str))
-                    return True
+                    return 'ready'
         print('Item not found in STAC collection, continuing...')
 
     # Handle S3 collections (CLOUD_SCORE_PLUS)
@@ -229,7 +236,7 @@ def check_if_asset_prepared(collection, assets, check_date):
             if check_date.strftime('%Y%m%dT') in asset:
                 print('Collection {} READY for date {}'.format(
                     collection, check_date_str))
-                return True
+                return 'ready'
         print('Asset not found in S3 collection, continuing...')
 
 
@@ -239,20 +246,20 @@ def check_if_asset_prepared(collection, assets, check_date):
     df_selection = df[(df.collection == collection_basename)
                       & (df.date == check_date_str)]
     if len(df_selection) > 0:
-        print('Date found in empty_asset_list, skipping date')
-        return False #in Version 1 this was True, but logically it should be False in V1 might not work with VHI
+        print('Date found in empty_asset_list, skipping date (no source data available)')
+        return 'empty'  # Return 'empty' status - date is accounted for but has no data
 
     # 3. Start asset generation if not found and not for STAC collections
     # # (STAC collections are read-only, we don't generate assets for them)
     # if collection.startswith("http://") or collection.startswith("https://"):
     #     print('STAC collection is read-only, cannot generate assets')
-    #     return False
+    #     return 'not_ready'
 
     print('Starting asset generation for {} / {}'.format(collection, check_date_str))
     generate_single_date_function = eval(
         config.step0[collection]['step0_function'])
     generate_single_date_function(check_date_str, collection)
-    return False
+    return 'not_ready'
 
 
 def get_step0_dict():
