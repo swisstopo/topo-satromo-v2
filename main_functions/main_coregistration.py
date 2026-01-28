@@ -182,7 +182,7 @@ def coregister_S2(
     acquisition_date: Union[str, datetime],
     orbit_nr: int,
     cloudfree_class: Optional[int] = None
-) -> str:
+) -> tuple[bool, str, dict]:
     """
     Coregister a pre-mosaiced Sentinel-2 image using AROSICS.
 
@@ -384,7 +384,7 @@ def coregister_S2(
 
         logger.info('=' * len(title_str))
 
-        return success, pickle_path
+        return success, pickle_path, CRL.coreg_info
 
     except Exception as e:
         logger.error(f"Coregistration failed: {str(e)}")

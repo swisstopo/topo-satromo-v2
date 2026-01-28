@@ -16,7 +16,9 @@ import shutil
 import re
 import rasterio
 import glob
+import socket
 import geopandas as gpd
+from importlib.metadata import version
 
 
 from step0_processors.step0_utils import write_asset_as_empty
@@ -737,7 +739,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-        success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        success, pickle_path, coreg_info = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         # If coregistration was successful, proceed to deshift the files
         if success:
@@ -854,7 +856,63 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         ##############################
         # TODO Update METADATA json with
         # - coregistration status
-        # - cloudshadow percentage
+        
+        ##############################
+        # Calculate Cloud Percentage: TODO maybe do check afte arosics to deletescenes with too much cloud (eg gt than 98%)
+        
+        # Wrap the string in Path() first
+        buffer_path = Path(config.BUFFER)
+        # Construct new filename with orbit number
+        orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_num}{buffer_path.suffix}")
+        cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
+        print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
+    
+        # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we write to empty asset and stop processing .
+        if (orbit_num in [8,22] and cloudcover >85.0) or (orbit_num in [108,65] and cloudcover >95.0):
+            print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping further processing.")
+            write_asset_as_empty(collection, day_to_process, 'cloudy')
+            return
+      
+        #METADATA add cloudcover 
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
+
+        #METADATA add GCP
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","GCP_COUNT",f"{len(coreg_info['GCPList'])}")
+        
+        #METADATA add COREG RMSE
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","COREG_MEAN_SHIFT_PX_X",f"{coreg_info['mean_shifts_px']['x']:.2f}")
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","COREG_MEAN_SHIFT_PX_Y",f"{coreg_info['mean_shifts_px']['y']:.2f}")
+
+        #METADATA add  ORBIT NR
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","ORBIT_NR",f"{orbit_num}")
+        
+        #METADATA add PROCESSING DATE
+        processing_date = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","PROCESSING_DATE_UTC",processing_date)
+
+        #METADATA add PROCESSING HOST information
+        hostname = socket.gethostname()
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","PROCESSING_HOSTNAME",hostname)
+
+        #METADATA add SOFTWARE_ENVIRONMENT gdal version and arosics version and omnicoudlmask version
+        gdal_version = main_utils.run_gdal_command(["gdalinfo", "--version"])
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","GDAL_VERSION",gdal_version[1])
+        try:
+            arosics_version = version("arosics")
+        except:
+            arosics_version = "unknown"
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","AROSICS_VERSION",arosics_version)
+        try:
+            omnicloudmask_version = version("omnicloudmask")
+        except:
+            omnicloudmask_version = "unknown"
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","OMNICLOUDMASK_VERSION",omnicloudmask_version)
+
+        #METADATA add SWISSTOPO_PROCESSOR VERSION
+        processor_version = main_utils.get_github_info() 
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_PROCESSOR_VERSION",processor_version['GithubLink'])
+        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_RELEASE_VERSION",processor_version['ReleaseVersion'])
+
 
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95
@@ -1135,10 +1193,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"  Processing: {band} ({band_title}) - lossy={lossy}, quality={quality}")
 
                 # Clip on BBOX of extent buffer to reduce file size for processing
-                # Wrap the string in Path() first
-                buffer_path = Path(config.BUFFER)
-                # Construct new filename with orbit number
-                orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_num}{buffer_path.suffix}")
+
                 # Get bounds from GeoPackage
                 gdf = gpd.read_file(orbit_clipfile)
                 bounds_2056 = gdf.total_bounds  # in EPSG:2056
@@ -1200,13 +1255,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                             f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
 
-        ##############################
-        # Calculate Cloud Percentage: TODO maybe do check afte arosics to deletescenes with too much cloud (eg gt than 98%)
-        cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
-        print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
 
-        #add cloudcover to metadata json 
-        main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
 
         ##############################
         # TODO Checkif current, if yes then rund upload below twice a day

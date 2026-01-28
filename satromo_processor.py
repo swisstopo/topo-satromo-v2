@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2025-01-18"
+        current_date_str = "2025-02-16"
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print("*****************************")
