@@ -1,4 +1,9 @@
-import configuration as config
+import rasterio
+import os
+import numpy as np
+# import configuration as config
+from datetime import datetime
+from rasterio.windows import from_bounds
 
 ##############################
 # INTRODUCTION
@@ -36,8 +41,8 @@ import configuration as config
 #                 If None, processes all available data.
 #         """
 
-product_name = config.PRODUCT_VHI['product_name']
-print("********* processing {} *********".format(product_name))
+# product_name = config.PRODUCT_VHI['product_name']
+# print("********* processing {} *********".format(product_name))
 
 ##############################
 # SWITCHES
@@ -49,25 +54,48 @@ workWithPercentiles = True
 
 ##############################
 # CONFIGURATION / PARAMETERS
+# Paths
+s3_bucket = 's3://s3-topo-satromo-prod/'
+s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/' # needs file name addition
+
+# Constants
+alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
 no_data = 255 # Value used for pixels with no input data
 missing_data = 110 # Value used for pixels where data is missing (e.g., cloud-covered areas)
+threshold_ndsi = 0.43 # values equal or above indicate snow
+threshold_illumination = 0.65 # values equal or above indicate insufficient illumination
 
-alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
-
-if workWithPercentiles is True:
-    CI_method = '5th_and_95th_percentile'
-else:
-    CI_method = 'min_and_max'
+# Environments
+os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without credentials
 
 ##############################
 # TIME
+current_date_str = "2025-06-01" # TODO: replace with dynamic date input from config / satromo_processor.py
+
+doy = datetime.strptime(current_date_str, '%Y-%m-%d').timetuple().tm_yday
+doy_str = f'{doy:03d}' # zero-padded three-digit day of year
 
 ##############################
 # SPACE / ROI
+roi = (2802000, 1125000, 2809000, 1135000) # Example ROI in EPSG:2056 (min_x, min_y, max_x, max_y)
 
 ##############################
 # INPUT DATA: REFLECTANCE
 # Load satellite reflectance data
+# 'https://sys-data.int.bgdi.ch/ch.swisstopo.swisseo_s2-sr_v200/2025-06-01t101041/swisseo_s2-sr_v200_mosaic_2025-06-01t101041_b04_10m.tif'
+
+s3_path_reflectance = 's3://sys-data.int.bgdi.ch/ch.swisstopo.swisseo_s2-sr_v200/'
+
+
+
+# Simple plot
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10, 8))
+plt.imshow(ndvi, cmap='RdYlGn')
+plt.show()
+
+print('test')
+
 
 ##############################
 # INPUT DATA: TEMPERATURE
@@ -76,13 +104,31 @@ else:
 ##############################
 # INPUT DATA: REFERENCE NDVI
 # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
+s3_path_ndvi_ref = s3_bucket + s3_path_key_ndvi_ref + 'NDVI_Stats_DOY' + doy_str + '.tif'
+
+with rasterio.open(s3_path_ndvi_ref) as src:
+    # Define window from ROI
+    window = from_bounds(*roi, src.transform)
+
+    # Read relevant bands based on the chosen method
+    if workWithPercentiles is True:
+        ndvi_ref_min = src.read(6, window=window)  # 5th percentile
+        ndvi_ref_max = src.read(7, window=window)  # 95th percentile
+        # Define confidence interval method
+        CI_method = '5th_and_95th_percentile'
+    else:
+        ndvi_ref_min = src.read(1, window=window)  # minimum
+        ndvi_ref_max = src.read(2, window=window)  # maximum
+        CI_method = 'min_and_max'
+
+
 
 ##############################
 # INPUT DATA: REFERENCE LST
 # Load or compute long-term LST statistics for climate reference period (1991-2020)
 
 ##############################
-# APPLY CLOUD MASK
+# APPLY CLOUD, CLOUD SHADOW AND TERRAIN SHADOW MASKS
 
 ##############################
 # CALCULATE AND APPLY SNOW MASK
@@ -117,4 +163,4 @@ else:
 # EXPORT VHI
 # Save to file with metadata
 
-print("********* finished processing {} *********".format(product_name))
+# print("********* finished processing {} *********".format(product_name))
