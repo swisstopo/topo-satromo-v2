@@ -1,6 +1,5 @@
 import rasterio
 from pystac_client import Client
-import requests
 import os
 import numpy as np
 # import configuration as config
@@ -119,7 +118,7 @@ nir_path = item_path + '_b08_10m.tif'
 green_path = item_path + '_b03_10m.tif'
 swir_path = item_path + '_b11_20m.tif'
 
-
+# Function to load a band and apply offset and scale factors, also preserving nodata values
 def load_and_scale_band(filepath, roi, nodata=s2_nodata, scale=s2_scale_factor, offset=s2_offset):
     """
     Load a raster band and apply scaling and offset, preserving nodata values.
@@ -159,25 +158,78 @@ nir = load_and_scale_band(nir_path, roi)
 green = load_and_scale_band(green_path, roi)
 swir = load_and_scale_band(swir_path, roi)
 
+# Load cloud mask
+cloud_mask_path = item_path + '_cloudmask_10m.tif'
+with rasterio.open(cloud_mask_path) as src_cloud:
+    window = from_bounds(*roi, src_cloud.transform)
+    cloud_mask = src_cloud.read(1, window=window)
+
+# TODO: Load terrain shadow masks
 
 
+##############################
+# CALCULATE SNOW MASK
 
+##############################
+# APPLY CLOUD, CLOUD SHADOW, TERRAIN SHADOW AND SNOW MASKS
+def apply_masks(band, cloudmask=cloud_mask,
+                # snowmask=snow_mask, th_snow=threshold_ndsi, # TODO
+                # illuminationmask=illumination_mask,  th_illumination=threshold_illumination, # TODO
+                ):
+    """
+    Load a raster band and apply masks.
+    
+    Parameters:
+    -----------
+    band : numpy.ndarray
+        Input band to be masked 
+    cloudmask : numpy.ndarray
+        Cloud mask (0=Clear, 1=Thick Cloud, 2=Thin Cloud, 3=Cloud Shadow)
+    snowmask : numpy.ndarray
+        NDSI (normalized difference snow index) generally used for snow detection
+    th_snow : float
+        Threshold for snow detection
+    illuminationmask : numpy.ndarray
+        Illumination mask
+    th_illumination : float
+        Threshold for illumination detection
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Masked band with nodata preserved as np.nan
+    """
+    masked_band = band.copy()
 
+    # Apply cloud mask
+    if cloudmask is not None:
+        cloud_mask_condition = cloudmask != 0 
+        masked_band[cloud_mask_condition] = np.nan
+
+    # TODO: Apply terrain shadow mask
+    # if illuminationmask is not None:
+    #     shadow_condition = illuminationmask > th_illumination
+    #     masked_band[shadow_condition] = np.nan
+
+    # TODO: Apply snow mask based on NDSI
+    # if snowmask is not None:
+    #     snow_condition = snowmask > th_snow
+    #     masked_band[snow_condition] = np.nan
+    
+    return masked_band
+
+# Apply masks to bands
+red_masked = apply_masks(red)
+nir_masked = apply_masks(nir)
 
 # Simple plot
 import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 8))
-plt.imshow(red, cmap='RdYlGn')
+plt.imshow(red_masked, cmap='RdYlGn')
 plt.colorbar()
 plt.show()
 
 print('test')
-
-##############################
-# APPLY CLOUD, CLOUD SHADOW AND TERRAIN SHADOW MASKS
-
-##############################
-# CALCULATE AND APPLY SNOW MASK
 
 ##############################
 # CALCULATE NDVI
