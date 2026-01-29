@@ -1,4 +1,6 @@
 import rasterio
+from pystac_client import Client
+import requests
 import os
 import numpy as np
 # import configuration as config
@@ -55,10 +57,16 @@ workWithPercentiles = True
 ##############################
 # CONFIGURATION / PARAMETERS
 # Paths
-s3_bucket = 's3://s3-topo-satromo-prod/'
+stac_swisstopo = 'https://sys-data.int.bgdi.ch/' # swissTOPO STAC API base URL
+stac_swisstopo_version = 'api/stac/v0.9/'
+s2_sr_collection_id = 'ch.swisstopo.swisseo_s2-sr_v200' # swissEO S2-SR collection name
+s3_bucket_satromo = 's3-topo-satromo-prod/'
 s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/' # needs file name addition
 
 # Constants
+s2_nodata = 0 # NoData value in swissEO S2-SR products
+s2_scale_factor = 0.0001 # Scale factor for reflectance values in swissEO S2-SR products
+s2_offset = -0.1 # Offset for reflectance values in swissEO S2-SR products
 alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
 no_data = 255 # Value used for pixels with no input data
 missing_data = 110 # Value used for pixels where data is missing (e.g., cloud-covered areas)
@@ -77,55 +85,93 @@ doy_str = f'{doy:03d}' # zero-padded three-digit day of year
 
 ##############################
 # SPACE / ROI
-roi = (2802000, 1125000, 2809000, 1135000) # Example ROI in EPSG:2056 (min_x, min_y, max_x, max_y)
+roi = (2802000, 1125000, 2809000, 1135000) # ROI in EPSG:2056 (min_x, min_y, max_x, max_y)
 
-##############################
-# INPUT DATA: REFLECTANCE
-# Load satellite reflectance data
-# 'https://sys-data.int.bgdi.ch/ch.swisstopo.swisseo_s2-sr_v200/2025-06-01t101041/swisseo_s2-sr_v200_mosaic_2025-06-01t101041_b04_10m.tif'
+                # # Get bounds from GeoPackage for orbit
+                # gdf = gpd.read_file(orbit_clipfile)
+                # bounds_2056 = gdf.total_bounds  # in EPSG:2056
+                # # Transform bounds to EPSG:32632
+                # from shapely.geometry import box
+                # bbox_gdf = gpd.GeoDataFrame(
+                #     geometry=[box(*bounds_2056)],
+                #     crs='EPSG:2056'
+                # )
 
-s3_path_reflectance = 's3://sys-data.int.bgdi.ch/ch.swisstopo.swisseo_s2-sr_v200/'
+############################################################
+# INPUT DATA: REFLECTANCE AND MASKS
+client = Client.open(stac_swisstopo + stac_swisstopo_version) # connect to STAC API
+client.add_conforms_to('COLLECTIONS') # due to the implementation of the swisstopo STAC API, we need to add conformance classes
+client.add_conforms_to('ITEM_SEARCH')
+s2_sr_collection = client.get_collection(s2_sr_collection_id)
+
+# Filter by date and collection
+s2_sr_items = []
+for item in s2_sr_collection.get_items():
+    if current_date_str in item.id:
+        s2_sr_items.append(item.id)
+# print(s2_sr_items)
+
+# TODO: currently only works for first item per date -> handle multiple items (tiles) per date
+# Get file paths for required bands
+item_path = stac_swisstopo + s2_sr_collection_id + '/' + s2_sr_items[0] + '/swisseo_s2-sr_v200_mosaic_' + s2_sr_items[0]
+red_path = item_path + '_b04_10m.tif'
+nir_path = item_path + '_b08_10m.tif'
+green_path = item_path + '_b03_10m.tif'
+swir_path = item_path + '_b11_20m.tif'
+
+
+def load_and_scale_band(filepath, roi, nodata=s2_nodata, scale=s2_scale_factor, offset=s2_offset):
+    """
+    Load a raster band and apply scaling and offset, preserving nodata values.
+    
+    Parameters:
+    -----------
+    filepath : str
+        Path to the raster file
+    roi : tuple
+        Bounding box (minx, miny, maxx, maxy) for windowed reading
+    nodata : int or float, optional
+        NoData value (default: 0)
+    scale : float, optional
+        Scale factor (default: 0.0001)
+    offset : float, optional
+        Offset value (default: -0.1)
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Scaled band with nodata preserved as np.nan
+    """
+    with rasterio.open(filepath) as src:
+        window = from_bounds(*roi, src.transform)
+        data = src.read(1, window=window)
+    
+    scaled = data.astype(float) # Convert to float for scaled values
+    valid_mask = data != nodata # Create mask for valid data (not nodata)
+    scaled[valid_mask] = (data[valid_mask] + offset) * scale # Apply scaling only to valid pixels
+    scaled[~valid_mask] = np.nan # Set nodata pixels to NaN for easier handling
+    
+    return scaled
+
+# Load bands and apply offset and scale factor
+red = load_and_scale_band(red_path, roi)
+nir = load_and_scale_band(nir_path, roi)
+green = load_and_scale_band(green_path, roi)
+swir = load_and_scale_band(swir_path, roi)
+
+
+
 
 
 
 # Simple plot
 import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 8))
-plt.imshow(ndvi, cmap='RdYlGn')
+plt.imshow(red, cmap='RdYlGn')
+plt.colorbar()
 plt.show()
 
 print('test')
-
-
-##############################
-# INPUT DATA: TEMPERATURE
-# Load temperature/thermal data
-
-##############################
-# INPUT DATA: REFERENCE NDVI
-# Load or compute long-term NDVI statistics for climate reference period (1991-2020)
-s3_path_ndvi_ref = s3_bucket + s3_path_key_ndvi_ref + 'NDVI_Stats_DOY' + doy_str + '.tif'
-
-with rasterio.open(s3_path_ndvi_ref) as src:
-    # Define window from ROI
-    window = from_bounds(*roi, src.transform)
-
-    # Read relevant bands based on the chosen method
-    if workWithPercentiles is True:
-        ndvi_ref_min = src.read(6, window=window)  # 5th percentile
-        ndvi_ref_max = src.read(7, window=window)  # 95th percentile
-        # Define confidence interval method
-        CI_method = '5th_and_95th_percentile'
-    else:
-        ndvi_ref_min = src.read(1, window=window)  # minimum
-        ndvi_ref_max = src.read(2, window=window)  # maximum
-        CI_method = 'min_and_max'
-
-
-
-##############################
-# INPUT DATA: REFERENCE LST
-# Load or compute long-term LST statistics for climate reference period (1991-2020)
 
 ##############################
 # APPLY CLOUD, CLOUD SHADOW AND TERRAIN SHADOW MASKS
@@ -138,18 +184,46 @@ with rasterio.open(s3_path_ndvi_ref) as src:
 # From reflectance data
 
 ##############################
-# CALCULATE LST
-# From temperature data
+# INPUT DATA: REFERENCE NDVI
+# Load or compute long-term NDVI statistics for climate reference period (1991-2020)
+s3_path_ndvi_ref = 's3://' + s3_bucket_satromo + s3_path_key_ndvi_ref + 'NDVI_Stats_DOY' + doy_str + '.tif'
+
+with rasterio.open(s3_path_ndvi_ref) as src_ref:
+    # Define window from ROI
+    window = from_bounds(*roi, src_ref.transform)
+
+    # Read relevant bands based on the chosen method
+    if workWithPercentiles is True:
+        ndvi_ref_min = src_ref.read(6, window=window)  # 5th percentile
+        ndvi_ref_max = src_ref.read(7, window=window)  # 95th percentile
+        # Define confidence interval method
+        CI_method = '5th_and_95th_percentile'
+    else:
+        ndvi_ref_min = src_ref.read(1, window=window)  # minimum
+        ndvi_ref_max = src_ref.read(2, window=window)  # maximum
+        CI_method = 'min_and_max'
 
 ##############################
 # CALCULATE VCI
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
 
+############################################################
+# INPUT DATA: TEMPERATURE
+# Load temperature/thermal data
+
+##############################
+# CALCULATE LST
+# From temperature data
+
+##############################
+# INPUT DATA: REFERENCE LST
+# Load or compute long-term LST statistics for climate reference period (1991-2020)
+
 ##############################
 # CALCULATE TCI
 # TCI = 100 * (LST_max - LST) / (LST_max - LST_min)
 
-##############################
+############################################################
 # CALCULATE VHI
 # VHI = a*VCI + (1-a)*TCI
 
