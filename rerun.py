@@ -81,38 +81,54 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                         config_file,
                         check_date_str
                     ]
-                    # Start the subprocess
-                    with subprocess.Popen(
+
+                    print(f"Starting subprocess with command={command}")
+
+                    # FIXED: Use unbuffered output and properly handle streams
+                    process = subprocess.Popen(
                         command,
                         stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,  # Merge stderr into stdout
                         text=True,
-                        env=env
-                    ) as process:
-                        # Read and print stdout line by line
-                        for stdout_line in iter(process.stdout.readline, ''):
-                            print(stdout_line, end='', flush=True)
-                        # Wait for the process to complete
-                        process.wait()
+                        bufsize=1,  # Line buffered
+                        env=env,
+                        universal_newlines=True
+                    )
+
+                    # Read output in real-time
+                    for line in process.stdout:
+                        print(line, end='', flush=True)
+
+                    # Wait for process to complete and get return code
+                    return_code = process.wait()
+
+                    if return_code != 0:
+                        print(f"Warning: Process exited with code {return_code}")
 
                 except subprocess.CalledProcessError as e:
                     print(f"Error processing date {check_date_str}: {e}")
                     print(f"Error output: {e.stderr}")
                     shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
+                except Exception as e:
+                    print(f"Unexpected error running subprocess for {check_date_str}: {e}")
+                    shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
 
             #remove backup
-            os.remove(config.EMPTY_ASSET_LIST + '.bak')
+            if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
+                os.remove(config.EMPTY_ASSET_LIST + '.bak')
 
             return True
 
         print(f"No dates to reprocess for {collection_basename}")
         #remove backup
-        os.remove(config.EMPTY_ASSET_LIST + '.bak')
+        if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
+            os.remove(config.EMPTY_ASSET_LIST + '.bak')
         return False
 
     except Exception as e:
         print(f"Unexpected error in process_empty_asset_list: {e}")
-        shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
+        if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
+            shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
         return False
 
 def main():
@@ -130,7 +146,8 @@ def main():
 
     # Rerun CloudScore+
     days_back = 30
-    result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
+    #result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
+    result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
 
 
 if __name__ == "__main__":
