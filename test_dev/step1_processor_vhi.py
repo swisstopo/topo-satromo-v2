@@ -166,9 +166,21 @@ with rasterio.open(cloud_mask_path) as src_cloud:
 
 # TODO: Load terrain shadow masks
 
+# Load SCL band
+scl_path = item_path + '_scl_20m.tif'
+with rasterio.open(scl_path) as src_scl:
+    window = from_bounds(*roi, src_scl.transform)
+    scl_band = src_scl.read(1, window=window)
+# 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
+# 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
+# 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
+# 11: Snow or ice
 
 ##############################
 # CALCULATE SNOW MASK
+# From NDSI
+
+# From SCL band
 
 ##############################
 # APPLY CLOUD, CLOUD SHADOW, TERRAIN SHADOW AND SNOW MASKS
@@ -215,6 +227,8 @@ def apply_masks(band, cloudmask=cloud_mask,
     # if snowmask is not None:
     #     snow_condition = snowmask > th_snow
     #     masked_band[snow_condition] = np.nan
+
+    # TODO: Apply snow mask based on SCL
     
     return masked_band
 
@@ -222,18 +236,18 @@ def apply_masks(band, cloudmask=cloud_mask,
 red_masked = apply_masks(red)
 nir_masked = apply_masks(nir)
 
+##############################
+# CALCULATE NDVI
+ndvi = (nir_masked - red_masked) / (nir_masked + red_masked)
+
 # Simple plot
 import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 8))
-plt.imshow(red_masked, cmap='RdYlGn')
+plt.imshow(ndvi, cmap='RdYlGn')
 plt.colorbar()
 plt.show()
 
 print('test')
-
-##############################
-# CALCULATE NDVI
-# From reflectance data
 
 ##############################
 # INPUT DATA: REFERENCE NDVI
@@ -257,7 +271,12 @@ with rasterio.open(s3_path_ndvi_ref) as src_ref:
 
 ##############################
 # CALCULATE VCI
+
+# Resample reference NDVI to match current NDVI resolution
+# TODO
+
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
+vci = 100 * (ndvi - ndvi_ref_min) / (ndvi_ref_max - ndvi_ref_min)
 
 ############################################################
 # INPUT DATA: TEMPERATURE
