@@ -7,6 +7,9 @@ from omnicloudmask import predict_from_array
 import re
 from datetime import datetime
 import torch
+import subprocess
+import platform
+from main_functions import main_utils
 
 # Save original sys.argv before importing configuration
 original_argv = sys.argv.copy()
@@ -142,23 +145,105 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData
     # Stack as (3, height, width) - Red, Green, NIR
     input_array = np.stack([red, green, nir])
 
+
+    def check_gpu_availability():
+        """
+        Check if GPU is available and properly initialized.
+        Returns: tuple (bool, str) - (is_available, status_message)
+        """
+        try:
+            # First, try to check CUDA availability
+            # This might trigger the warning/error you're seeing
+            if torch.cuda.is_available():
+                # Additional verification: try to get device count
+                device_count = torch.cuda.device_count()
+                if device_count > 0:
+                    # Try to actually access the device
+                    try:
+                        device_name = torch.cuda.get_device_name(0)
+                        return True, f"GPU detected: {device_name}"
+                    except Exception as e:
+                        return False, f"GPU initialization failed: {str(e)}"
+                else:
+                    return False, "GPU initialization failed: No CUDA devices found"
+            else:
+                # CUDA not available, do system-level check
+                return verify_gpu_with_system_tools()
+        except Exception as e:
+            # Catch the CUDA initialization error
+            error_msg = str(e)
+            if "forward compatibility was attempted on non supported HW" in error_msg or \
+            "CUDA" in error_msg or "cuda" in error_msg:
+                return False, "GPU initialization failed: CUDA compatibility error"
+            return False, f"GPU initialization failed: {error_msg}"
+
+    def verify_gpu_with_system_tools():
+        """
+        Verify GPU availability using system tools (nvidia-smi on Linux, nvidia-smi.exe on Windows)
+        Returns: tuple (bool, str) - (is_available, status_message)
+        """
+        system = platform.system()
+
+        try:
+            if system == "Linux":
+                # Check with nvidia-smi on Linux
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    gpu_name = result.stdout.strip().split('\n')[0]
+                    return False, f"GPU hardware detected ({gpu_name}) but PyTorch CUDA not available"
+                else:
+                    return False, "No GPU detected"
+
+            elif system == "Windows":
+                # Check with nvidia-smi on Windows (usually in System32 or NVIDIA folder)
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    shell=True  # Needed on Windows to find nvidia-smi in PATH
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    gpu_name = result.stdout.strip().split('\n')[0]
+                    return False, f"GPU hardware detected ({gpu_name}) but PyTorch CUDA not available"
+                else:
+                    return False, "No GPU detected"
+            else:
+                return False, f"Unsupported operating system: {system}"
+
+        except FileNotFoundError:
+            return False, "No GPU detected (nvidia-smi not found)"
+        except subprocess.TimeoutExpired:
+            return False, "GPU check timed out"
+        except Exception as e:
+            return False, f"GPU check failed: {str(e)}"
+
+    # Your modified code
+    noData_value = 0  # Your actual noData value
+
+    gpu_available, gpu_status = check_gpu_availability()
+
     # Check for GPU availability
-    if torch.cuda.is_available():
-        print("GPU detected")
-        # Set default kwargs with memory-efficient settings for large mosaics
+    if gpu_available:
+        print(gpu_status)
         default_kwargs = {
-            'batch_size': 1,  # Reduced to 1 for large images
-            'inference_dtype': 'bf16',  # Use bfloat16 for memory efficiency
-            'mosaic_device': 'cpu',  # Offload patch mosaicking to CPU to save GPU memory
-            'patch_size': 1000,  # Default patch size
-            'patch_overlap': 300,  # Default overlap
+            'batch_size': 1,
+            'inference_dtype': 'bf16',
+            'mosaic_device': 'cpu',
+            'patch_size': 1000,
+            'patch_overlap': 300,
             'no_data_value': noData_value,
             'apply_no_data_mask': True
         }
     else:
         #CPU settings only for testing see https://github.com/swisstopo/topo-satromo-v2/issues/22
         print(f"\n{'='*60}")
-        print("ONLY CPU detected")
+        print(gpu_status)
         print("NOT FOR OPERATIONAL USE, JUST FOR TESTING PURPOSES!")
         print(f"\n{'='*60}")
         default_kwargs = {
@@ -181,6 +266,11 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData
 
     # Squeeze to remove extra dimensions (from (1, 1, H, W) to (H, W))
     pred_mask = pred_mask.squeeze()
+
+    # Write OmicloudMask method info to Metadata
+    dt = datetime.strptime(time_str, '%Y%m%dT%H%M%S')
+    formatted_time = dt.strftime('%Y-%m-%dt%H%M%S')
+    main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{formatted_time}_metadata.json","PROPERTIES","OMNICLOUD_METHOD",gpu_status)
 
     # Create output directory structure
     output_dir = Path(output_dir)

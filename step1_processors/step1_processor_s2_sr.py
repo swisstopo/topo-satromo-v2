@@ -842,13 +842,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         print(f"Processing orbit {orbit_num} of {timestamp} ...")
 
 
-
         ##############################
-        # TODO Update METADATA json with
-        # - coregistration status
-
-        ##############################
-        # Calculate Cloud Percentage: TODO maybe do check afte arosics to deletescenes with too much cloud (eg gt than 98%)
+        # Calculate Cloud Percentage: 
 
         # Wrap the string in Path() first
         buffer_path = Path(config.BUFFER)
