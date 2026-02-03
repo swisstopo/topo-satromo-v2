@@ -5,6 +5,8 @@ import numpy as np
 # import configuration as config
 from datetime import datetime
 from rasterio.windows import from_bounds
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
 ##############################
 # INTRODUCTION
@@ -52,6 +54,9 @@ from rasterio.windows import from_bounds
 workWithPercentiles = True
 # options: True, False - defines if the p05 and p95 percentiles of the reference data sets are used,
 # otherwise the min and max will be used (False)
+maskSnowWithNDSI = False
+# options: True, False - defines if snow masking is applied based on NDSI values
+# otherwise the SCL band will be used (False)
 
 ##############################
 # CONFIGURATION / PARAMETERS
@@ -152,40 +157,113 @@ def load_and_scale_band(filepath, roi, nodata=s2_nodata, scale=s2_scale_factor, 
     
     return scaled
 
-# Load bands and apply offset and scale factor
+# Load 10 m bands and apply offset and scale factor to reflectance bands
 red = load_and_scale_band(red_path, roi)
 nir = load_and_scale_band(nir_path, roi)
 green = load_and_scale_band(green_path, roi)
-swir = load_and_scale_band(swir_path, roi)
 
-# Load cloud mask
+# Load cloud mask (10m)
 cloud_mask_path = item_path + '_cloudmask_10m.tif'
 with rasterio.open(cloud_mask_path) as src_cloud:
     window = from_bounds(*roi, src_cloud.transform)
     cloud_mask = src_cloud.read(1, window=window)
 
-# TODO: Load terrain shadow masks
+# TODO: Load terrain shadow mask (10m)
+
+# Function to load a 20m band, resample to 10m grid and apply offset and scale factors
+def load_and_scale_band_resample_20m_to_10m(filepath, roi, target_transform, target_shape,
+                                   nodata=s2_nodata, scale=s2_scale_factor, offset=s2_offset):
+    """
+    Load a raster band and apply scaling and offset, preserving nodata values.
+    Resample 20m band to 10m grid.
+    
+    Parameters:
+    -----------
+    filepath : str
+        Path to the raster file
+    roi : tuple
+        Bounding box (minx, miny, maxx, maxy) for windowed reading
+    target_transform : affine.Affine
+        Target transform for resampling to 10m grid
+    target_shape : tuple
+        Target shape (height, width) for resampling to 10m grid
+    nodata : int or float, optional
+        NoData value (default: 0)
+    scale : float, optional
+        Scale factor (default: 0.0001)
+    offset : float, optional
+        Offset value (default: -0.1)
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Scaled band with nodata preserved as np.nan
+    """
+    with rasterio.open(filepath) as src:
+        window = from_bounds(*roi, src.transform)
+        data_20m = src.read(1, window=window)
+        transform_20m = src.window_transform(window)    
+    
+    # Resample to 10m grid
+    data_10m = np.empty(target_shape, dtype=np.float32)
+    reproject(
+        source=data_20m.astype(np.float32),
+        destination=data_10m,
+        src_transform=transform_20m,
+        src_crs=src.crs,
+        dst_transform=target_transform,
+        dst_crs=src.crs,
+        resampling=Resampling.nearest,
+        src_nodata=nodata,
+        dst_nodata=np.nan
+    )
+
+    # Apply scaling and offset
+    scaled = data_10m.copy() # Convert to float for scaled values
+    valid_mask = data_10m != nodata # Create mask for valid data (not
+    scaled[valid_mask] = (data_10m[valid_mask] + offset) * scale # Apply scaling only to valid pixels
+    scaled[~valid_mask] = np.nan # Set nodata pixels to NaN for easier handling
+
+    return scaled
+
+# Establish 10m grid from any 10m band
+with rasterio.open(red_path) as src:
+    window_10m = from_bounds(*roi, src.transform)
+    target_transform = src.window_transform(window_10m)
+    target_shape = (int(window_10m.height), int(window_10m.width))
+
+# Load 20 m bands, resample to 10m grid and apply offset and scale factor to reflectance bands
+swir = load_and_scale_band_resample_20m_to_10m(swir_path, roi, target_transform, target_shape)
 
 # Load SCL band
 scl_path = item_path + '_scl_20m.tif'
-with rasterio.open(scl_path) as src_scl:
-    window = from_bounds(*roi, src_scl.transform)
-    scl_band = src_scl.read(1, window=window)
+# SCL classification values:
 # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
 # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
 # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
 # 11: Snow or ice
 
+# Resample 20m SCL band to 10m grid
+scl = load_and_scale_band_resample_20m_to_10m(scl_path, roi, target_transform, target_shape,
+                                      nodata=0, scale=1, offset=0) # no scaling for SCL
+
 ##############################
 # CALCULATE SNOW MASK
-# From NDSI
+# NDSI
+ndsi = (green - swir) / (green + swir)
 
-# From SCL band
+if maskSnowWithNDSI is True:
+    # Create snow mask based on NDSI
+    snow_mask = np.zeros_like(ndsi, dtype=np.uint8)
+    snow_mask[ndsi > threshold_ndsi] = 1  # 1 indicates snow
+else:
+    # Create snow mask based on SCL
+    snow_mask = np.zeros_like(scl, dtype=np.uint8)
+    snow_mask[scl == 11] = 1  # 1 indicates snow
 
 ##############################
 # APPLY CLOUD, CLOUD SHADOW, TERRAIN SHADOW AND SNOW MASKS
-def apply_masks(band, cloudmask=cloud_mask,
-                # snowmask=snow_mask, th_snow=threshold_ndsi, # TODO
+def apply_masks(band, cloudmask=cloud_mask, snowmask=snow_mask,
                 # illuminationmask=illumination_mask,  th_illumination=threshold_illumination, # TODO
                 ):
     """
@@ -198,9 +276,7 @@ def apply_masks(band, cloudmask=cloud_mask,
     cloudmask : numpy.ndarray
         Cloud mask (0=Clear, 1=Thick Cloud, 2=Thin Cloud, 3=Cloud Shadow)
     snowmask : numpy.ndarray
-        NDSI (normalized difference snow index) generally used for snow detection
-    th_snow : float
-        Threshold for snow detection
+        Snow mask (0=Clear, 1=Snow)
     illuminationmask : numpy.ndarray
         Illumination mask
     th_illumination : float
@@ -218,17 +294,15 @@ def apply_masks(band, cloudmask=cloud_mask,
         cloud_mask_condition = cloudmask != 0 
         masked_band[cloud_mask_condition] = np.nan
 
+    # Apply snow mask
+    if snowmask is not None:
+        snow_condition = snowmask != 0 
+        masked_band[snow_condition] = np.nan
+        
     # TODO: Apply terrain shadow mask
     # if illuminationmask is not None:
     #     shadow_condition = illuminationmask > th_illumination
     #     masked_band[shadow_condition] = np.nan
-
-    # TODO: Apply snow mask based on NDSI
-    # if snowmask is not None:
-    #     snow_condition = snowmask > th_snow
-    #     masked_band[snow_condition] = np.nan
-
-    # TODO: Apply snow mask based on SCL
     
     return masked_band
 
@@ -239,15 +313,6 @@ nir_masked = apply_masks(nir)
 ##############################
 # CALCULATE NDVI
 ndvi = (nir_masked - red_masked) / (nir_masked + red_masked)
-
-# Simple plot
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 8))
-plt.imshow(ndvi, cmap='RdYlGn')
-plt.colorbar()
-plt.show()
-
-print('test')
 
 ##############################
 # INPUT DATA: REFERENCE NDVI
@@ -277,6 +342,17 @@ with rasterio.open(s3_path_ndvi_ref) as src_ref:
 
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
 vci = 100 * (ndvi - ndvi_ref_min) / (ndvi_ref_max - ndvi_ref_min)
+
+
+
+# Simple plot
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10, 8))
+plt.imshow(ndvi, cmap='RdYlGn')
+plt.colorbar()
+plt.show()
+
+print('test')
 
 ############################################################
 # INPUT DATA: TEMPERATURE
