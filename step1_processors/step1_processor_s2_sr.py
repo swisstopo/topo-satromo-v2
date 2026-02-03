@@ -4,7 +4,7 @@ import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb,main_cloudpercentage
+from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb,main_cloudpercentage,main_omnicloudmask
 from collections import defaultdict
 import requests
 import os
@@ -725,17 +725,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         )
 
         # # Creating cloud mask with omnicloudmask
-        # Build the argument list
-        cmd = [
-            config.AROSICS_CONFIG['omnicloudmask_venv_path'],
-            config.AROSICS_CONFIG['omnicloudmask_script_path'],
-            "--orbit", str(orbit_nr),
-            "--date", acquisition_date,
-            "--output-dir",config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
-        ]
-
-        # Run the command
-        result = subprocess.run(cmd, check=True)
+        result=main_omnicloudmask.generate_cloud_mask_for_scene(orbit_nr=str(orbit_nr),acquisition_date=acquisition_date,output_dir=config.PRODUCT_S2_LEVEL_2A["copernicus_collection"])
 
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
@@ -751,7 +741,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 CPUs=os.cpu_count() #use all cpus
             )
         # Else, log the failure and continue to the next day
-        else:        
+        else:
             write_asset_as_empty(collection, day_to_process, f'cloudy')
             pattern = f"*{day_to_process}*.*"
             # Clean up Files
@@ -856,36 +846,36 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         ##############################
         # TODO Update METADATA json with
         # - coregistration status
-        
+
         ##############################
         # Calculate Cloud Percentage: TODO maybe do check afte arosics to deletescenes with too much cloud (eg gt than 98%)
-        
+
         # Wrap the string in Path() first
         buffer_path = Path(config.BUFFER)
         # Construct new filename with orbit number
         orbit_clipfile = buffer_path.with_name(f"{buffer_path.stem}_{orbit_num}{buffer_path.suffix}")
         cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
         print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
-    
+
         # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we write to empty asset and stop processing .
         if (orbit_num in [8,22] and cloudcover >85.0) or (orbit_num in [108,65] and cloudcover >95.0):
             print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping further processing.")
             write_asset_as_empty(collection, day_to_process, 'cloudy')
             return
-      
-        #METADATA add cloudcover 
+
+        #METADATA add cloudcover
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
 
         #METADATA add GCP
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","GCP_COUNT",f"{len(coreg_info['GCPList'])}")
-        
+
         #METADATA add COREG RMSE
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","COREG_MEAN_SHIFT_PX_X",f"{coreg_info['mean_shifts_px']['x']:.2f}")
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","COREG_MEAN_SHIFT_PX_Y",f"{coreg_info['mean_shifts_px']['y']:.2f}")
 
         #METADATA add  ORBIT NR
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","ORBIT_NR",f"{orbit_num}")
-        
+
         #METADATA add PROCESSING DATE
         processing_date = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","PROCESSING_DATE_UTC",processing_date)
@@ -909,7 +899,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","OMNICLOUDMASK_VERSION",omnicloudmask_version)
 
         #METADATA add SWISSTOPO_PROCESSOR VERSION
-        processor_version = main_utils.get_github_info() 
+        processor_version = main_utils.get_github_info()
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_PROCESSOR_VERSION",processor_version['GithubLink'])
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_RELEASE_VERSION",processor_version['ReleaseVersion'])
 
