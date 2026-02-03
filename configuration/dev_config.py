@@ -125,7 +125,7 @@ PRODUCT_VHI = {
     # TODO: check if needed in context with step0
     "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
     "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc",
-    "temporal_coverage": 7,  # Days 
+    "temporal_coverage": 7,  # Days
     "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_vhi_v200",
     "asset_size": 2, # TODO: check if needed in context with V2
@@ -214,7 +214,7 @@ AROSICS_CONFIG = {
     'cloudprob_tile_pattern': 'S2*_MSIL1C',
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
-    'omnicloudmask_venv_path': os.path.join(".venv","bin","python3"), #LINUX
+    #'omnicloudmask_venv_path': os.path.join(".venv","bin","python3"), #LINUX
     #'omnicloudmask_venv_path': os.path.join(".venv","Scripts","python.exe"), #WINDOWS
-    'omnicloudmask_script_path': os.path.join("main_functions","main_omnicloudmask.py"),
+    #'omnicloudmask_script_path': os.path.join("main_functions","main_omnicloudmask.py"),
 }

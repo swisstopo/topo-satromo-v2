@@ -3,7 +3,7 @@ import datetime
 
 import configuration as config
 from step0_functions import get_step0_dict, step0_main
-from step1_processors import step1_processor_s2_sr, step1_processor_vhi #, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi_hist
+from step1_processors import step1_processor_s2_sr#, step1_processor_vhi #, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi_hist
 from main_functions import main_utils
 
 
@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2025-03-28"
+        current_date_str = "2025-05-02"
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print("*****************************")
