@@ -9,6 +9,7 @@ import shutil
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
 
+
 def process_empty_asset_list(collection_basename, days_back, config_file):
     """
     Process and reprocess empty assets for a specific collection.
@@ -21,18 +22,36 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
     Returns:
         bool: True if assets were reprocessed, False otherwise
     """
-    
+
     # Setup environment - Use current environment as base
     env = os.environ.copy()
-    
+
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Ensure PYTHONPATH includes the script directory
+
+    # Platform-agnostic virtual environment detection
+    # Linux uses 'lib/site-packages', Windows uses 'Lib/site-packages'
+    venv_site_packages = os.path.join(sys.prefix, 'lib', 'site-packages')  # Linux
+    venv_site_packages_win = os.path.join(sys.prefix, 'Lib', 'site-packages')  # Windows
+
+    # Determine which path exists on current platform
+    site_packages = None
+    if os.path.exists(venv_site_packages):
+        site_packages = venv_site_packages
+    elif os.path.exists(venv_site_packages_win):
+        site_packages = venv_site_packages_win
+
+    # Build PYTHONPATH with both script directory and virtual environment
+    # os.pathsep is ':' on Linux/Mac, ';' on Windows
+    paths_to_add = [script_dir]
+    if site_packages:
+        paths_to_add.append(site_packages)
+
+    # Ensure PYTHONPATH includes necessary paths
     if 'PYTHONPATH' in env:
-        env['PYTHONPATH'] = f"{script_dir}{os.pathsep}{env['PYTHONPATH']}"
+        env['PYTHONPATH'] = os.pathsep.join(paths_to_add) + os.pathsep + env['PYTHONPATH']
     else:
-        env['PYTHONPATH'] = script_dir
+        env['PYTHONPATH'] = os.pathsep.join(paths_to_add)
 
     try:
         # Read the empty asset list with error handling
@@ -41,11 +60,11 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
             backup_file = config.EMPTY_ASSET_LIST + '.bak'
             shutil.copy2(config.EMPTY_ASSET_LIST, backup_file)
             print(f"Created backup: {backup_file}")
-            
+
             # Read the CSV
             df = pd.read_csv(config.EMPTY_ASSET_LIST)
             print(f"Loaded {len(df)} rows from {config.EMPTY_ASSET_LIST}")
-            
+
         except FileNotFoundError:
             print(f"ERROR: Empty asset list file not found: {config.EMPTY_ASSET_LIST}")
             return False
@@ -56,23 +75,23 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         # Calculate date range
         end_date = datetime.today()
         start_date = end_date - timedelta(days=days_back)
-        
+
         print(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
-        # Vectorized filtering
+        # Vectorized filtering for better performance
         mask = (
             (df['collection'] == collection_basename) &
             (df['date'] >= start_date.strftime('%Y-%m-%d')) &
             (df['date'] <= end_date.strftime('%Y-%m-%d'))
         )
 
-        # Select and remove rows
+        # Select and remove rows in a single operation
         df_selection = df[mask]
         df_remaining = df[~mask]
 
         # Get reprocess list
         reprocess_list = df_selection['date'].tolist()
-        
+
         print(f"Found {len(reprocess_list)} dates to reprocess for {collection_basename}")
 
         if not reprocess_list:
@@ -82,30 +101,30 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 os.remove(backup_file)
             return False
 
-        # Save updated DataFrame (with selected rows removed)
+        # Save updated DataFrame (with selected rows removed) back to CSV
         df_remaining.to_csv(config.EMPTY_ASSET_LIST, index=False)
         print(f"Updated {config.EMPTY_ASSET_LIST} - removed {len(reprocess_list)} entries")
 
-        # Process each date
+        # Batch processing of dates
         success_count = 0
         failure_count = 0
-        
+
         for check_date_str in reprocess_list:
             print(f"\n{'='*60}")
             print(f"Processing date: {check_date_str} ({reprocess_list.index(check_date_str) + 1}/{len(reprocess_list)})")
             print(f"{'='*60}")
-            
+
             try:
                 # Build command with absolute paths
                 python_path = sys.executable
                 processor_script = os.path.join(script_dir, 'satromo_processor.py')
-                
+
                 # Ensure processor script exists
                 if not os.path.exists(processor_script):
                     print(f"ERROR: Processor script not found: {processor_script}")
                     failure_count += 1
                     continue
-                
+
                 command = [
                     python_path,
                     '-u',  # CRITICAL: Unbuffered output for real-time display
@@ -120,6 +139,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 print("")
 
                 # Run subprocess with real-time output
+                # FIXED: Use unbuffered output and properly handle streams
                 process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
@@ -139,7 +159,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                         break
                     if line:
                         print(line, end='', flush=True)
-                
+
                 # Get return code
                 return_code = process.poll()
 
@@ -157,7 +177,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 if os.path.exists(backup_file):
                     shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
                     print(f"Restored backup to {config.EMPTY_ASSET_LIST}")
-                    
+
             except Exception as e:
                 print(f"✗ Unexpected error processing {check_date_str}: {e}")
                 import traceback
@@ -191,7 +211,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         print(f"✗ FATAL ERROR in process_empty_asset_list: {e}")
         import traceback
         traceback.print_exc()
-        
+
         # Restore backup on fatal error
         backup_file = config.EMPTY_ASSET_LIST + '.bak'
         if os.path.exists(backup_file):
@@ -202,14 +222,14 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
 
 def main():
     """Main entry point for rerun script"""
-    
+
     print("="*60)
     print("RERUN.PY - Empty Asset Reprocessing")
     print("="*60)
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Python: {sys.executable}")
     print(f"Working directory: {os.getcwd()}")
-    
+
     # Determine configuration file
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
@@ -217,24 +237,24 @@ def main():
     else:
         config_file = 'dev_config.py'
         print(f"Using default configuration: {config_file}")
-    
+
     print("="*60)
     print()
 
     # Configuration
     days_back = 30
-    
+
     # Uncomment the collection you want to reprocess
     # collection = config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1]
     collection = config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1]
-    
+
     print(f"Collection: {collection}")
     print(f"Days back: {days_back}")
     print()
-    
+
     # Run the reprocessing
     result = process_empty_asset_list(collection, days_back, config_file)
-    
+
     print()
     print("="*60)
     if result:
@@ -243,7 +263,7 @@ def main():
         print("✗ RERUN COMPLETED WITH NO CHANGES")
     print(f"Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
-    
+
     # Exit with appropriate code
     sys.exit(0 if result else 1)
 
