@@ -2,14 +2,12 @@ import os
 import sys
 import pandas as pd
 import subprocess
-from datetime import datetime
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import configuration as config
 from datetime import datetime, timedelta
 import shutil
 
-#General settings
+# Add parent directory to path for configuration import
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import configuration as config
 
 def process_empty_asset_list(collection_basename, days_back, config_file):
     """
@@ -23,131 +21,231 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
     Returns:
         bool: True if assets were reprocessed, False otherwise
     """
+    
+    # Setup environment - Use current environment as base
     env = os.environ.copy()
-
-    # Add virtual environment site-packages to PYTHONPATH
-    venv_site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
+    
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Ensure PYTHONPATH includes the script directory
     if 'PYTHONPATH' in env:
-        env['PYTHONPATH'] = f"{venv_site_packages};{env['PYTHONPATH']}"
+        env['PYTHONPATH'] = f"{script_dir}{os.pathsep}{env['PYTHONPATH']}"
     else:
-        env['PYTHONPATH'] = venv_site_packages
-
+        env['PYTHONPATH'] = script_dir
 
     try:
         # Read the empty asset list with error handling
         try:
-            # make a copy of the file defined config.EMPTY_ASSET_LIST
-            shutil.copy2(config.EMPTY_ASSET_LIST,config.EMPTY_ASSET_LIST + '.bak')
-            # read
+            # Make a backup copy
+            backup_file = config.EMPTY_ASSET_LIST + '.bak'
+            shutil.copy2(config.EMPTY_ASSET_LIST, backup_file)
+            print(f"Created backup: {backup_file}")
+            
+            # Read the CSV
             df = pd.read_csv(config.EMPTY_ASSET_LIST)
+            print(f"Loaded {len(df)} rows from {config.EMPTY_ASSET_LIST}")
+            
         except FileNotFoundError:
-            print(f"Empty asset list file not found: {config.EMPTY_ASSET_LIST}")
+            print(f"ERROR: Empty asset list file not found: {config.EMPTY_ASSET_LIST}")
             return False
         except pd.errors.EmptyDataError:
-            print("Empty asset list file is empty.")
+            print("ERROR: Empty asset list file is empty.")
             return False
 
-        # Calculate date range more efficiently
+        # Calculate date range
         end_date = datetime.today()
         start_date = end_date - timedelta(days=days_back)
+        
+        print(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
-        # Vectorized filtering for better performance
+        # Vectorized filtering
         mask = (
             (df['collection'] == collection_basename) &
             (df['date'] >= start_date.strftime('%Y-%m-%d')) &
             (df['date'] <= end_date.strftime('%Y-%m-%d'))
         )
 
-        # Select and remove rows in a single operation
+        # Select and remove rows
         df_selection = df[mask]
-        df = df[~mask]
+        df_remaining = df[~mask]
 
         # Get reprocess list
         reprocess_list = df_selection['date'].tolist()
+        
+        print(f"Found {len(reprocess_list)} dates to reprocess for {collection_basename}")
 
-        # Save updated DataFrame back to CSV
-        df.to_csv(config.EMPTY_ASSET_LIST, index=False)
+        if not reprocess_list:
+            print(f"No dates to reprocess for {collection_basename}")
+            # Remove backup
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+            return False
 
-        # Batch processing of dates
-        if reprocess_list:
-            print(f"Reprocessing {len(reprocess_list)} dates for {collection_basename}")
+        # Save updated DataFrame (with selected rows removed)
+        df_remaining.to_csv(config.EMPTY_ASSET_LIST, index=False)
+        print(f"Updated {config.EMPTY_ASSET_LIST} - removed {len(reprocess_list)} entries")
 
-            # Use a list comprehension for subprocess calls
-            for check_date_str in reprocess_list:
-                try:
-                    command = [
-                        sys.executable,  # Use the current Python interpreter
-                        'satromo_processor.py',
-                        config_file,
-                        check_date_str
-                    ]
+        # Process each date
+        success_count = 0
+        failure_count = 0
+        
+        for check_date_str in reprocess_list:
+            print(f"\n{'='*60}")
+            print(f"Processing date: {check_date_str} ({reprocess_list.index(check_date_str) + 1}/{len(reprocess_list)})")
+            print(f"{'='*60}")
+            
+            try:
+                # Build command with absolute paths
+                python_path = sys.executable
+                processor_script = os.path.join(script_dir, 'satromo_processor.py')
+                
+                # Ensure processor script exists
+                if not os.path.exists(processor_script):
+                    print(f"ERROR: Processor script not found: {processor_script}")
+                    failure_count += 1
+                    continue
+                
+                command = [
+                    python_path,
+                    '-u',  # CRITICAL: Unbuffered output for real-time display
+                    processor_script,
+                    config_file,
+                    check_date_str
+                ]
 
-                    print(f"Starting subprocess with command={command}")
+                print(f"Command: {' '.join(command)}")
+                print(f"Working directory: {script_dir}")
+                print(f"Python executable: {python_path}")
+                print("")
 
-                    # FIXED: Use unbuffered output and properly handle streams
-                    process = subprocess.Popen(
-                        command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,  # Merge stderr into stdout
-                        text=True,
-                        bufsize=1,  # Line buffered
-                        env=env,
-                        universal_newlines=True
-                    )
+                # Run subprocess with real-time output
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # Merge stderr to stdout for real-time output
+                    text=True,
+                    bufsize=0,  # Unbuffered
+                    env=env,
+                    cwd=script_dir,  # Set working directory explicitly
+                    universal_newlines=True
+                )
 
-                    # Read output in real-time
-                    for line in process.stdout:
+                # Read output in real-time line by line
+                while True:
+                    line = process.stdout.readline()
+                    if not line and process.poll() is not None:
+                        # Process finished and no more output
+                        break
+                    if line:
                         print(line, end='', flush=True)
+                
+                # Get return code
+                return_code = process.poll()
 
-                    # Wait for process to complete and get return code
-                    return_code = process.wait()
+                if return_code == 0:
+                    print(f"✓ Successfully processed {check_date_str}")
+                    success_count += 1
+                else:
+                    print(f"✗ Process failed with exit code {return_code} for {check_date_str}")
+                    failure_count += 1
 
-                    if return_code != 0:
-                        print(f"Warning: Process exited with code {return_code}")
+            except subprocess.SubprocessError as e:
+                print(f"✗ Subprocess error processing date {check_date_str}: {e}")
+                failure_count += 1
+                # Restore backup on error
+                if os.path.exists(backup_file):
+                    shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
+                    print(f"Restored backup to {config.EMPTY_ASSET_LIST}")
+                    
+            except Exception as e:
+                print(f"✗ Unexpected error processing {check_date_str}: {e}")
+                import traceback
+                traceback.print_exc()
+                failure_count += 1
+                # Restore backup on error
+                if os.path.exists(backup_file):
+                    shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
+                    print(f"Restored backup to {config.EMPTY_ASSET_LIST}")
 
-                except subprocess.CalledProcessError as e:
-                    print(f"Error processing date {check_date_str}: {e}")
-                    print(f"Error output: {e.stderr}")
-                    shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
-                except Exception as e:
-                    print(f"Unexpected error running subprocess for {check_date_str}: {e}")
-                    shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
+        # Summary
+        print(f"\n{'='*60}")
+        print(f"PROCESSING SUMMARY")
+        print(f"{'='*60}")
+        print(f"Total dates processed: {len(reprocess_list)}")
+        print(f"Successful: {success_count}")
+        print(f"Failed: {failure_count}")
+        print(f"{'='*60}\n")
 
-            #remove backup
-            if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
-                os.remove(config.EMPTY_ASSET_LIST + '.bak')
+        # Remove backup if all successful
+        if os.path.exists(backup_file):
+            if failure_count == 0:
+                os.remove(backup_file)
+                print(f"Removed backup file (all processing successful)")
+            else:
+                print(f"Kept backup file: {backup_file} (some failures occurred)")
 
-            return True
-
-        print(f"No dates to reprocess for {collection_basename}")
-        #remove backup
-        if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
-            os.remove(config.EMPTY_ASSET_LIST + '.bak')
-        return False
+        return success_count > 0
 
     except Exception as e:
-        print(f"Unexpected error in process_empty_asset_list: {e}")
-        if os.path.exists(config.EMPTY_ASSET_LIST + '.bak'):
-            shutil.copy2(config.EMPTY_ASSET_LIST + '.bak',config.EMPTY_ASSET_LIST)
+        print(f"✗ FATAL ERROR in process_empty_asset_list: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Restore backup on fatal error
+        backup_file = config.EMPTY_ASSET_LIST + '.bak'
+        if os.path.exists(backup_file):
+            shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
+            print(f"Restored backup to {config.EMPTY_ASSET_LIST}")
         return False
 
+
 def main():
-    # Determine configuration path if DEV or provided configuration
-    # Specific arguments
-
-
-
-    if len(config.sys.argv) > 1:
-        config_file = config.sys.argv[1]  # First argument after the script name
-        print("Using Configuration:", config_file)
+    """Main entry point for rerun script"""
+    
+    print("="*60)
+    print("RERUN.PY - Empty Asset Reprocessing")
+    print("="*60)
+    print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Python: {sys.executable}")
+    print(f"Working directory: {os.getcwd()}")
+    
+    # Determine configuration file
+    if len(sys.argv) > 1:
+        config_file = sys.argv[1]
+        print(f"Using configuration from command line: {config_file}")
     else:
         config_file = 'dev_config.py'
+        print(f"Using default configuration: {config_file}")
+    
+    print("="*60)
+    print()
 
-
-    # Rerun CloudScore+
+    # Configuration
     days_back = 30
-    #result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
-    result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
+    
+    # Uncomment the collection you want to reprocess
+    # collection = config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1]
+    collection = config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1]
+    
+    print(f"Collection: {collection}")
+    print(f"Days back: {days_back}")
+    print()
+    
+    # Run the reprocessing
+    result = process_empty_asset_list(collection, days_back, config_file)
+    
+    print()
+    print("="*60)
+    if result:
+        print("✓ RERUN COMPLETED SUCCESSFULLY")
+    else:
+        print("✗ RERUN COMPLETED WITH NO CHANGES")
+    print(f"Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*60)
+    
+    # Exit with appropriate code
+    sys.exit(0 if result else 1)
 
 
 if __name__ == "__main__":
