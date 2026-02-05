@@ -9,21 +9,9 @@ GITHUB_OWNER = "swisstopo"
 GITHUB_REPO = "topo-satromo-v2"
 
 # Secrets
-GOOGLE_SECRETS = os.path.join("secrets", "geetest-credentials-int.secret")
 FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-int.json")
 S3_SECRETS = os.path.join("secrets", "s3_int.json")
 COPERNICUS_SECRETS = os.path.join("secrets", "copernicus_oed.json")
-
-
-# File and directory paths
-GEE_RUNNING_TASKS = os.path.join("processing", "running_tasks.csv")
-GEE_COMPLETED_TASKS = os.path.join("tools", "completed_tasks.csv")
-EMPTY_ASSET_LIST = os.path.join("tools", "step0_empty_assets.csv")
-PROCESSING_DIR = "processing"
-LAST_PRODUCT_UPDATES = os.path.join("tools", "last_updates.csv")
-
-# Set GCS Bucket name of Google Cloud Storage
-GCLOUD_BUCKET = "s2_sr_registration_swiss"
 
 # set S3 path
 S3_BUCKET_NAME = "satromoint"
@@ -31,13 +19,8 @@ S3_BUCKET_NAME = "satromoint"
 S3_BUCKET_PATH = "data"
 
 
-
 # General product parameters
 # ---------------------------
-
-# Coordinate Reference System (EPSG:4326 for WGS84, EPSG:2056 for CH1903+, see epsg.io)
-OUTPUT_CRS = "EPSG:2056"
-
 
 # Switzerland border with 10km buffer: [5.78, 45.70, 10.69, 47.89] , Schönbühl [ 7.471940, 47.011335, 7.497431, 47.027602] Martigny [ 7.075402, 46.107098, 7.100894, 46.123639]
 # Defines the initial extent to search for image tiles This is not the final extent is defined by BUFFER
