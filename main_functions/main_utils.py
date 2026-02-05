@@ -882,3 +882,31 @@ def metadata_add_entry(
         json.dump(data, f, indent=2, ensure_ascii=False)
 
     return data
+
+def extract_and_compare_datetime_from_url(url, iso_string):
+    """
+    Extracts the datetime value from a given STAC ITEM JSON URL and compares it with a provided ISO string.
+    Args:
+        url (str): The URL to fetch JSON data from.
+        iso_string (str): The datetime string in format 'YYYY-MM-DDtHHMMSS' for comparison.
+    Returns:
+        bool: True if the extracted datetime value is on the same day or newer than the provided ISO string; False otherwise.
+    """
+    response = requests.get(url)  # Fetch the JSON data from the URL
+    if response.status_code == 200:
+        data = response.json()  # Parse the JSON data
+        # Extract the "datetime" value
+        datetime_value = data['properties']['datetime']
+        # Parse the datetime value from the JSON response
+        extracted_datetime = datetime.strptime(
+            datetime_value, '%Y-%m-%dT%H:%M:%SZ')
+        # Parse the ISO string with format '2025-07-03t100711'
+        iso_datetime = datetime.strptime(iso_string, '%Y-%m-%dt%H%M%S')
+        # Extract dates from both datetime objects
+        extracted_date = extracted_datetime.date()
+        iso_date = iso_datetime.date()
+        # Compare the dates
+        return extracted_date <= iso_date
+    else:
+        print("Failed to fetch data from the URL:", response.status_code)
+        return False

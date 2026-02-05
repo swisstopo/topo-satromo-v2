@@ -1223,11 +1223,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         ##############################
-        # TODO Checkif current, if yes then rund upload below twice a day
-
+        # Checkif current, if yes then rund upload below twice a day
+        is_current = main_utils.extract_and_compare_datetime_from_url(config.STAC_FSDI_SCHEME+"://"+config.STAC_FSDI_HOSTNAME+config.STAC_FSDI_API +
+                                                                       "collections/"+collection+"/items/"+collection.replace("ch.swisstopo.", ""),timestamp)
+        
         ##############################
         # Upload to STAC
-        # Process Sentinel files grouped by timestamp
+        # Process Sentinel files group§ed by timestamp
         for timestamp, file_list in sorted(files_by_timestamp.items()):
             print(f"\n=== Processing timestamp: {timestamp} ===")
 
@@ -1255,18 +1257,36 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     band_title = band_names.get(band, band)
 
                 # STAC Upload
-
                 main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title=band_title)
-
+                if is_current == True:
+                    print("Newest dataset detected: updating CURRENT")
+                    filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+                    # Rename the file
+                    os.rename(filename, filename_current)
+                    main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],asset_title=band_title, current=True)
+                    os.rename(filename_current, filename)
 
         # Upload metadata file
         filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
-
+        if is_current == True:
+            #print("Newest dataset detected: updating CURRENT")
+            filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+            # Rename the file
+            os.rename(filename, filename_current)
+            main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],asset_title="Metadata", current=True)
+            os.rename(filename_current, filename)
 
         # Upload Thumbnail
         filename=thumbnail
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Thumbnail")
+        if is_current == True:
+            #print("Newest dataset detected: updating CURRENT")
+            filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+            # Rename the file
+            os.rename(filename, filename_current)
+            main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],asset_title="Thumbnail", current=True)
+            os.rename(filename_current, filename)
 
         # Clean up Thumbnailfile
         if Path(filename).exists():

@@ -51,10 +51,11 @@ import logging
 import requests
 from urllib.parse import urljoin
 import json
+from pathlib import Path
 
 # Configuration
 base_url = "https://sys-data.int.bgdi.ch/api/stac/v0.9/"
-config_path = r"C:\temp\satromo-dev\secrets\stac_fsdi-int.json"
+config_path = Path("secrets") / "stac_fsdi-int.json"
 
 def load_credentials(config_path: str) -> tuple:
     """
