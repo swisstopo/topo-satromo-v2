@@ -71,19 +71,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     # SPACE
     # Official swisstopo boundaries
     # source: https:#www.swisstopo.admin.ch/de/geodata/landscape/boundaries3d.html#download
-    # TODO use the full resolution for final processing
-    #aoi_CH = FULLRES
-
     # Simplified version for faster processing
     aoi_CH_simplified = os.path.join("assets", "swissboundary_simplified_4326.json")
 
     ##############################
     # REFERENCE DATA
-
-    # # SPOT swissimage Reference Image (contains the red spectral band in 10 m resolution))
-    # # source: TODO
-    # # processing: TODO
-    #ref_data = TODO
 
     # # TERRAIN SHADOW - based on a very precise digital surface  model in a 10 m resolution
     # # source: LIDAR, Provided by GANDOR
@@ -93,31 +85,20 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     ##############################
     # SATELLITE DATA
 
-    # # Copernicus Collection
-    copernicus_collection = config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]
-    # # Baseline Version greater than
-    baseline_version = config.PRODUCT_S2_LEVEL_2A["baseline_version"]
-    # # Processing Level
-    processing_level = config.PRODUCT_S2_LEVEL_2A["processing_level"]
-    # # Bucket
-    copernicus_bucket = config.PRODUCT_S2_LEVEL_2A["copernicus_bucket"]
+    # # Local Copernicus STAC Collection
+    copernicus_collection = config.PRODUCT_S2_LEVEL_2A["copernicus_collection"]# Local Copernicus STAC Collection
+    # # Copernicus Baseline Version greater than
+    baseline_version = "04.00"  # Baseline Version greater than !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    # # Copernicus Processing Level
+    processing_level = "L2A"
+    # # Copernicus Bucket
+    copernicus_bucket = "eodata"
+
     # # Coregistration results
     s3_coreg_path = f"data/SENTINEL-2/COREGISTRATION/"
 
-
-    ##############################
-    # Test if corresponing Cloudscope+ data is in  empty asset list TODO remove this check when Omnicloudmask is fully operational
-    # no_csplus=main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['step0_collection'], day_to_process)
-
-    # if no_csplus:
-    #     if main_utils.is_date_in_empty_asset_list(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process) is False:
-    #         write_asset_as_empty(config.PRODUCT_S2_LEVEL_2A['image_collection'], day_to_process, 'No CloudScore+ data available')
-    #     return
-
-
     ##############################
     #IMAGE SEARCH
-
 
     def copernicus_image_search(date, copernicus_collection , aoi, processing_level, baseline_version):
 
@@ -843,7 +824,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         ##############################
-        # Calculate Cloud Percentage: 
+        # Calculate Cloud Percentage:
 
         # Wrap the string in Path() first
         buffer_path = Path(config.BUFFER)
@@ -901,7 +882,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95
-        ## TODO no data value handling per data set
 
         def clip_resample_to_cog(
             input_tif,
@@ -1097,7 +1077,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95
-        # TODO Clip with ORBIT perimeter gpkg as in v100
+
 
         def parse_sentinel2_filename(filename):
             """Parse Sentinel-2 mosaic filename including cloudmask."""

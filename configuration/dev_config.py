@@ -106,17 +106,10 @@ PRODUCT_S2_LEVEL_2A = {
     "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
     "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
-    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
-    "asset_size": 5, # TODO: check if needed in context with V2
-    "spatial_scale_export_mask": 10, # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
-    # "no_data": 9999,
+    "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    "copernicus_collection": "sentinel-2-l2a", # Copernnicus STAC Collection
-    "baseline_version": "04.00",  # Baseline Version greater than !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    "processing_level": "L2A",  #  Processing Level
-    "copernicus_bucket": "eodata", # Copernicus S3 bucket
     "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
@@ -201,11 +194,7 @@ AROSICS_CONFIG = {
     'max_iter': 10,
     'max_shift': 5,
     'reference_band': 1,
-    #'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/SI_SPOT5_WGS84_UTM32N_5m_RED_COG.tif',
-    #'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/SI_SPOT5_WGS84_UTM32N_10m_RED_COG.tif',
     'reference_image': os.path.join("local_assets", "SI_SPOT5_WGS84_UTM32N_10m_RED_COG.tif"),
-    # 'reference_image': '/mnt/d/SATROMO/AROSICS_Coregistration/AROSICS/assets/base_data/S2_GRI.tif',
-    #'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS'],
     'output_options': ['COMPRESS=DEFLATE', 'PREDICTOR=2', 'NUM_THREADS=ALL_CPUS', 'BIGTIFF=YES'],
     'data_folder': 'sentinel-2-l2a',
     'multiband_mosaic_pattern_10m': 'S2-L2A-multiband_*_10m.vrt',
@@ -214,7 +203,4 @@ AROSICS_CONFIG = {
     'cloudprob_tile_pattern': 'S2*_MSIL1C',
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
-    #'omnicloudmask_venv_path': os.path.join(".venv","bin","python3"), #LINUX
-    #'omnicloudmask_venv_path': os.path.join(".venv","Scripts","python.exe"), #WINDOWS
-    #'omnicloudmask_script_path': os.path.join("main_functions","main_omnicloudmask.py"),
 }
