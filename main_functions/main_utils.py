@@ -32,7 +32,7 @@ def determine_run_type():
     Otherwise, sets the run type to 1 (PROD) and prints a corresponding message.
     """
     global run_type
-    if os.path.exists(config.GOOGLE_SECRETS):
+    if os.path.exists(config.FSDI_SECRETS):
         run_type = 2
         print("\nType 2 run PROCESSOR: We are on a local machine")
     else:
