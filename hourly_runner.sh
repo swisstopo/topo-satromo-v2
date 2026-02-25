@@ -155,15 +155,25 @@ fi
 # Run the appropriate processor based on mode
 if [ "$RUN_MODE" == "processor" ]; then
     log "Running PROCESSOR script..."
-    if ! $PYTHON_CMD satromo_processor.py prod_config.py; then
-        error "PROCESSOR script failed"
+    OUTPUT=$($PYTHON_CMD satromo_processor.py prod_config.py 2>&1)  # Capture output
+    if echo "$OUTPUT" | grep -q "cloudy"; then
+        log "PROCESSOR script encountered 'cloudy' remark. Output: $OUTPUT"
+    elif [ $? -ne 0 ]; then
+        error "PROCESSOR script failed with output: $OUTPUT"
         exit 1
+    else
+        log "PROCESSOR script completed successfully!"
     fi
 elif [ "$RUN_MODE" == "rerun" ]; then
     log "Running RERUN PROCESSOR script..."
-    if ! $PYTHON_CMD rerun.py prod_config.py; then
-        error "RERUN PROCESSOR script failed"
+    OUTPUT=$($PYTHON_CMD rerun.py prod_config.py 2>&1)  # Capture output
+    if echo "$OUTPUT" | grep -q "cloudy"; then
+        log "RERUN PROCESSOR script encountered 'cloudy' remark. Output: $OUTPUT"
+    elif [ $? -ne 0 ]; then
+        error "RERUN PROCESSOR script failed with output: $OUTPUT"
         exit 1
+    else
+        log "RERUN PROCESSOR script completed successfully!"
     fi
 else
     error "Invalid run mode: $RUN_MODE"
