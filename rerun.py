@@ -110,6 +110,14 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         failure_count = 0
 
         for check_date_str in reprocess_list:
+            # Check if the "remark" column contains "cloudy"
+            remark_check = df_selection[df_selection['date'] == check_date_str]['remark'].str.contains('cloudy', case=False)
+
+            if remark_check.any():
+                print(f"Skipping {check_date_str} due to remark containing 'cloudy'.")
+                failure_count += 1
+                continue
+
             print(f"\n{'='*60}")
             print(f"Processing date: {check_date_str} ({reprocess_list.index(check_date_str) + 1}/{len(reprocess_list)})")
             print(f"{'='*60}")
@@ -139,15 +147,14 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 print("")
 
                 # Run subprocess with real-time output
-                # FIXED: Use unbuffered output and properly handle streams
                 process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,  # Merge stderr to stdout for real-time output
+                    stderr=subprocess.STDOUT,  
                     text=True,
-                    bufsize=0,  # Unbuffered
+                    bufsize=0,  
                     env=env,
-                    cwd=script_dir,  # Set working directory explicitly
+                    cwd=script_dir,  
                     universal_newlines=True
                 )
 
@@ -187,6 +194,8 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 if os.path.exists(backup_file):
                     shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
                     print(f"Restored backup to {config.EMPTY_ASSET_LIST}")
+
+
 
         # Summary
         print(f"\n{'='*60}")
