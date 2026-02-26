@@ -245,7 +245,7 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, clip_orbit, output_path,
             "-co", "NUM_THREADS=ALL_CPUS",
             "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
             "-co", "COMPRESS=JPEG",
-            "-co", "QUALITY=95",
+            "-co", "QUALITY=85",
             "-cutline", str(clip_orbit),
             "-crop_to_cutline",
             "-dstalpha",
@@ -289,13 +289,13 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, clip_orbit, output_path,
 
 if __name__ == "__main__":
     base_path = r"D:\temp\github\topo-satromo-v2"
-    base_name = "swisseo_s2-sr_v200_mosaic_2025-06-01t101041"
+    base_name = "swisseo_s2-sr_v200_mosaic_2025-06-22t104041"
 
     b04_file = f"{base_path}\\{base_name}_b04_10m.tif"
     b03_file = f"{base_path}\\{base_name}_b03_10m.tif"
     b02_file = f"{base_path}\\{base_name}_b02_10m.tif"
-    clip_orbit_file = f"{base_path}\\assets\\swissboundary_buffer_5000m_22.gpkg"
-    output_file = f"{base_path}\\{base_name}_rgb_cog.tif"
+    clip_orbit_file = f"{base_path}\\assets\\swissboundary_buffer_5000m_8.gpkg"
+    output_file = f"{base_path}\\{base_name}_rgb_cog_70.tif"
 
     # Create enhanced RGB with COG output
     print("=== Creating Enhanced RGB with COG ===")

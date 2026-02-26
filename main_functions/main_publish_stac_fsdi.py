@@ -178,8 +178,11 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
 
     #Create href for visual
     #COG Case for swisseo_s2-sr
-    if 'swisseo_s2-sr' in product:
+    if 'swisseo_s2-sr' in product and current is not True:
         asset = f"{product}_mosaic_{id}_tci_10m.tif"
+        HREF=f"https://map.geo.admin.ch/#/map?layers=COG|{domain}ch.swisstopo.{product}/{id}/{asset}"
+    elif 'swisseo_s2-sr' in product and current is True:
+        asset = f"{product}_mosaic_current_tci_10m.tif"
         HREF=f"https://map.geo.admin.ch/#/map?layers=COG|{domain}ch.swisstopo.{product}/{id}/{asset}"
     #WMS CASE where we do have only WMS
     else:
