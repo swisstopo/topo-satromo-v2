@@ -1224,8 +1224,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
         ##############################
         # Checkif current, if yes then rund upload below twice a day
-        is_current = main_utils.extract_and_compare_datetime_from_url(config.STAC_FSDI_SCHEME+"://"+config.STAC_FSDI_HOSTNAME+config.STAC_FSDI_API +
-                                                                       "collections/"+collection+"/items/"+collection.replace("ch.swisstopo.", ""),timestamp)
+        is_current = main_utils.extract_and_compare_datetime_from_url(f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}{config.STAC_FSDI_API}collections/{collection.split('/')[-1]}/items/{collection.split('/')[-1].replace('swisstopo.', '').replace('ch.', '')}",timestamp)
         
         ##############################
         # Upload to STAC
