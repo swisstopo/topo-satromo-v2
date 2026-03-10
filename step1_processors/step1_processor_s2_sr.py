@@ -132,7 +132,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         "collections": [copernicus_collection],
         "intersects": geometry,
         "datetime": f"{date}T00:00:00Z/{date}T23:59:59Z",
-        "limit": 1000
+        "limit": 100
         }
         #print("Sending POST request to STAC API...")
         #print(f"Query: {json.dumps(query_body, indent=2)}")
@@ -1225,7 +1225,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         ##############################
         # Checkif current, if yes then rund upload below twice a day
         is_current = main_utils.extract_and_compare_datetime_from_url(f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}{config.STAC_FSDI_API}collections/{collection.split('/')[-1]}/items/{collection.split('/')[-1].replace('swisstopo.', '').replace('ch.', '')}",timestamp)
-        
+
         ##############################
         # Upload to STAC
         # Process Sentinel files group§ed by timestamp
