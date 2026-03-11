@@ -306,6 +306,7 @@ def reproject_to_UTM32N(input_path: Union[str, Path],
     src_no_data = file_in_info['bands'][0]['no_data_value']
     if src_no_data is None: # If there is no noData value set -> only set the output
         src_no_data = 0
+        command.extend(["-srcnodata", str(src_no_data)])
         command.extend(["-dstnodata", str(src_no_data)])
     else: # If there is a noData value set -> set the output to the input
         command.extend(["-srcnodata", str(src_no_data)])

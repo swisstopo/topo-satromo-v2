@@ -384,7 +384,7 @@ def coregister_S2(
 
         logger.info('=' * len(title_str))
 
-        return success, pickle_path, CRL.coreg_info
+        return success, pickle_path
 
     except Exception as e:
         logger.error(f"Coregistration failed: {str(e)}")

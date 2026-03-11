@@ -710,7 +710,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-        success, pickle_path, coreg_info = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         # If coregistration was successful, proceed to deshift the files
         if success:
