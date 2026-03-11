@@ -286,29 +286,59 @@ def delete_items_and_assets(base_url: str, items_assets: List[Dict], auth: tuple
     return results
 
 
-def prompt_deletion_mode() -> str:
+def get_date_range_items(client: pystac_client.Client, collection_id: str, start_date: str, end_date: str) -> List[Dict]:
     """
-    Prompt user to select deletion mode
+    Search for items within a specific date range in a collection
+    """
+    items_assets = []
 
-    Returns:
-        str: 'collection' or 'item'
-    """
+    # Format: "YYYY-MM-DDTHH:MM:SSZ/YYYY-MM-DDTHH:MM:SSZ"
+    datetime_range = f"{start_date}/{end_date}"
+
+    search = client.search(
+        collections=[collection_id],
+        datetime=datetime_range
+    )
+
+    for item in search.item_collection():
+        item_assets = {
+            'item_id': item.id,
+            'collection_id': collection_id,
+            'assets': {}
+        }
+        for asset_key, asset in item.get_assets().items():
+            item_assets['assets'][asset_key] = {
+                'href': asset.href,
+                'type': asset.media_type,
+                'roles': asset.roles if hasattr(asset, 'roles') else []
+            }
+        items_assets.append(item_assets)
+
+    return items_assets
+
+def prompt_date_range() -> tuple:
+    """Prompt user for start and end dates"""
+    print("\nEnter dates in YYYY-MM-DD format (or ISO 8601):")
+    start = input("Start Date (e.g., 2023-01-01): ").strip()
+    end = input("End Date   (e.g., 2023-12-31): ").strip()
+    return start, end
+
+def prompt_deletion_mode() -> str:
     print("\n" + "="*60)
     print("STAC DELETION TOOL")
     print("="*60)
     print("\nSelect deletion mode:")
     print("  1. Delete all items from a collection")
     print("  2. Delete a specific item")
+    print("  3. Delete items in a collection by DATE RANGE") # Added Choice 3
     print()
 
     while True:
-        choice = input("Enter your choice (1 or 2): ").strip()
-        if choice == '1':
-            return 'collection'
-        elif choice == '2':
-            return 'item'
-        else:
-            print("Invalid choice. Please enter 1 or 2.")
+        choice = input("Enter your choice (1, 2, or 3): ").strip()
+        if choice == '1': return 'collection'
+        elif choice == '2': return 'item'
+        elif choice == '3': return 'date_range'
+        else: print("Invalid choice. Please enter 1, 2, or 3.")
 
 
 def prompt_collection_selection(client: pystac_client.Client) -> str:
@@ -432,73 +462,44 @@ def main():
 
 
     try:
-        # Load credentials
         auth = load_credentials(config_path)
-        logger.info("Credentials loaded successfully")
-
-        # Initialize STAC client
         client = setup_stac_client(base_url)
-        logger.info("STAC client initialized successfully")
-
-        # Prompt for deletion mode
         mode = prompt_deletion_mode()
 
-        # Collect items to delete based on mode
         all_assets = []
         target_description = ""
 
         if mode == 'collection':
             collection_pattern = prompt_collection_selection(client)
-            target_description = f"collection(s) matching '{collection_pattern}'"
-
-            logger.info(f"Searching for collections matching: {collection_pattern}")
-
+            target_description = f"ALL items in collection(s) matching '{collection_pattern}'"
             for collection in get_swisseo_collections(client, collection_pattern):
-                logger.info(f"Processing collection: {collection.id}")
+                all_assets.extend(get_collection_items_assets(collection))
 
-                try:
-                    collection_assets = get_collection_items_assets(collection)
-                    all_assets.extend(collection_assets)
-                    logger.info(f"Found {len(collection_assets)} items in collection {collection.id}")
-                except Exception as e:
-                    logger.error(f"Error processing collection {collection.id}: {str(e)}")
-                    continue
-
-            if not all_assets:
-                print(f"\n❌ No items found matching collection pattern: {collection_pattern}")
-                return None
-
-        else:  # mode == 'item'
+        elif mode == 'item':
             collection_id, item_id = prompt_item_id()
-            target_description = f"item '{item_id}' from collection '{collection_id}'"
-
-            logger.info(f"Retrieving item {item_id} from collection {collection_id}")
-
+            target_description = f"item '{item_id}'"
             item_assets = get_single_item_assets(client, collection_id, item_id)
+            if item_assets: all_assets = item_assets
 
-            if item_assets is None or len(item_assets) == 0:
-                print(f"\n❌ Item '{item_id}' not found in collection '{collection_id}'")
-                return None
+        elif mode == 'date_range':
+            collection_id = prompt_collection_selection(client)
+            start_dt, end_dt = prompt_date_range()
+            target_description = f"items in '{collection_id}' between {start_dt} and {end_dt}"
 
-            all_assets = item_assets
-            logger.info(f"Found item with {len(item_assets[0]['assets'])} assets")
+            logger.info(f"Searching for items in {collection_id} from {start_dt} to {end_dt}...")
+            all_assets = get_date_range_items(client, collection_id, start_dt, end_dt)
 
-        # Calculate total asset count
-        total_assets = sum(len(item['assets']) for item in all_assets)
+        # Validation and Confirmation
+        if not all_assets:
+            print(f"\n❌ No items found for the specified criteria.")
+            return None
 
-        logger.info(f"Total items to process: {len(all_assets)}")
-        logger.info(f"Total assets to delete: {total_assets}")
-
-        # Confirm deletion
         if not confirm_deletion(mode, target_description, len(all_assets)):
             print("\n❌ Deletion cancelled by user")
             return None
 
-        # Perform deletion
-        print("\n" + "="*60)
-        print("STARTING DELETION PROCESS")
-        print("="*60 + "\n")
-
+        # Execution
+        print("\n" + "="*60 + "\nSTARTING DELETION PROCESS\n" + "="*60)
         results = delete_items_and_assets(base_url, all_assets, auth)
 
         # Log summary
