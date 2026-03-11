@@ -101,7 +101,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     #IMAGE SEARCH
 
     def copernicus_image_search(date, copernicus_collection , aoi, processing_level, baseline_version):
-
         """
         Searches for Sentinel-2 satellite images from a STAC API based on the specified date, collection, area of interest (AOI),
         processing level, and baseline version.
@@ -112,7 +111,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             processing_level (str): The processing level to filter images (e.g., 'LEVEL2A').
             baseline_version (str): Minimum processor version; only images with a higher version are returned.
         Returns:
-            list: A list of STAC items (dicts) matching the search criteria, filtered by processing level and baseline version.
+            list: A list of STAC items (dicts) matching the search criteria, filtered by processing level, baseline version,
+                and deduplicated to keep only the newest satellite per (date, orbit, tile) group.
         Raises:
             requests.exceptions.HTTPError: If the STAC API request fails.
             Exception: For other errors such as file reading or JSON parsing issues.
@@ -125,17 +125,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             geojson_data = json.load(f)
         geometry = geojson_data['geometries'][0]
 
-
-
         # Build the query body for SENTINEL2 filter for switzerland and LEVEL2A
         query_body = {
-        "collections": [copernicus_collection],
-        "intersects": geometry,
-        "datetime": f"{date}T00:00:00Z/{date}T23:59:59Z",
-        "limit": 100
+            "collections": [copernicus_collection],
+            "intersects": geometry,
+            "datetime": f"{date}T00:00:00Z/{date}T23:59:59Z",
+            "limit": 100
         }
-        #print("Sending POST request to STAC API...")
-        #print(f"Query: {json.dumps(query_body, indent=2)}")
 
         try:
             response = requests.post(search_url, json=query_body)
@@ -152,11 +148,54 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             print(f"Error: {e}")
             raise
 
-        # filter for  processing level
+        # Filter for processing level / baseline version
         search_result = [
             item for item in items
             if item['properties'].get('processing:version', '00.00') > baseline_version
         ]
+
+        # --- Deduplicate: keep only the newest satellite per (date, orbit, tile) group ---
+        def _sat_id(item_id):
+            """Extract satellite ID (e.g. 'S2A', 'S2B') from STAC item id."""
+            return item_id.split('_')[0]  # 'S2A_MSIL2A_...' -> 'S2A'
+
+        # Build a dict keyed by (date, orbit, tile_id) -> best item so far
+        best_per_group = {}
+        for item in search_result:
+            props    = item['properties']
+            date_str = props['datetime'][:10]           # '2026-02-07T...' -> '2026-02-07'
+            orbit    = props['sat:relative_orbit']
+            tile_id  = props['grid:code'].split('-')[1]  # 'MGRS-32TLT' -> '32TLT'
+            sat      = _sat_id(item['id'])               # 'S2A', 'S2B', 'S2C'
+
+            group = (date_str, orbit, tile_id)
+            if group not in best_per_group or sat > best_per_group[group]['sat']:
+                best_per_group[group] = {'item': item, 'sat': sat}
+
+        # Determine which satellites were culled per group for summary logging
+        kept = {group: winner['sat'] for group, winner in best_per_group.items()}
+        culled_per_group = defaultdict(set)
+        for item in search_result:
+            props    = item['properties']
+            date_str = props['datetime'][:10]
+            orbit    = props['sat:relative_orbit']
+            tile_id  = props['grid:code'].split('-')[1]
+            sat      = _sat_id(item['id'])
+            group    = (date_str, orbit, tile_id)
+            if sat < kept[group]:
+                culled_per_group[group].add(sat)
+
+        if culled_per_group:
+            n_culled = len(culled_per_group)
+            summary = '; '.join(
+                f"{kept[g]} kept over {', '.join(sorted(sats))} (orbit {g[1]}, tile {g[2]})"
+                for g, sats in culled_per_group.items()
+            )
+            print(f'\t\t- {n_culled} tile(s) culled due to multiple sensors '
+                f'for same date and orbit ({summary})')
+
+        # Rebuild search_result with only winners
+        search_result = [v['item'] for v in best_per_group.values()]
 
         return search_result
 
@@ -710,7 +749,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-        success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        success, pickle_path, coreg_info = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         # If coregistration was successful, proceed to deshift the files
         if success:
