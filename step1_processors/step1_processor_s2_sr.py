@@ -749,7 +749,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
         main_mosaicing.equalize_all_extents(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
-        success, pickle_path, coreg_info = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
+        success, pickle_path = main_coregistration.coregister_S2(acquisition_date=acquisition_date, orbit_nr=orbit_nr)
 
         # If coregistration was successful, proceed to deshift the files
         if success:
@@ -882,6 +882,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
 
         #METADATA add GCP
+        coreg_info=main_coregistration.coreg_info_from_pickle(pickle_path)
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","GCP_COUNT",f"{len(coreg_info['GCPList'])}")
 
         #METADATA add COREG RMSE
