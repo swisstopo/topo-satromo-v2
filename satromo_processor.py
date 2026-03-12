@@ -29,20 +29,26 @@ if __name__ == "__main__":
     current_date_str = previous_date.strftime('%Y-%m-%d')
 
     # Check for command line argument (highest priority)
-    from configuration import arg_date_str
+    from configuration import arg_date_str , arg_force
     if arg_date_str:
         current_date_str = arg_date_str
         print(f'Using command line date: {arg_date_str}')
         debug_mode = False
+        force_reprocess = arg_force  # use CLI flag
+        if force_reprocess:
+            print("Force reprocess enabled via CLI flag")
     else:
         # Enable debug mode if no command line argument is given
         debug_mode = True
+        force_reprocess = False  # set default here
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2026-02-07"
+        current_date_str = "2025-06-09"
+        force_reprocess = True  # <-- toggle this manually during debug
         print("*****************************")
         print("Using manually set date:", current_date_str)
+        print(f"Force reprocess: {force_reprocess}")
         print("*****************************")
 
 
@@ -90,10 +96,15 @@ if __name__ == "__main__":
                 api_path = getattr(config, 'STAC_FSDI_API')
                 collection = getattr(config, 'PRODUCT_S2_LEVEL_2A')['step0_collection']
                 stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
-                daily_items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date())
-                if len(daily_items) == 0:
+                daily_items = main_utils.get_stac_items_for_date(
+                    stac_catalog_url, collection_id,
+                    datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date()
+                )
+                if len(daily_items) == 0 or force_reprocess:  # add force_reprocess
+                    if force_reprocess and len(daily_items) > 0:
+                        print(f"Force reprocess enabled: reprocessing {current_date_str} despite existing STAC items.")
                     result = step1_processor_s2_sr.process_product_s2_sr(
-                        current_date_str,collection_ready)
+                        current_date_str, collection_ready)
                 else:
                     print(f"STAC items already exist for date {current_date_str}: skipping processing.")
                     result = f"PRODUCT_S2_LEVEL_2A: STAC items already exist for date {current_date_str}, skipping processing."

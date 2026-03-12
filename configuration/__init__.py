@@ -6,10 +6,13 @@ from datetime import datetime
 # Global variable to hold the argument date string
 arg_date_str = None
 
+# Global variable to hold the force flag
+arg_force = False
+
 # The first command-line argument is used to define which configuration is loaded.
 # The value has to correspond to a python filename found in the configuration directory.
-# For example, to launch the program satromo_processor with the specific_config.py file, use:
-# > python satromo_processor.py specific_config.py 2024-06-12
+# For example, to launch the program satromo_processor with the specific_config.py file, and force to reprocess use:
+# > python satromo_processor.py specific_config.py 2024-06-12 --force
 
 # By default, the file dev_config.py will be loaded as configuration.
 
@@ -26,6 +29,10 @@ if len(sys.argv) > 1:
             date = datetime.strptime(date_arg, "%Y-%m-%d").date()
             arg_date_str = date.strftime("%Y-%m-%d")
             print(f'Date argument is valid: {arg_date_str}')
+            # Check if force flag is provided
+            if len(sys.argv) > 3 and sys.argv[3].lower() == '--force':
+                arg_force = True
+                print('Force mode enabled')
         except ValueError:
             print('Invalid date format. Please use YYYY-MM-DD.')
             sys.exit(1)
@@ -61,5 +68,5 @@ else:
     print('Loading dev_config as default configuration.')
     from .dev_config import *
 
-# Export the arg_date_str variable for use in other modules
-__all__ = ['arg_date_str']
+# Export the arg_date_str and arg_force variables for use in other modules
+__all__ = ['arg_date_str', 'arg_force']
