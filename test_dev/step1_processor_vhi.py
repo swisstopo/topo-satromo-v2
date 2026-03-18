@@ -1,12 +1,16 @@
 import rasterio
+import xarray as xr
 from pystac_client import Client
 import os
 import numpy as np
 # import configuration as config
-from datetime import datetime
+from datetime import datetime, timedelta
 from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
-from rasterio.warp import reproject
+from rasterio.warp import reproject, transform_bounds, Resampling
+from pyproj import Transformer
+from affine import Affine
+import matplotlib.pyplot as plt
 
 ##############################
 # INTRODUCTION
@@ -65,7 +69,10 @@ stac_swisstopo = 'https://sys-data.int.bgdi.ch/' # swissTOPO STAC API base URL
 stac_swisstopo_version = 'api/stac/v0.9/'
 s2_sr_collection_id = 'ch.swisstopo.swisseo_s2-sr_v200' # swissEO S2-SR collection name
 s3_bucket_satromo = 's3-topo-satromo-prod/'
-s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/' # needs file name addition
+s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/'
+s3_path_key_lst_ref = 'data/LST_REFERENCE/2004-2020_LST_MSGch02/' # options: 2004-2020_LST_MSGch02, 2004-2020_LST_MSGch02_M, 2004-2020_LST_MSGch05_M
+lst_aggregation = '11am' # options: 'mean', 'max', '11am'
+lst_ref_file = f'_MSG_ch02_2004-2020_7days_{lst_aggregation}' # MSG (2004-2020) / MFG (1991-2003)
 
 # Constants
 s2_nodata = 0 # NoData value in swissEO S2-SR products
@@ -89,6 +96,9 @@ current_date_str = "2025-05-02" # TODO: replace with dynamic date input from con
 
 doy = datetime.strptime(current_date_str, '%Y-%m-%d').timetuple().tm_yday
 doy_str = f'{doy:03d}' # zero-padded three-digit day of year
+
+year = '2023' # for LST test purposes only 2023; year = current_date_str[:4]
+month = current_date_str[5:7]
 
 ##############################
 # SPACE / ROI
@@ -309,6 +319,8 @@ def apply_masks(band, cloudmask=cloud_mask, snowmask=snow_mask,
     
     return masked_band
 
+#TODO: add terrain shadow masking 
+
 # Apply masks to bands
 red_masked = apply_masks(red)
 nir_masked = apply_masks(nir)
@@ -392,45 +404,392 @@ else:
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
 vci = 100 * ((ndvi - ndvi_ref_min) / (ndvi_ref_max - ndvi_ref_min))
 
-# Simple plot
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 8))
-plt.imshow(vci, cmap='RdYlGn', vmin=0, vmax=100)
-plt.colorbar()
-plt.show()
-
-print('test')
-
-
-
 ############################################################
 # INPUT DATA: TEMPERATURE
-# Load temperature/thermal data
+# Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
+
+# Functions to load LST netcdf data (from script util_create_LSTMAX.py aus SATROMO v1)
+# import requests
+# from io import BytesIO
+# def download_netcdf_to_memory(path):
+#     """
+#     Download a netCDF file from a URL and return as a BytesIO object
+
+#     Args:
+#         path: URL to download
+
+#     Returns:
+#         BytesIO object containing the file data or None if download failed
+#     """
+#     try:
+#         #print(f"Streaming {url}")
+#         response = requests.get(path)
+#         response.raise_for_status()
+#         return BytesIO(response.content)
+#     except requests.exceptions.RequestException as e:
+#         print(f"Error downloading {url}: {e}")
+#         return None
+
+# sdl_url = 'https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur/test/msg.SDL.H_ch02.lonlat_20251203000000.nc'
+# sol_url = 'https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur/test/msg.SOL.H_ch02.lonlat_20251203000000.nc'
+
+# sdl_nc = download_netcdf_to_memory(sdl_url)
+# sol_nc = download_netcdf_to_memory(sol_url)
+
+# def get_monthly_files_for_date(parameters, satellite, channel, date_str, base_url):
+#     """
+#     Get monthly files that contain data for the specified date using streaming
+
+#     Args:
+#         parameters: List of parameters to get (e.g. ['SOL', 'SDL'])
+#         satellite: Satellite name (e.g. 'msg', 'mfg')
+#         channel: Channel name (e.g. 'ch02', 'ch05h')
+#         date_str: Date string in format YYYY-MM-DD for the day we want data for
+#         base_url: Base URL for the data
+
+#     Returns:
+#         Dictionary of BytesIO objects with parameter as key
+#     """
+#     # Parse the date
+#     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+#     year = date_obj.year
+
+#     # Get the first day of the month
+#     first_day = date_obj.replace(day=1)
+#     first_day_str = first_day.strftime('%Y%m%d')  # Convert to YYYYMMDD for file naming
+
+#     # Construct the correct URL format
+#     # For MSG: MSG2004-2023
+#     # For MFG: MFG1991-2005
+#     if satellite.lower() == 'msg':
+#         dir_name = f"MSG2004-2023"
+#     elif satellite.lower() == 'mfg':
+#         dir_name = f"MFG1991-2005"
+#     else:
+#         raise ValueError(f"Unknown satellite: {satellite}")
+
+#     data_dict = {}
+
+#     for param in parameters:
+#         # Create URL for the monthly file
+#         # Correct filename format: msg.SOL.H_ch02.lonlat_20040101000000.nc
+#         url = f"{base_url}/{dir_name}/{satellite.lower()}.{param}.H_{channel}.lonlat_{first_day_str}000000.nc"
+
+#         # Download file into memory
+#         data = download_netcdf_to_memory(url)
+#         if data is not None:
+#             data_dict[param] = data
+#         else:
+#             data_dict[param] = None
+
+#     return data_dict
+
+s3_path_sdl = f's3://{s3_bucket_satromo}data/LST_TEST/MSG_SDL/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
+s3_path_sol = f's3://{s3_bucket_satromo}data/LST_TEST/MSG_SOL/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+
+ds_sdl = xr.open_dataset(s3_path_sdl, engine='h5netcdf', storage_options={'anon': True})
+ds_sol = xr.open_dataset(s3_path_sol, engine='h5netcdf', storage_options={'anon': True})
 
 ##############################
 # CALCULATE LST
 # From temperature data
 
+# Function to calculate LST from radiance (from script util_create_LSTMAX.py aus SATROMO v1)
+def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
+    """
+    Calculate LST for a specific date with flexible aggregation options.
+    
+    Args:
+        ds_sol: xarray Dataset with SOL data (already loaded)
+        ds_sdl: xarray Dataset with SDL data (already loaded)
+        date: date string in format 'YYYY-MM-DD'
+        aggregation: 'max', 'mean', or 'hour' (default: 'hour')
+        hour: Specific hour (0-23) when aggregation='hour' (e.g., 11 for 11am)
+    
+    Returns:
+        xarray Dataset with calculated LST
+    """
+    # Convert date string to datetime
+    target_date = datetime.strptime(date, '%Y-%m-%d')
+
+    # Define time range for the full day
+    start_time = target_date
+    end_time = target_date + timedelta(days=1) - timedelta(seconds=1)
+
+    # Filter data for the specific date
+    sol_filtered = ds_sol.sel(time=slice(start_time, end_time))
+    sdl_filtered = ds_sdl.sel(time=slice(start_time, end_time))
+
+    # Check if we have data for the target date
+    if len(sol_filtered.time) == 0 or len(sdl_filtered.time) == 0:
+        print(f"No data found for {target_date.strftime('%Y-%m-%d')}")
+        return None
+    
+    # Merge datasets
+    ds = xr.merge([sol_filtered, sdl_filtered], compat='override')
+
+    # Calculate LST
+    Boltzmann = 5.670374419e-8
+    Emissivity = 0.98
+    ds['LST'] = ((ds['SOL']-(1-Emissivity)*ds['SDL'])/Boltzmann/(Emissivity))**(1/4)
+
+    # Apply aggregation
+    if aggregation == 'mean':
+        lst_aggregated = ds['LST'].mean(dim='time')
+        var_name = 'LST_mean'
+    elif aggregation == 'max':
+        lst_aggregated = ds['LST'].max(dim='time')
+        var_name = 'LST_max'
+    elif aggregation == 'hour':
+        if hour is None:
+            raise ValueError("hour must be specified when aggregation='hour'")
+        if not 0 <= hour <= 23:
+            raise ValueError("hour must be between 0 and 23")
+        
+        # Filter for specific hour
+        target_hour = target_date.replace(hour=hour, minute=0, second=0)
+        ds_hour = ds.sel(time=target_hour, method='nearest')
+        lst_aggregated = ds_hour['LST']
+        var_name = f'LST_hour{hour:02d}'
+    else:
+        raise ValueError("aggregation must be 'max', 'mean', or 'hour'")
+        
+
+    # Create output dataset
+    ds_output = xr.Dataset(
+        data_vars={
+            var_name: (('lat', 'lon'), lst_aggregated.values)
+        },
+        coords={
+            'time': [target_date],
+            'lat': ds.lat,
+            'lon': ds.lon
+        }
+    )
+    
+    return ds_output
+
+ds_11am = calc_LST_for_date(ds_sol, ds_sdl, '2023-05-02', aggregation='hour', hour=11) # TODO: replace with dynamic date input
+
+# Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
+def resample_lst_to_s2_grid(ds_lst, var_name, roi, target_transform, target_shape, target_crs='EPSG:2056'):
+    """
+    Resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056.
+    
+    Parameters:
+    -----------
+    ds_lst : xarray.Dataset
+        LST dataset with lat/lon coordinates
+    var_name : str
+        Name of the LST variable to resample (e.g., 'LST_mean', 'LST_max', 'LST_hour11')
+    roi : tuple
+        Bounding box (minx, miny, maxx, maxy) in EPSG:2056
+    target_transform : affine.Affine
+        Target transform from Sentinel-2 10m grid
+    target_shape : tuple
+        Target shape (height, width) from Sentinel-2 10m grid
+    target_crs : str
+        Target CRS (default: 'EPSG:2056')
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Resampled LST array on 10m grid
+    """
+    # Extract LST data
+    lst_data = ds_lst[var_name].values
+    
+    # Get lat/lon coordinates
+    lats = ds_lst.lat.values
+    lons = ds_lst.lon.values
+    
+    # Determine if coordinates are ascending or descending
+    lat_ascending = lats[1] > lats[0] if len(lats) > 1 else False
+    lon_ascending = lons[1] > lons[0] if len(lons) > 1 else False
+    
+    # Calculate pixel resolution (always positive)
+    lat_res = abs(lats[1] - lats[0]) if len(lats) > 1 else abs(lats[-1] - lats[-2])
+    lon_res = abs(lons[1] - lons[0]) if len(lons) > 1 else abs(lons[-1] - lons[-2])
+    
+    # Get the top-left corner coordinates
+    # For latitude: if descending (typical), use first value; if ascending, use last value
+    # For longitude: if ascending (typical), use first value; if descending, use last value
+    top_lat = lats[0] if not lat_ascending else lats[-1]
+    left_lon = lons[0] if lon_ascending else lons[-1]
+    
+    # Create affine transform for source (LST in lat/lon)
+    # The transform should point to the top-left corner and use negative lat_res
+    src_transform = Affine.translation(left_lon - lon_res/2, top_lat + lat_res/2) * Affine.scale(lon_res, -lat_res)
+    
+    # Flip data if needed to match standard rasterio orientation (top-to-bottom, left-to-right)
+    if not lat_ascending:
+        # Data is already top-to-bottom, just ensure it's correct
+        lst_data_oriented = lst_data
+    else:
+        # Flip vertically to go from bottom-to-top to top-to-bottom
+        lst_data_oriented = np.flipud(lst_data)
+    
+    if not lon_ascending:
+        # Flip horizontally to go from right-to-left to left-to-right
+        lst_data_oriented = np.fliplr(lst_data_oriented)
+    
+    # Prepare output array
+    lst_resampled = np.empty(target_shape, dtype=np.float32)
+    
+    # Reproject from EPSG:4326 (lat/lon) to EPSG:2056 (Swiss grid)
+    reproject(
+        source=lst_data_oriented.astype(np.float32),
+        destination=lst_resampled,
+        src_transform=src_transform,
+        src_crs='EPSG:4326',
+        dst_transform=target_transform,
+        dst_crs=target_crs,
+        resampling=Resampling.nearest,
+        src_nodata=np.nan,
+        dst_nodata=np.nan
+    )
+    
+    return lst_resampled
+
+# Use it after calculating LST
+lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', roi, target_transform, target_shape)
+
+# Extract the data arrays and convert from Kelvin to Celsius
+lst_11am = lst_11am_10m - 273.15
+
 ##############################
 # INPUT DATA: REFERENCE LST
 # Load or compute long-term LST statistics for climate reference period (1991-2020)
+s3_path_lst_ref = f's3://{s3_bucket_satromo}{s3_path_key_lst_ref }LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
+ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
+
+# Open single statistic bands and resample to 10m grid (min, max, mean, median, p05, p95)
+lst_ref_10m_p05 = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', roi, target_transform, target_shape)
+lst_ref_10m_p95 = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', roi, target_transform, target_shape)
 
 ##############################
 # CALCULATE TCI
 # TCI = 100 * (LST_max - LST) / (LST_max - LST_min)
+tci = 100 * ((lst_ref_10m_p95 - lst_11am) / (lst_ref_10m_p95 - lst_ref_10m_p05))
 
 ############################################################
 # CALCULATE VHI
 # VHI = a*VCI + (1-a)*TCI
+vhi = alpha * vci + (1 - alpha) * tci
 
 ##############################
 # APPLY VEGETATION MASK
+s3_path_vegetation_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
+with rasterio.open(s3_path_vegetation_mask) as src_veg:
+    window = from_bounds(*roi, src_veg.transform)
+    vegetation_mask = src_veg.read(1, window=window)
+
+# Apply vegetation mask to VHI (set non-vegetated areas to no_data value)
+vhi_masked = vhi.copy()
+vhi_masked[vegetation_mask == 0] = no_data
 
 ##############################
 # GENERATE METADATA
+# main_functions/main_utils.py. function metadata_add_entry
+# https://github.com/swisstopo/topo-satromo-v2/blob/49fcc1545b609823602c5c5dc43c845912013f1e/main_functions/main_utils.py#L833
 
 ##############################
 # EXPORT VHI
 # Save to file with metadata
 
 # print("********* finished processing {} *********".format(product_name))
+
+##############################
+# PLOTS
+
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(10, 8))
+# plt.imshow(vhi, cmap='RdYlGn', vmin=0, vmax=100) #, vmin=0, vmax=100
+# plt.colorbar()
+# plt.show()
+
+# Define VHI color bins and colors
+from matplotlib.colors import ListedColormap, BoundaryNorm
+vhi_bins = [0, 10, 20, 30, 40, 50, 60, 100, 110, 111]  # boundaries for each class
+vhi_colors = [
+    '#b56a29',  # [0,9]
+    '#ce8540',  # (10,19]
+    '#f5cd85',  # (20,29]
+    '#fff5ba',  # (30,39]
+    '#cbffca',  # (40,49]
+    '#52bd9f',  # (50,59]
+    '#0470b0',  # (60,100]
+    '#b3b6b7',  # [110] (missing data)
+    '#ffffff'   # placeholder for values > 110
+]
+# Create custom colormap for VHI
+vhi_cmap = ListedColormap(vhi_colors)
+vhi_norm = BoundaryNorm(vhi_bins, vhi_cmap.N)
+
+# Now you can visualize the resampled data alongside NDVI
+fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+# NDVI
+im0 = axes[0, 0].imshow(ndvi, cmap='RdYlGn', vmin=-1, vmax=1)
+axes[0, 0].set_title('NDVI', fontsize=12, fontweight='bold')
+plt.colorbar(im0, ax=axes[0, 0], label='NDVI')
+# LST Mean (convert to Celsius)
+im1 = axes[0, 1].imshow(vci, cmap='RdYlBu_r', vmin=0, vmax=100)
+axes[0, 1].set_title('VCI', fontsize=12, fontweight='bold')
+plt.colorbar(im1, ax=axes[0, 1], label='VCI')
+# LST Max
+im2 = axes[1, 0].imshow(tci, cmap='RdYlBu_r', vmin=0, vmax=100)
+axes[1, 0].set_title('TCI', fontsize=12, fontweight='bold')
+plt.colorbar(im2, ax=axes[1, 0], label='TCI')
+# LST 11am
+im3 = axes[1, 1].imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
+axes[1, 1].set_title('VHI', fontsize=12, fontweight='bold')
+cbar3 = plt.colorbar(im3, ax=axes[1, 1], boundaries=vhi_bins, 
+                     ticks=[4.5, 14.5, 24.5, 34.5, 44.5, 54.5, 80, 110])
+cbar3.ax.set_yticklabels(['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-100', '110'], fontsize=9)
+cbar3.set_label('VHI')
+plt.tight_layout()
+plt.show()
+
+# # Not-so-simple plot
+# import matplotlib.pyplot as plt
+
+# # Get coordinate arrays
+# lats = ds_mean.lat.values
+# lons = ds_mean.lon.values
+
+# # Create side-by-side visualization with proper geographic extent
+# fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+# # Common colormap settings
+# vmin = np.nanmin([lst_mean, lst_max, lst_11am])
+# vmax = np.nanmax([lst_mean, lst_max, lst_11am])
+
+# # Define extent for imshow: [left, right, bottom, top]
+# extent = [lons.min(), lons.max(), lats.min(), lats.max()]
+
+# # Plot LST Mean
+# im1 = axes[0].imshow(lst_mean, cmap='RdYlBu_r', vmin=vmin, vmax=vmax, 
+#                      extent=extent, origin='lower', aspect='auto')
+# axes[0].set_title(f'LST Mean - 2023-05-02', fontsize=12, fontweight='bold')
+# axes[0].set_xlabel('Longitude (°)')
+# axes[0].set_ylabel('Latitude (°)')
+# plt.colorbar(im1, ax=axes[0], label='Temperature (°C)')
+
+# # Plot LST Max
+# im2 = axes[1].imshow(lst_max, cmap='RdYlBu_r', vmin=vmin, vmax=vmax,
+#                      extent=extent, origin='lower', aspect='auto')
+# axes[1].set_title(f'LST Max - 2023-05-02', fontsize=12, fontweight='bold')
+# axes[1].set_xlabel('Longitude (°)')
+# axes[1].set_ylabel('Latitude (°)')
+# plt.colorbar(im2, ax=axes[1], label='Temperature (°C)')
+
+# # Plot LST 11am
+# im3 = axes[2].imshow(lst_11am, cmap='RdYlBu_r', vmin=vmin, vmax=vmax,
+#                      extent=extent, origin='lower', aspect='auto')
+# axes[2].set_title(f'LST 11:00 AM - 2023-05-02', fontsize=12, fontweight='bold')
+# axes[2].set_xlabel('Longitude (°)')
+# axes[2].set_ylabel('Latitude (°)')
+# plt.colorbar(im3, ax=axes[2], label='Temperature (°C)')
+
+# plt.tight_layout()
+# plt.show()
