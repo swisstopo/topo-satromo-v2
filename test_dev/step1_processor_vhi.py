@@ -319,6 +319,8 @@ def apply_masks(band, cloudmask=cloud_mask, snowmask=snow_mask,
     
     return masked_band
 
+#TODO: add terrain shadow masking 
+
 # Apply masks to bands
 red_masked = apply_masks(red)
 nir_masked = apply_masks(nir)
@@ -493,7 +495,7 @@ ds_sol = xr.open_dataset(s3_path_sol, engine='h5netcdf', storage_options={'anon'
 # From temperature data
 
 # Function to calculate LST from radiance (from script util_create_LSTMAX.py aus SATROMO v1)
-def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='mean', hour=None):
+def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
     """
     Calculate LST for a specific date with flexible aggregation options.
     
@@ -501,7 +503,7 @@ def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='mean', hour=None):
         ds_sol: xarray Dataset with SOL data (already loaded)
         ds_sdl: xarray Dataset with SDL data (already loaded)
         date: date string in format 'YYYY-MM-DD'
-        aggregation: 'max', 'mean', or 'hour' (default: 'mean')
+        aggregation: 'max', 'mean', or 'hour' (default: 'hour')
         hour: Specific hour (0-23) when aggregation='hour' (e.g., 11 for 11am)
     
     Returns:
@@ -677,11 +679,20 @@ vhi = alpha * vci + (1 - alpha) * tci
 
 ##############################
 # APPLY VEGETATION MASK
+s3_path_vegetation_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
+with rasterio.open(s3_path_vegetation_mask) as src_veg:
+    window = from_bounds(*roi, src_veg.transform)
+    vegetation_mask = src_veg.read(1, window=window)
+
+# Apply vegetation mask to VHI (set non-vegetated areas to no_data value)
+vhi_masked = vhi.copy()
+vhi_masked[vegetation_mask == 0] = no_data
 
 ##############################
 # GENERATE METADATA
 # main_functions/main_utils.py. function metadata_add_entry
 # https://github.com/swisstopo/topo-satromo-v2/blob/49fcc1545b609823602c5c5dc43c845912013f1e/main_functions/main_utils.py#L833
+
 ##############################
 # EXPORT VHI
 # Save to file with metadata
@@ -730,7 +741,7 @@ im2 = axes[1, 0].imshow(tci, cmap='RdYlBu_r', vmin=0, vmax=100)
 axes[1, 0].set_title('TCI', fontsize=12, fontweight='bold')
 plt.colorbar(im2, ax=axes[1, 0], label='TCI')
 # LST 11am
-im3 = axes[1, 1].imshow(vhi, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
+im3 = axes[1, 1].imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
 axes[1, 1].set_title('VHI', fontsize=12, fontweight='bold')
 cbar3 = plt.colorbar(im3, ax=axes[1, 1], boundaries=vhi_bins, 
                      ticks=[4.5, 14.5, 24.5, 34.5, 44.5, 54.5, 80, 110])
