@@ -102,17 +102,9 @@ month = current_date_str[5:7]
 
 ##############################
 # SPACE / ROI
-roi = (2802000, 1125000, 2809000, 1135000) # ROI in EPSG:2056 (min_x, min_y, max_x, max_y)
-
-        # # Get bounds from GeoPackage for orbit
-        # gdf = gpd.read_file(orbit_clipfile)
-        # bounds_2056 = gdf.total_bounds  # in EPSG:2056
-        # # Transform bounds to EPSG:32632
-        # from shapely.geometry import box
-        # bbox_gdf = gpd.GeoDataFrame(
-        #     geometry=[box(*bounds_2056)],
-        #     crs='EPSG:2056'
-        # )
+# Set to None for operational mode, or define a bbox in EPSG:2056 for testing
+roi_override = None
+# roi_override = (2802000, 1125000, 2809000, 1135000) # ROI in EPSG:2056 (min_x, min_y, max_x, max_y)
 
 ############################################################
 # INPUT DATA: REFLECTANCE AND MASKS
@@ -135,6 +127,15 @@ red_path = item_path + '_b04_10m.tif'
 nir_path = item_path + '_b08_10m.tif'
 green_path = item_path + '_b03_10m.tif'
 swir_path = item_path + '_b11_20m.tif'
+
+# Resolve ROI
+if roi_override is not None:
+    roi = roi_override
+else:
+    # Derive from S2 asset extent (operational mode)
+    with rasterio.open(red_path) as src:
+        b = src.bounds
+        roi = (b.left, b.bottom, b.right, b.top)
 
 # Function to load a band and apply offset and scale factors, also preserving nodata values
 def load_and_scale_band(filepath, roi, nodata=s2_nodata, scale=s2_scale_factor, offset=s2_offset):
@@ -680,9 +681,38 @@ vhi = alpha * vci + (1 - alpha) * tci
 ##############################
 # APPLY VEGETATION MASK
 s3_path_vegetation_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
+
+# --- quick fix to handle different resolutions and extents of vegetation mask ---
+# 
+# TODO check if resampling is necessary with the new vegetation masks
+#
+# This should run with the new vegetation masks, that matches the S2 grid:
+# with rasterio.open(s3_path_vegetation_mask) as src_veg:
+#     window = from_bounds(*roi, src_veg.transform)
+#     vegetation_mask = src_veg.read(1, window=window)
+#
+# This is the quick fix:
 with rasterio.open(s3_path_vegetation_mask) as src_veg:
     window = from_bounds(*roi, src_veg.transform)
-    vegetation_mask = src_veg.read(1, window=window)
+    data_veg = src_veg.read(1, window=window)
+    src_transform_veg = src_veg.window_transform(window)
+    src_crs_veg = src_veg.crs
+
+# Resample to match target grid (same as all other layers)
+vegetation_mask = np.empty(target_shape, dtype=np.float32)
+reproject(
+    source=data_veg.astype(np.float32),
+    destination=vegetation_mask,
+    src_transform=src_transform_veg,
+    src_crs=src_crs_veg,
+    dst_transform=target_transform,
+    dst_crs=src_crs_veg,
+    resampling=Resampling.nearest,
+    src_nodata=0,
+    dst_nodata=0
+)
+vegetation_mask = vegetation_mask.astype(np.uint8)
+# ---
 
 # Apply vegetation mask to VHI (set non-vegetated areas to no_data value)
 vhi_masked = vhi.copy()
@@ -701,13 +731,6 @@ vhi_masked[vegetation_mask == 0] = no_data
 
 ##############################
 # PLOTS
-
-# import matplotlib.pyplot as plt
-# plt.figure(figsize=(10, 8))
-# plt.imshow(vhi, cmap='RdYlGn', vmin=0, vmax=100) #, vmin=0, vmax=100
-# plt.colorbar()
-# plt.show()
-
 # Define VHI color bins and colors
 from matplotlib.colors import ListedColormap, BoundaryNorm
 vhi_bins = [0, 10, 20, 30, 40, 50, 60, 100, 110, 111]  # boundaries for each class
@@ -726,29 +749,35 @@ vhi_colors = [
 vhi_cmap = ListedColormap(vhi_colors)
 vhi_norm = BoundaryNorm(vhi_bins, vhi_cmap.N)
 
-# Now you can visualize the resampled data alongside NDVI
-fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-# NDVI
-im0 = axes[0, 0].imshow(ndvi, cmap='RdYlGn', vmin=-1, vmax=1)
-axes[0, 0].set_title('NDVI', fontsize=12, fontweight='bold')
-plt.colorbar(im0, ax=axes[0, 0], label='NDVI')
-# LST Mean (convert to Celsius)
-im1 = axes[0, 1].imshow(vci, cmap='RdYlBu_r', vmin=0, vmax=100)
-axes[0, 1].set_title('VCI', fontsize=12, fontweight='bold')
-plt.colorbar(im1, ax=axes[0, 1], label='VCI')
-# LST Max
-im2 = axes[1, 0].imshow(tci, cmap='RdYlBu_r', vmin=0, vmax=100)
-axes[1, 0].set_title('TCI', fontsize=12, fontweight='bold')
-plt.colorbar(im2, ax=axes[1, 0], label='TCI')
-# LST 11am
-im3 = axes[1, 1].imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
-axes[1, 1].set_title('VHI', fontsize=12, fontweight='bold')
-cbar3 = plt.colorbar(im3, ax=axes[1, 1], boundaries=vhi_bins, 
-                     ticks=[4.5, 14.5, 24.5, 34.5, 44.5, 54.5, 80, 110])
-cbar3.ax.set_yticklabels(['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-100', '110'], fontsize=9)
-cbar3.set_label('VHI')
-plt.tight_layout()
+# Simple plot of VHI
+plt.figure(figsize=(10, 8))
+plt.imshow(vhi, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
+plt.colorbar()
 plt.show()
+
+# Plot NDVI, VCI, TCI and VHI side by side
+# fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+# # NDVI
+# im0 = axes[0, 0].imshow(ndvi, cmap='RdYlGn', vmin=-1, vmax=1)
+# axes[0, 0].set_title('NDVI', fontsize=12, fontweight='bold')
+# plt.colorbar(im0, ax=axes[0, 0], label='NDVI')
+# # LST Mean (convert to Celsius)
+# im1 = axes[0, 1].imshow(vci, cmap='RdYlBu_r', vmin=0, vmax=100)
+# axes[0, 1].set_title('VCI', fontsize=12, fontweight='bold')
+# plt.colorbar(im1, ax=axes[0, 1], label='VCI')
+# # LST Max
+# im2 = axes[1, 0].imshow(tci, cmap='RdYlBu_r', vmin=0, vmax=100)
+# axes[1, 0].set_title('TCI', fontsize=12, fontweight='bold')
+# plt.colorbar(im2, ax=axes[1, 0], label='TCI')
+# # LST 11am
+# im3 = axes[1, 1].imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
+# axes[1, 1].set_title('VHI', fontsize=12, fontweight='bold')
+# cbar3 = plt.colorbar(im3, ax=axes[1, 1], boundaries=vhi_bins, 
+#                      ticks=[4.5, 14.5, 24.5, 34.5, 44.5, 54.5, 80, 110])
+# cbar3.ax.set_yticklabels(['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-100', '110'], fontsize=9)
+# cbar3.set_label('VHI')
+# plt.tight_layout()
+# plt.show()
 
 # # Not-so-simple plot
 # import matplotlib.pyplot as plt
