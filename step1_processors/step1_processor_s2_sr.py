@@ -962,146 +962,199 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             print(f"Using datatype: {datatype}")
             print(f"Using nodata value: {nodata_value}")
 
-            # Create single temp file path
             input_path = Path(input_tif)
+            intermediate_res = resolution / oversample_factor
+
+            # List to track temp files for guaranteed cleanup
+            temp_files_to_clean = []
+
+            # =========================================================================
+            # ONE-HOT ENCODING FOR CATEGORICAL (SCL) DATA
+            # =========================================================================
+            is_scl = "_scl_" in str(input_path.name).lower()
+
+            if is_scl:
+                print("\n=== SCL Data Detected: Applying Consistent 3-Step Process with One-Hot Encoding ===")
+
+                try:
+                    # Temp file definitions for SCL pipeline
+                    onehot_init = input_path.parent / f"{input_path.stem}_onehot_init.tif"
+                    temp_1_os = input_path.parent / f"{input_path.stem}_temp1_os.tif"
+                    temp_2_rp = input_path.parent / f"{input_path.stem}_temp2_rp.tif"
+                    temp_3_ds = input_path.parent / f"{input_path.stem}_temp3_ds.tif"
+                    recombined_file = input_path.parent / f"{input_path.stem}_recombined.tif"
+
+                    temp_files_to_clean.extend([onehot_init, temp_1_os, temp_2_rp, temp_3_ds, recombined_file])
+
+                    # --- Step A: Split into 12 One-Hot Bands ---
+                    with rasterio.open(input_tif) as src:
+                        meta = src.meta.copy()
+                        original_dtype = src.dtypes[0]
+                        data = src.read(1)
+
+                        num_classes = 12 # Sentinel-2 SCL uses classes 0 through 11
+                        meta.update(count=num_classes, dtype='float32', nodata=None)
+
+                        with rasterio.open(onehot_init, 'w', **meta) as dst:
+                            for i in range(num_classes):
+                                dst.write((data == i).astype('float32'), i + 1)
+                    print("✓ Step A: One-hot encoded 12-band file created.")
+
+                    # --- Step 1: Oversample (Nearest) ---
+                    print(f"\n--- SCL Step 1: Oversampling 12 bands to {intermediate_res}m (near) ---")
+                    cmd_os = [
+                        "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
+                        "-co", "TILED=YES", "-co", "BIGTIFF=YES",
+                        "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                        "-tr", str(intermediate_res), str(intermediate_res),
+                        "-r", "near", "-ot", "Float32", "-overwrite",
+                        str(onehot_init), str(temp_1_os)
+                    ]
+                    subprocess.run(cmd_os, check=True, capture_output=True)
+
+                    # --- Step 2: Reproject (Bilinear) ---
+                    print(f"\n--- SCL Step 2: Reprojecting 12 bands to EPSG:{epsg} (bilinear) ---")
+                    cmd_rp = [
+                        "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
+                        "-co", "TILED=YES", "-co", "BIGTIFF=YES",
+                        "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                        "-to", "ALLOW_BALLPARK=NO", "-to", "ONLY_BEST=YES",
+                        "-tr", str(intermediate_res), str(intermediate_res),
+                        "-r", "bilinear", "-ot", "Float32", "-overwrite",
+                        str(temp_1_os), str(temp_2_rp)
+                    ]
+                    subprocess.run(cmd_rp, check=True, capture_output=True)
+
+                    # --- Step 3: Downsample (Bilinear) ---
+                    print(f"\n--- SCL Step 3: Downsampling 12 bands to {resolution}m (bilinear) ---")
+                    cmd_ds = [
+                        "gdalwarp", "-of", "GTiff", "-co", "BIGTIFF=YES",
+                        "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                        "-tr", str(resolution), str(resolution), "-tap",
+                        "-r", "bilinear", "-ot", "Float32", "-overwrite",
+                        str(temp_2_rp), str(temp_3_ds)
+                    ]
+                    subprocess.run(cmd_ds, check=True, capture_output=True)
+
+                    # --- Step B: Recombine using Argmax ---
+                    print(f"\n--- SCL Step B: Recombining bands using Argmax ---")
+                    with rasterio.open(temp_3_ds) as src:
+                        meta = src.meta.copy()
+                        warped_data = src.read()
+
+                        # Find the class with the highest fraction per pixel
+                        final_data = np.argmax(warped_data, axis=0).astype(original_dtype)
+
+                        meta.update(count=1, dtype=original_dtype)
+                        if nodata_value is not None:
+                            meta.update(nodata=nodata_value)
+
+                        with rasterio.open(recombined_file, 'w', **meta) as dst:
+                            dst.write(final_data, 1)
+
+                    # --- Step C: Final COG Conversion ---
+                    print(f"\n--- SCL Step C: Converting to Final COG ---")
+                    cmd_cog = [
+                        "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
+                        "-co", "COMPRESS=DEFLATE", # Always force lossless for SCL
+                        "-co", "PREDICTOR=2", "-co", "NUM_THREADS=ALL_CPUS",
+                        "--config", "GDAL_NUM_THREADS", "ALL_CPUS"
+                    ]
+                    if nodata_value is not None:
+                        cmd_cog.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
+
+                    cmd_cog.extend([str(recombined_file), str(input_tif), "-overwrite"])
+                    subprocess.run(cmd_cog, check=True, capture_output=True)
+
+                    print(f"✓ Final SCL COG created: {input_tif}")
+
+                except Exception as e:
+                    print(f"\n✗ Error occurred during SCL processing: {e}")
+                    raise e
+                finally:
+                    # Clean up all One-Hot temp files
+                    for f in temp_files_to_clean:
+                        if f.exists():
+                            print(f"Cleaning up: {f}")
+                            f.unlink()
+
+                # Exit the function early since SCL processing is complete
+                return
+            # =========================================================================
+
+            # =========================================================================
+            # CONTINUOUS DATA (e.g., B02, B03, B04)
+            # =========================================================================
             temp_file = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
 
             try:
-                # Calculate intermediate resolution
-                intermediate_res = resolution / oversample_factor
-
                 print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
-
-                # Step 1: Clip and oversample with nearest neighbour (keep original projection)
                 cmd_oversample = [
-                    "gdalwarp",
-                    "-cutline", str(clipfile),
-                    #"-crop_to_cutline", #IMHO not needed here
-                    "-of", "GTiff",
-                    "-co", "TILED=YES",
-                    "-co", "BIGTIFF=YES",
-                    #"-co", "COMPRESS=DEFLATE",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                    "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
+                    "-co", "TILED=YES", "-co", "BIGTIFF=YES",
+                    "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-tr", str(intermediate_res), str(intermediate_res),
-                    "-r", "near",
-                    "-ot", datatype,
-                    "-overwrite"
+                    "-r", "near", "-ot", datatype, "-overwrite"
                 ]
 
                 if nodata_value is not None:
-                    cmd_oversample.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
-                    cmd_oversample.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in output
+                    cmd_oversample.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
                 cmd_oversample.extend([str(input_tif), str(temp_file)])
-
                 print(f"Command: {' '.join(cmd_oversample)}")
                 result = subprocess.run(cmd_oversample, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Oversampling failed with code {result.returncode}")
-
+                    raise Exception(f"Oversampling failed: {result.stderr}")
                 print(f"✓ Oversampled and clipped file created: {temp_file}")
 
-                # Step 2: Reproject with bilinear (at oversampled resolution)
                 print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
-
-                props_oversampled = get_raster_properties(temp_file)
-                nodata_value = props_oversampled['nodata']  # Get NoData from step 1 output
-                print(f"Detected oversampled resolution: {props_oversampled['resolution']}m")
-                print(f"Using datatype: {props_oversampled['datatype']}")
-                print(f"Using nodata value: {nodata_value}")
-
                 cmd_reproject = [
-                    "gdalwarp",
-                    "-t_srs", f"EPSG:{epsg}",
-                    "-of", "GTiff",
-                    "-co", "TILED=YES",
-                    "-co", "BIGTIFF=YES",
-                    #"-co", "COMPRESS=DEFLATE",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    "-to", "ALLOW_BALLPARK=NO",
-                    "-to", "ONLY_BEST=YES",
+                    "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
+                    "-co", "TILED=YES", "-co", "BIGTIFF=YES",
+                    "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                    "-to", "ALLOW_BALLPARK=NO", "-to", "ONLY_BEST=YES",
                     "-tr", str(intermediate_res), str(intermediate_res),
-                    "-r", "bilinear",
-                    "-ot", datatype,
-                    "-overwrite"
+                    "-r", "bilinear", "-ot", datatype, "-overwrite"
                 ]
 
                 if nodata_value is not None:
-                    cmd_reproject.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
-                    cmd_reproject.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in output
+                    cmd_reproject.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
                 cmd_reproject.extend([str(temp_file), str(input_tif)])
-
-                print(f"Command: {' '.join(cmd_reproject)}")
                 result = subprocess.run(cmd_reproject, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Reprojection failed with code {result.returncode}")
+                    raise Exception(f"Reprojection failed: {result.stderr}")
 
-                # Move result back to temp_file for next step
                 shutil.move(str(input_tif), str(temp_file))
                 print(f"✓ Reprojected file ready")
 
-                # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
                 print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
-
-                props_reprojected = get_raster_properties(temp_file)
-                nodata_value = props_reprojected['nodata']  # Get NoData from step 2 output
-                print(f"Detected reprojected resolution: {props_reprojected['resolution']}m")
-                print(f"Using datatype: {props_reprojected['datatype']}")
-                print(f"Using nodata value: {nodata_value}")
-
-                target_res = resolution
-
                 cmd_downsample = [
-                    "gdalwarp",
-                    "-of", "COG",
-                    "-co", "BIGTIFF=YES",
-                    "-co", "NUM_THREADS=ALL_CPUS",
-                    "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    "-tr", str(target_res), str(target_res),
-                    "-tap",  # Target Aligned Pixels
-                    "-r", "bilinear",
-                    "-ot", datatype,
-                    "-overwrite"
+                    "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
+                    "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                    "-tr", str(resolution), str(resolution), "-tap",
+                    "-r", "bilinear", "-ot", datatype, "-overwrite"
                 ]
 
-                # Compression options
                 if lossy:
                     print(f"Using JPEG compression with quality {quality}")
                     cmd_downsample.extend([
-                        "-cutline", str(clipfile), # Clip again to ensure clean edges
-                        "-crop_to_cutline",
-                        "-dstalpha",  # Create alpha band for nodata
-                        "-co", "COMPRESS=JPEG",
-                        "-co", f"QUALITY={quality}",
-                        "-co", "PHOTOMETRIC=YCBCR"                    ])
-
+                        "-cutline", str(clipfile), "-crop_to_cutline", "-dstalpha",
+                        "-co", "COMPRESS=JPEG", "-co", f"QUALITY={quality}", "-co", "PHOTOMETRIC=YCBCR"
+                    ])
                 else:
                     print(f"Using lossless DEFLATE compression")
-                    cmd_downsample.extend([
-                        "-co", "COMPRESS=DEFLATE",
-                        "-co", "PREDICTOR=2",
-                        "-co", "ZLEVEL=2"
-                    ])
-                    # For lossless, preserve NoData value
+                    cmd_downsample.extend(["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "ZLEVEL=2"])
                     if nodata_value is not None:
-                        cmd_downsample.extend(["-srcnodata", str(nodata_value)])
-                        cmd_downsample.extend(["-dstnodata", str(nodata_value)])
+                        cmd_downsample.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
                 cmd_downsample.extend([str(temp_file), str(input_tif)])
-
-                print(f"Command: {' '.join(cmd_downsample)}")
                 result = subprocess.run(cmd_downsample, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    print(f"Error: {result.stderr}")
-                    raise Exception(f"Resampling failed with code {result.returncode}")
+                    raise Exception(f"Resampling failed: {result.stderr}")
 
                 print(f"✓ Final COG created: {input_tif}")
 
@@ -1110,7 +1163,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 raise e
 
             finally:
-                # Clean up temp file
                 if temp_file.exists():
                     print(f"Cleaning up: {temp_file}")
                     temp_file.unlink()
