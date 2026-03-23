@@ -201,11 +201,12 @@ def get_dates_for_months(year, target_months, first_date=None, last_date=None):
         All available dates across the requested months.
     """
     dates = []
-    first_month = target_months[0]
 
     for month in target_months:
-        # Months earlier than the first month in the list belong to the previous year
-        year_for_month = year - 1 if month > first_month else year
+        if month > target_months[-1]:
+            year_for_month = year - 1
+        else:
+            year_for_month = year
 
         # Get last day of month using datetime only (day 0 of next month)
         last_day = (datetime(year_for_month, month % 12 + 1, 1) - timedelta(days=1)).day
