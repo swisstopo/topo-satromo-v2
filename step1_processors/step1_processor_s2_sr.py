@@ -915,6 +915,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_PROCESSOR_VERSION",processor_version['GithubLink'])
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_RELEASE_VERSION",processor_version['ReleaseVersion'])
 
+        ##############################
+        # Terrainshadowmask and incidence angle calculation: pass orbit ans date time and outputfilename
+        #terrain_result = main_terrain.create_mask(
+                            # f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
 
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95

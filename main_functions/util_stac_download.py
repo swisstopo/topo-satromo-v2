@@ -31,7 +31,8 @@ CONFIG_PATH = r"C:\temp\satromo-dev\secrets\stac_fsdi-int.json"
 
 ASSET_TITLE_TO_DOWNLOAD = "Cloud mask - 10m"
 
-OUTPUT_BASE_DIR = r"C:\temp\stac_cloud_masksv_17"
+OUTPUT_BASE_DIR = r"C:\temp\stac_cloud_masksv_17_CPU"
+OUTPUT_BASE_DIR = r"\\tsclient\M\Transfer\oed\stac_cloud_masksv_17_CPU"
 
 
 # ---------------------------------------------------------------------
