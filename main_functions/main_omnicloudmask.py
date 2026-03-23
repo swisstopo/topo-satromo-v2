@@ -229,8 +229,8 @@ def generate_cloud_mask_for_scene(orbit_nr, acquisition_date, output_dir, noData
     gpu_available, gpu_status = check_gpu_availability()
 
     #for testing purposes, we can force GPU availability to False to test CPU fallback
-    gpu_available = False
-    gpu_status = "GPU availability forced to False for testing CPU fallback"
+    #gpu_available = False
+    #gpu_status = "GPU availability forced to False for testing CPU fallback"
 
     # Check for GPU availability
     if gpu_available:
