@@ -58,7 +58,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     # options': True, False - defines if we store the original data to S3 as backup
     s3_backup = False # backup copernicus tiles data to S3
-    gpu_check = False# Check if a GPU system is available for processing, if not write to empty asset list and skip processing
+    gpu_check = True# Check if a GPU system is available for processing, if not write to empty asset list and skip processing
 
     ##############################
     # TIME
@@ -1091,7 +1091,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             try:
                 # Calculate intermediate resolution
                 print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
-                
+
                 # Step 1: Clip and oversample with nearest neighbour (keep original projection)
                 cmd_oversample = [
                     "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
@@ -1115,7 +1115,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"✓ Oversampled and clipped file created: {temp_file}")
 
                 print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
-                
+
                 # Step 2: Reproject with bilinear (at oversampled resolution)
                 cmd_reproject = [
                     "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
@@ -1169,13 +1169,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 else:
                     print(f"Using lossless DEFLATE compression")
                     cmd_downsample.extend(["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "ZLEVEL=2"])
-                    
+
                     # For lossless, preserve NoData value
                     if nodata_value is not None:
                         cmd_downsample.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
                 cmd_downsample.extend([str(temp_file), str(input_tif)])
-                
+
                 print(f"Command: {' '.join(cmd_downsample)}")
                 result = subprocess.run(cmd_downsample, capture_output=True, text=True)
 
