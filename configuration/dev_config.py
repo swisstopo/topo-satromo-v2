@@ -51,12 +51,12 @@ OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 # A) PRODUCTS, INDICES
 # ********************
 
-#  ch.swisstopo.swisseo_s2-sr #TODO: delete in context with V2
-PRODUCT_S2_LEVEL_CSPLUS = {
-    "image_collection": "S2_SR_HARMONIZED_SWISS",
-    "temporal_coverage": 1,  # Days
-    # "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
-}
+# #  ch.swisstopo.swisseo_s2-sr #TODO: delete in context with V2
+# PRODUCT_S2_LEVEL_CSPLUS = {
+#     "image_collection": "S2_SR_HARMONIZED_SWISS",
+#     "temporal_coverage": 1,  # Days
+#     # "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
+# }
 
 #  ch.swisstopo.swisseo_s2-sr
 #Sentinel-2 L2A Band configurations
@@ -140,15 +140,15 @@ step0 = {
     "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200": {
         'step0_function': 'step1_processor_s2_sr.process_product_s2_sr'
         # cleaning_older_than: 2 # entry used to clean assets
-    },
+    }
     # 'projects/satromo-int/assets/LST_SWISS': {
     #     'step0_function': 'step0_processor_msg_lst.generate_msg_lst_mosaic_for_single_date'
     #     # cleaning_older_than: 2 # entry used to clean assets
     # },
-    f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
-        'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
-        # cleaning_older_than: 2 # entry used to clean assets
-    } # TODO: check if needed in context with V2
+    # f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
+    #     'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
+    #     # cleaning_older_than: 2 # entry used to clean assets
+    # }
 }
 
 
