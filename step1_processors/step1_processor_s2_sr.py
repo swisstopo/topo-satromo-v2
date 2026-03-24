@@ -938,6 +938,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             Process: 5x oversample (nearest) -> bilinear reproject -> 5x downsample (bilinear)
             As decided on 02.04.2025 with AGROSCOPE team.
             Uses only ONE temporary file to minimize disk usage.
+            ONE-HOT ENCODING FOR CATEGORICAL (SCL) DATA: If the input file is identified as SCL (Scene Classification Layer), it applies a consistent 3-step process with one-hot encoding to ensure accurate class representation during resampling.
 
             Resolution and datatype are automatically detected from input file.
 
@@ -1088,7 +1089,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             temp_file = input_path.parent / f"{input_path.stem}_temp{input_path.suffix}"
 
             try:
+                # Calculate intermediate resolution
                 print(f"\n=== Step 1: Clipping and oversampling to {intermediate_res}m with nearest neighbour (NO reprojection) ===")
+                
+                # Step 1: Clip and oversample with nearest neighbour (keep original projection)
                 cmd_oversample = [
                     "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
                     "-co", "TILED=YES", "-co", "BIGTIFF=YES",
@@ -1098,9 +1102,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 ]
 
                 if nodata_value is not None:
-                    cmd_oversample.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
+                    cmd_oversample.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
+                    cmd_oversample.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in output
 
                 cmd_oversample.extend([str(input_tif), str(temp_file)])
+
                 print(f"Command: {' '.join(cmd_oversample)}")
                 result = subprocess.run(cmd_oversample, capture_output=True, text=True)
 
@@ -1109,6 +1115,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 print(f"✓ Oversampled and clipped file created: {temp_file}")
 
                 print(f"\n=== Step 2: Reprojecting to EPSG:{epsg} with bilinear at {intermediate_res}m ===")
+                
+                # Step 2: Reproject with bilinear (at oversampled resolution)
                 cmd_reproject = [
                     "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
                     "-co", "TILED=YES", "-co", "BIGTIFF=YES",
@@ -1119,22 +1127,36 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 ]
 
                 if nodata_value is not None:
-                    cmd_reproject.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
+                    cmd_reproject.extend(["-srcnodata", str(nodata_value)])  # Treat this value as NoData in source
+                    cmd_reproject.extend(["-dstnodata", str(nodata_value)])  # Set this value as NoData in outpu
 
                 cmd_reproject.extend([str(temp_file), str(input_tif)])
                 result = subprocess.run(cmd_reproject, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    raise Exception(f"Reprojection failed: {result.stderr}")
+                    print(f"Error: {result.stderr}")
+                    raise Exception(f"Reprojection failed with code {result.returncode}")
 
+                # Move result back to temp_file for next step
                 shutil.move(str(input_tif), str(temp_file))
                 print(f"✓ Reprojected file ready")
 
+                # Step 3: Resample (downsample) with bilinear to final resolution and convert to COG
                 print(f"\n=== Step 3: Resampling to {resolution}m with bilinear and COG conversion ===")
+
+                props_reprojected = get_raster_properties(temp_file)
+                nodata_value = props_reprojected['nodata']  # Get NoData from step 2 output
+                print(f"Detected reprojected resolution: {props_reprojected['resolution']}m")
+                print(f"Using datatype: {props_reprojected['datatype']}")
+                print(f"Using nodata value: {nodata_value}")
+
+                target_res = resolution
+
+
                 cmd_downsample = [
                     "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
                     "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    "-tr", str(resolution), str(resolution), "-tap",
+                    "-tr", str(target_res), str(target_res), "-tap",
                     "-r", "bilinear", "-ot", datatype, "-overwrite"
                 ]
 
@@ -1147,14 +1169,19 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 else:
                     print(f"Using lossless DEFLATE compression")
                     cmd_downsample.extend(["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "ZLEVEL=2"])
+                    
+                    # For lossless, preserve NoData value
                     if nodata_value is not None:
                         cmd_downsample.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
                 cmd_downsample.extend([str(temp_file), str(input_tif)])
+                
+                print(f"Command: {' '.join(cmd_downsample)}")
                 result = subprocess.run(cmd_downsample, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    raise Exception(f"Resampling failed: {result.stderr}")
+                    print(f"Error: {result.stderr}")
+                    raise Exception(f"Resampling failed with code {result.returncode}")
 
                 print(f"✓ Final COG created: {input_tif}")
 
@@ -1163,6 +1190,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 raise e
 
             finally:
+                # Clean up temp file
                 if temp_file.exists():
                     print(f"Cleaning up: {temp_file}")
                     temp_file.unlink()
