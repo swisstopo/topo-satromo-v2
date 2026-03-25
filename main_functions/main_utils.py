@@ -7,6 +7,8 @@ import csv
 import os
 import json
 import pandas as pd
+import torch
+import platform
 import dateutil
 from typing import Dict, List, Optional, Tuple, Union, Any
 from pathlib import Path
@@ -910,3 +912,80 @@ def extract_and_compare_datetime_from_url(url, iso_string):
     else:
         print("Failed to fetch data from the URL:", response.status_code)
         return False
+
+def check_gpu_availability():
+    """
+    Check if GPU is available and properly initialized.
+    Returns: tuple (bool, str) - (is_available, status_message)
+    """
+    try:
+        # First, try to check CUDA availability
+        # This might trigger the warning/error you're seeing
+        if torch.cuda.is_available():
+            # Additional verification: try to get device count
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                # Try to actually access the device
+                try:
+                    device_name = torch.cuda.get_device_name(0)
+                    return True, f"GPU detected: {device_name}"
+                except Exception as e:
+                    return False, f"GPU initialization failed: {str(e)}"
+            else:
+                return False, "GPU initialization failed: No CUDA devices found"
+        else:
+            # CUDA not available, do system-level check
+            return verify_gpu_with_system_tools()
+    except Exception as e:
+        # Catch the CUDA initialization error
+        error_msg = str(e)
+        if "forward compatibility was attempted on non supported HW" in error_msg or \
+        "CUDA" in error_msg or "cuda" in error_msg:
+            return False, "GPU initialization failed: CUDA compatibility error"
+        return False, f"GPU initialization failed: {error_msg}"
+
+def verify_gpu_with_system_tools():
+    """
+    Verify GPU availability using system tools (nvidia-smi on Linux, nvidia-smi.exe on Windows)
+    Returns: tuple (bool, str) - (is_available, status_message)
+    """
+    system = platform.system()
+
+    try:
+        if system == "Linux":
+            # Check with nvidia-smi on Linux
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip().split('\n')[0]
+                return False, f"GPU hardware detected ({gpu_name}) but PyTorch CUDA not available"
+            else:
+                return False, "No GPU detected"
+
+        elif system == "Windows":
+            # Check with nvidia-smi on Windows (usually in System32 or NVIDIA folder)
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                shell=True  # Needed on Windows to find nvidia-smi in PATH
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip().split('\n')[0]
+                return False, f"GPU hardware detected ({gpu_name}) but PyTorch CUDA not available"
+            else:
+                return False, "No GPU detected"
+        else:
+            return False, f"Unsupported operating system: {system}"
+
+    except FileNotFoundError:
+        return False, "No GPU detected (nvidia-smi not found)"
+    except subprocess.TimeoutExpired:
+        return False, "GPU check timed out"
+    except Exception as e:
+        return False, f"GPU check failed: {str(e)}"
