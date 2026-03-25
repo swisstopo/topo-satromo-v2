@@ -9,6 +9,7 @@ GITHUB_OWNER = "swisstopo"
 GITHUB_REPO = "topo-satromo-v2"
 
 # Secrets
+<<<<<<< HEAD
 FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-prod.json")
 S3_SECRETS = os.path.join("secrets", "s3_prod.json")
 COPERNICUS_SECRETS = os.path.join("secrets", "copernicus_reprocess.json")
@@ -17,6 +18,27 @@ COPERNICUS_SECRETS = os.path.join("secrets", "copernicus_reprocess.json")
 #S3_BUCKET_NAME = "satromoint"
 S3_BUCKET_NAME = "s3-topo-satromo-prod"
 S3_BUCKET_PATH = "data"
+=======
+GOOGLE_SECRETS = os.path.join("secrets", "geetest-credentials-int.secret")
+FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-int.json")
+S3_SECRETS = os.path.join("secrets", "s3_prod.json")
+
+
+# File and directory paths
+GEE_RUNNING_TASKS = os.path.join("processing", "running_tasks.csv")
+GEE_COMPLETED_TASKS = os.path.join("tools", "completed_tasks.csv")
+EMPTY_ASSET_LIST = os.path.join("tools", "step0_empty_assets.csv")
+PROCESSING_DIR = "processing"
+LAST_PRODUCT_UPDATES = os.path.join("tools", "last_updates.csv")
+
+# Set GCS Bucket name of Google Cloud Storage
+GCLOUD_BUCKET = "s2_sr_registration_swiss"
+
+# set S3 path
+S3_BUCKET_NAME = "s3-topo-satromo-prod"
+S3_BUCKET_PATH="data"
+
+>>>>>>> main
 
 
 # General product parameters
@@ -54,11 +76,32 @@ OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
 
 #  ch.swisstopo.swisseo_s2-sr
+<<<<<<< HEAD
 #Sentinel-2 L2A Band configurations
 SENTINEL2_BAND_CONFIG ={
     10:['B02', 'B03', 'B04', 'B08',], # 10m bands: BLUE, GREEN, RED, NIR
     20:['B05', 'B06', 'B07', 'B8A', 'B11', 'B12', 'SCL',], # 20m bands: SWIR and RedEdge bands and SCL
     60:['B01', 'B09', 'AOT',] # 60m bands: Coastal Aerosol  Water Vapor and Aerosol
+=======
+PRODUCT_S2_LEVEL_CSPLUS = {
+    "image_collection": "GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED",
+    "temporal_coverage": 1,  # Days
+    "step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
+}
+#  ch.swisstopo.swisseo_s2-sr
+PRODUCT_S2_LEVEL_2A = {
+    # "prefix": "S2_L2A_SR",
+    # TODO: check if needed in context with step0
+    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
+    "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
+    "temporal_coverage": 1,  # Days
+    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with step0
+    "asset_size": 5,
+    "spatial_scale_export_mask": 10,
+    "product_name": "ch.swisstopo.swisseo_s2-sr_v100",
+    "no_data": 9999,
+    #"step0_collection": f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS"
+>>>>>>> main
 }
 
 #Sentinel-2 L2A Band Names
@@ -126,10 +169,17 @@ step0 = {
     #     'step0_function': 'step0_processor_msg_lst.generate_msg_lst_mosaic_for_single_date'
     #     # cleaning_older_than: 2 # entry used to clean assets
     # },
+<<<<<<< HEAD
     # f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
     #     'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
     #     # cleaning_older_than: 2 # entry used to clean assets
     # }
+=======
+    f"s3://{S3_BUCKET_NAME}/data/CLOUD_SCORE_PLUS": {
+        'step0_function': 'step0_processor_csplus.generate_csplus_mosaic_for_single_date'
+        # cleaning_older_than: 2 # entry used to clean assets
+    }
+>>>>>>> main
 }
 
 

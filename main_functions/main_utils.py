@@ -121,8 +121,13 @@ def initialize_gee():
     # image = ee.Image("NASA/NASADEM_HGT/001")
     # title = image.get("title").getInfo()
 
+<<<<<<< HEAD
     # if title != "NASADEM: NASA NASADEM Digital Elevation 30m":
     #     print("GEE initialization FAILED")
+=======
+    if title != "NASADEM: NASA NASADEM Digital Elevation 30m":
+        print("GEE initialization FAILED")
+>>>>>>> main
 
     # Initialize S3 client with credentials
     global s3
@@ -131,11 +136,15 @@ def initialize_gee():
             "s3",
             aws_access_key_id=aws_creds["aws_access_key_id"],
             aws_secret_access_key=aws_creds["aws_secret_access_key"],
+<<<<<<< HEAD
             region_name=aws_creds["aws_region_name"],
+=======
+>>>>>>> main
         )
 
     except Exception as e:
         print(f"Warning: S3 initialization failed - {e}")
+<<<<<<< HEAD
 
 
     # Initialize COPERNICUS S3 client with credentials
@@ -152,6 +161,8 @@ def initialize_gee():
 
     except Exception as e:
         print(f"Warning: COPERNICUS S3 initialization failed - {e}")
+=======
+>>>>>>> main
 
 def is_date_in_empty_asset_list(collection, check_date_str):
     """
