@@ -65,9 +65,11 @@ maskSnowWithNDSI = False
 ##############################
 # CONFIGURATION / PARAMETERS
 # Paths
-stac_swisstopo = 'https://sys-data.int.bgdi.ch/' # swissTOPO STAC API base URL TODO: change to prod path
+stac_swisstopo = 'https://sys-data.int.bgdi.ch/' # swissTOPO STAC API base URL TODO: change S2-SR input data to prod path
+stac_swisstopo_prod = 'https://data.geo.admin.ch/'
 stac_swisstopo_version = 'api/stac/v0.9/'
 s2_sr_collection_id = 'ch.swisstopo.swisseo_s2-sr_v200' # swissEO S2-SR collection name
+lst_collection_id = 'ch.meteoschweiz.landoberflaechentemperatur'
 s3_bucket_satromo = 's3-topo-satromo-prod/'
 s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/'
 s3_path_key_lst_ref = 'data/LST_REFERENCE/2004-2020_LST_MSGch02/' # options: 2004-2020_LST_MSGch02, 2004-2020_LST_MSGch02_M, 2004-2020_LST_MSGch05_M
@@ -92,13 +94,15 @@ os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without 
 
 ##############################
 # TIME
-current_date_str = "2026-03-19" # TODO: replace with dynamic date input from config / satromo_processor.py
-
-doy = datetime.strptime(current_date_str, '%Y-%m-%d').timetuple().tm_yday
+current_date_str = "2026-03-02" # TODO: replace with dynamic date input from config / satromo_processor.py
+current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
+# 2026-03-19
+doy = current_date.timetuple().tm_yday
 doy_str = f'{doy:03d}' # zero-padded three-digit day of year
 
 year = current_date_str[:4]
 month = current_date_str[5:7]
+day = current_date_str[8:10]
 
 ##############################
 # SPACE / ROI
@@ -427,9 +431,9 @@ else:
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
 vci_den = ndvi_ref_max - ndvi_ref_min # denominator
 vci_den[vci_den == 0] = np.nan # avoid division by zero
-vci = ndvi - ndvi_ref_min  # numerator, reuse ndvi name or new var
+vci = ndvi_masked - ndvi_ref_min  # numerator, reuse ndvi name or new var
 vci /= vci_den # divide in-place
-del ndvi, ndvi_ref_min, ndvi_ref_max, vci_den
+del ndvi_masked, ndvi_ref_min, ndvi_ref_max, vci_den
 vci *= 100  # scale in-place
 print('Calculated VCI')
 
@@ -437,93 +441,20 @@ print('Calculated VCI')
 # INPUT DATA: TEMPERATURE
 # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
 
-# Functions to load LST netcdf data (from script util_create_LSTMAX.py aus SATROMO v1)
-# import requests
-# from io import BytesIO
-# def download_netcdf_to_memory(path):
-#     """
-#     Download a netCDF file from a URL and return as a BytesIO object
+# TODO: update to handle operational data since begining of 2026 or older data stored locally
+if current_date < datetime(2024, 1 ,1):
+    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+else:
+    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
+    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
 
-#     Args:
-#         path: URL to download
-
-#     Returns:
-#         BytesIO object containing the file data or None if download failed
-#     """
-#     try:
-#         #print(f"Streaming {url}")
-#         response = requests.get(path)
-#         response.raise_for_status()
-#         return BytesIO(response.content)
-#     except requests.exceptions.RequestException as e:
-#         print(f"Error downloading {url}: {e}")
-#         return None
-
-# sdl_url = 'https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur/test/msg.SDL.H_ch02.lonlat_20251203000000.nc'
-# sol_url = 'https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur/test/msg.SOL.H_ch02.lonlat_20251203000000.nc'
-
-# sdl_nc = download_netcdf_to_memory(sdl_url)
-# sol_nc = download_netcdf_to_memory(sol_url)
-
-# def get_monthly_files_for_date(parameters, satellite, channel, date_str, base_url):
-#     """
-#     Get monthly files that contain data for the specified date using streaming
-
-#     Args:
-#         parameters: List of parameters to get (e.g. ['SOL', 'SDL'])
-#         satellite: Satellite name (e.g. 'msg', 'mfg')
-#         channel: Channel name (e.g. 'ch02', 'ch05h')
-#         date_str: Date string in format YYYY-MM-DD for the day we want data for
-#         base_url: Base URL for the data
-
-#     Returns:
-#         Dictionary of BytesIO objects with parameter as key
-#     """
-#     # Parse the date
-#     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-#     year = date_obj.year
-
-#     # Get the first day of the month
-#     first_day = date_obj.replace(day=1)
-#     first_day_str = first_day.strftime('%Y%m%d')  # Convert to YYYYMMDD for file naming
-
-#     # Construct the correct URL format
-#     # For MSG: MSG2004-2023
-#     # For MFG: MFG1991-2005
-#     if satellite.lower() == 'msg':
-#         dir_name = f"MSG2004-2023"
-#     elif satellite.lower() == 'mfg':
-#         dir_name = f"MFG1991-2005"
-#     else:
-#         raise ValueError(f"Unknown satellite: {satellite}")
-
-#     data_dict = {}
-
-#     for param in parameters:
-#         # Create URL for the monthly file
-#         # Correct filename format: msg.SOL.H_ch02.lonlat_20040101000000.nc
-#         url = f"{base_url}/{dir_name}/{satellite.lower()}.{param}.H_{channel}.lonlat_{first_day_str}000000.nc"
-
-#         # Download file into memory
-#         data = download_netcdf_to_memory(url)
-#         if data is not None:
-#             data_dict[param] = data
-#         else:
-#             data_dict[param] = None
-
-#     return data_dict
-
-s3_path_sdl = f's3://{s3_bucket_satromo}data/LST_TEST/MSG_SDL/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-s3_path_sol = f's3://{s3_bucket_satromo}data/LST_TEST/MSG_SOL/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
-
-ds_sdl = xr.open_dataset(s3_path_sdl, engine='h5netcdf', storage_options={'anon': True})
-ds_sol = xr.open_dataset(s3_path_sol, engine='h5netcdf', storage_options={'anon': True})
+ds_sdl = xr.open_dataset(sdl_path, engine='h5netcdf')
+ds_sol = xr.open_dataset(sol_path, engine='h5netcdf')
 
 ##############################
 # CALCULATE LST
-# From temperature data
-
-# Function to calculate LST from radiance (from script util_create_LSTMAX.py aus SATROMO v1)
+# Function to calculate LST from radiance
 def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
     """
     Calculate LST for a specific date with flexible aggregation options.
@@ -601,7 +532,7 @@ def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
 ds_11am = calc_LST_for_date(ds_sol, ds_sdl, '2023-05-02', aggregation='hour', hour=11) # TODO: replace with dynamic date input
 
 # Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
-def resample_lst_to_s2_grid(ds_lst, var_name, roi, target_transform, target_shape, target_crs='EPSG:2056'):
+def resample_lst_to_s2_grid(ds_lst, var_name, target_transform, target_shape, target_crs='EPSG:2056'):
     """
     Resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056.
     
@@ -611,8 +542,6 @@ def resample_lst_to_s2_grid(ds_lst, var_name, roi, target_transform, target_shap
         LST dataset with lat/lon coordinates
     var_name : str
         Name of the LST variable to resample (e.g., 'LST_mean', 'LST_max', 'LST_hour11')
-    roi : tuple
-        Bounding box (minx, miny, maxx, maxy) in EPSG:2056
     target_transform : affine.Affine
         Target transform from Sentinel-2 10m grid
     target_shape : tuple
@@ -681,7 +610,7 @@ def resample_lst_to_s2_grid(ds_lst, var_name, roi, target_transform, target_shap
     return lst_resampled
 
 # Use it after calculating LST
-lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', roi, target_transform, target_shape)
+lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', target_transform, target_shape)
 
 # Extract the data arrays and convert from Kelvin to Celsius
 lst_11am = lst_11am_10m - 273.15
