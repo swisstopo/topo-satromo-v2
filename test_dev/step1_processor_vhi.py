@@ -118,7 +118,7 @@ s2_sr_items = []
 for item in s2_sr_collection.get_items():
     if current_date_str in item.id:
         s2_sr_items.append(item.id)
-print(f'Starting the VHI calculation for items: {s2_sr_items}')
+print(f'Starting the VHI calculation for {current_date_str}')
 
 # TODO: currently only works for first item per date -> handle multiple items (tiles) per date
 # Get file paths for required bands
@@ -249,7 +249,7 @@ ndvi_den = nir + red
 ndvi_den[ndvi_den == 0] = np.nan
 ndvi = (nir - red) / ndvi_den
 del ndvi_den, red, nir
-print('Calculated NDVI for the current item')
+print(f'Calculated NDVI for the current item: {s2_sr_items}') #TODO: update to handle multiple items per date
 
 
 ##############################
@@ -407,6 +407,7 @@ def load_scale_and_resample_ndvi_reference(filepath, roi, target_transform, targ
     resampled[nodata_mask] = np.nan
 
     return resampled
+print('Loaded reference NDVI statistics for current day of year')
 
 # Read relevant bands based on the chosen method
 if workWithPercentiles is True:
@@ -414,15 +415,23 @@ if workWithPercentiles is True:
     ndvi_ref_max = load_scale_and_resample_ndvi_reference(s3_path_ndvi_ref, roi, target_transform, target_shape, band_num=7)  # 95th percentile
     # Define confidence interval method
     CI_method = '5th_and_95th_percentile'
+    print('- Using percentiles for VCI calculation')
 else:
     ndvi_ref_min = load_scale_and_resample_ndvi_reference(s3_path_ndvi_ref, roi, target_transform, target_shape, band_num=1)  # minimum
     ndvi_ref_max = load_scale_and_resample_ndvi_reference(s3_path_ndvi_ref, roi, target_transform, target_shape, band_num=2)  # maximum
     CI_method = 'min_and_max'
+    print('- Using min and max for VCI calculation')
 
 ##############################
 # CALCULATE VCI
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
-vci = 100 * ((ndvi - ndvi_ref_min) / (ndvi_ref_max - ndvi_ref_min))
+vci_den = ndvi_ref_max - ndvi_ref_min # denominator
+vci_den[vci_den == 0] = np.nan # avoid division by zero
+vci = ndvi - ndvi_ref_min  # numerator, reuse ndvi name or new var
+vci /= vci_den # divide in-place
+del ndvi, ndvi_ref_min, ndvi_ref_max, vci_den
+vci *= 100  # scale in-place
+print('Calculated VCI')
 
 ############################################################
 # INPUT DATA: TEMPERATURE
@@ -676,26 +685,43 @@ lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', roi, target_transf
 
 # Extract the data arrays and convert from Kelvin to Celsius
 lst_11am = lst_11am_10m - 273.15
+print(f'Calculated LST (using the aggregation method "{lst_aggregation}")')
 
 ##############################
 # INPUT DATA: REFERENCE LST
 # Load or compute long-term LST statistics for climate reference period (1991-2020)
 s3_path_lst_ref = f's3://{s3_bucket_satromo}{s3_path_key_lst_ref }LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
 ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
+print('Loaded reference LST statistics for current day of year')
 
-# Open single statistic bands and resample to 10m grid (min, max, mean, median, p05, p95)
-lst_ref_10m_p05 = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', roi, target_transform, target_shape)
-lst_ref_10m_p95 = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', roi, target_transform, target_shape)
+# Read relevant bands based on the chosen method
+if workWithPercentiles is True:
+    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', roi, target_transform, target_shape)  # 5th percentile
+    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', roi, target_transform, target_shape)  # 95th percentile
+    print('- Using percentiles for TCI calculation')
+else:
+    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_min', roi, target_transform, target_shape)  # minimum
+    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_max', roi, target_transform, target_shape)  # maximum
+    print('- Using min and max for TCI calculation')
 
 ##############################
 # CALCULATE TCI
 # TCI = 100 * (LST_max - LST) / (LST_max - LST_min)
-tci = 100 * ((lst_ref_10m_p95 - lst_11am) / (lst_ref_10m_p95 - lst_ref_10m_p05))
+tci_den = lst_ref_10m_max - lst_ref_10m_min
+tci_den[tci_den == 0] = np.nan
+tci = lst_ref_10m_max - lst_11am
+tci /= tci_den
+del lst_11am, lst_ref_10m_min, lst_ref_10m_max, tci_den
+tci *= 100
+print('Calculated TCI')
 
 ############################################################
 # CALCULATE VHI
 # VHI = a*VCI + (1-a)*TCI
-vhi = alpha * vci + (1 - alpha) * tci
+vhi = vci * alpha
+vhi += tci * (1 - alpha)
+del vci, tci
+print(f'Calculated VHI for {current_date_str}')
 
 ##############################
 # APPLY VEGETATION MASK
