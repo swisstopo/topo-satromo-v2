@@ -190,7 +190,6 @@ def main():
     days_back = 30
     collection = config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1]
 
-<<<<<<< HEAD
     result = process_empty_asset_list(collection, days_back, config_file)
 
     print()
@@ -202,11 +201,6 @@ def main():
     print("="*60)
 
     sys.exit(0 if result else 0) # Changed to 0 for "No Changes" as it is often a valid state
-=======
-    # Rerun CloudScore+
-    days_back = 30
-    result = process_empty_asset_list(config.PRODUCT_S2_LEVEL_CSPLUS['step0_collection'].rsplit('/', 1)[-1], days_back, config_file)
->>>>>>> main
 
 
 if __name__ == "__main__":

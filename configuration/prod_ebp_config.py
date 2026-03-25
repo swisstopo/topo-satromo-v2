@@ -9,11 +9,7 @@ GITHUB_OWNER = "swisstopo"
 GITHUB_REPO = "topo-satromo-v2"
 
 # Secrets
-<<<<<<< HEAD
 GOOGLE_SECRETS = os.path.join("secrets", "geetest-credentials-int.secret")
-=======
-GOOGLE_SECRETS = os.path.join("secrets", "keyfile.json")
->>>>>>> main
 FSDI_SECRETS = os.path.join("secrets", "stac_fsdi-int.json")
 S3_SECRETS = os.path.join("secrets", "s3_prod_ebp.json")
 
@@ -26,11 +22,7 @@ PROCESSING_DIR = "processing"
 LAST_PRODUCT_UPDATES = os.path.join("tools", "last_updates.csv")
 
 # Set GCS Bucket name of Google Cloud Storage
-<<<<<<< HEAD
 GCLOUD_BUCKET = "s2_sr_registration_swiss" # TODO chnage to EBP
-=======
-GCLOUD_BUCKET = "satromo_ebp_export"
->>>>>>> main
 
 # set S3 path
 S3_BUCKET_NAME = "s3-topo-satromo-prod"

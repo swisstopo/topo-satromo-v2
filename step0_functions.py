@@ -66,7 +66,6 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
     """
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
-   
     # Check if the collection is stored on S3
     if collection.startswith("s3://"):
         # Parse the S3 bucket and prefix from the collection path

@@ -3,11 +3,7 @@ import datetime
 
 import configuration as config
 from step0_functions import get_step0_dict, step0_main
-<<<<<<< HEAD
 from step1_processors import step1_processor_s2_sr#, step1_processor_vhi #, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi_hist
-=======
-from step1_processors import step1_processor_s2_sr#, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi, step1_processor_vhi_hist
->>>>>>> main
 from main_functions import main_utils
 
 
@@ -33,16 +29,11 @@ if __name__ == "__main__":
     current_date_str = previous_date.strftime('%Y-%m-%d')
 
     # Check for command line argument (highest priority)
-<<<<<<< HEAD
     from configuration import arg_date_str , arg_force
-=======
-    from configuration import arg_date_str
->>>>>>> main
     if arg_date_str:
         current_date_str = arg_date_str
         print(f'Using command line date: {arg_date_str}')
         debug_mode = False
-<<<<<<< HEAD
         force_reprocess = arg_force  # use CLI flag
         if force_reprocess:
             print("Force reprocess enabled via CLI flag")
@@ -59,18 +50,6 @@ if __name__ == "__main__":
         print("Using manually set date:", current_date_str)
         print(f"Force reprocess: {force_reprocess}")
         print("*****************************")
-=======
-    else:
-        # Enable debug mode if no command line argument is given
-        debug_mode = True
-
-    # Check for debug override (second priority)
-    #if debug_mode:
-    #    current_date_str = "2025-04-01"
-    #    print("*****************************")
-    #    print("Using manually set date:", current_date_str)
-    #    print("*****************************")
->>>>>>> main
 
 
     # Define date to be used
@@ -112,7 +91,6 @@ if __name__ == "__main__":
                 #     [8.10, 47.18, 8.20, 47.25])  # 6221 Rickenbach
                 # roi = ee.Geometry.Rectangle(
                 #     [7.938447, 47.514378, 8.127522, 47.610846])
-<<<<<<< HEAD
 
                 # Check if STAC items already exist for the given date, against the step0_collection
                 api_path = getattr(config, 'STAC_FSDI_API')
@@ -130,10 +108,6 @@ if __name__ == "__main__":
                 else:
                     print(f"STAC items already exist for date {current_date_str}: skipping processing.")
                     result = f"PRODUCT_S2_LEVEL_2A: STAC items already exist for date {current_date_str}, skipping processing."
-=======
-                result = step1_processor_s2_sr.process_product_s2_sr(
-                      current_date_str,collection_ready)
->>>>>>> main
 
             elif product_to_be_processed == 'PRODUCT_VHI':
                 roi = ee.Geometry.Rectangle(config.ROI_RECTANGLE) # TODO: doesn't work with GEE anymore, must be fixed
