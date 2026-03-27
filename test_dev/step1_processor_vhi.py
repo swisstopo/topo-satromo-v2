@@ -94,7 +94,7 @@ os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without 
 
 ##############################
 # TIME
-current_date_str = "2026-03-02" # TODO: replace with dynamic date input from config / satromo_processor.py
+current_date_str = "2026-03-04" # TODO: replace with dynamic date input from config / satromo_processor.py
 current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
 # 2026-03-19
 doy = current_date.timetuple().tm_yday
@@ -529,7 +529,7 @@ def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
     
     return ds_output
 
-ds_11am = calc_LST_for_date(ds_sol, ds_sdl, '2023-05-02', aggregation='hour', hour=11) # TODO: replace with dynamic date input
+ds_11am = calc_LST_for_date(ds_sol, ds_sdl, current_date_str, aggregation='hour', hour=11)
 
 # Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
 def resample_lst_to_s2_grid(ds_lst, var_name, target_transform, target_shape, target_crs='EPSG:2056'):
@@ -625,12 +625,12 @@ print('Loaded reference LST statistics for current day of year')
 
 # Read relevant bands based on the chosen method
 if workWithPercentiles is True:
-    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', roi, target_transform, target_shape)  # 5th percentile
-    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', roi, target_transform, target_shape)  # 95th percentile
+    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', target_transform, target_shape)  # 5th percentile
+    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', target_transform, target_shape)  # 95th percentile
     print('- Using percentiles for TCI calculation')
 else:
-    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_min', roi, target_transform, target_shape)  # minimum
-    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_max', roi, target_transform, target_shape)  # maximum
+    lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_min', target_transform, target_shape)  # minimum
+    lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_max', target_transform, target_shape)  # maximum
     print('- Using min and max for TCI calculation')
 
 ##############################
@@ -725,7 +725,7 @@ vhi_norm = BoundaryNorm(vhi_bins, vhi_cmap.N)
 
 # Simple plot of VHI
 plt.figure(figsize=(10, 8))
-plt.imshow(vhi, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
+plt.imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
 plt.colorbar()
 plt.show()
 
