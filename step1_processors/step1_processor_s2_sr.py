@@ -58,7 +58,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     # options': True, False - defines if we store the original data to S3 as backup
     s3_backup = False # backup copernicus tiles data to S3
-    gpu_check = True# Check if a GPU system is available for processing, if not write to empty asset list and skip processing
+    gpu_check = False # Check if a GPU system is available for processing, if not write to empty asset list and skip processing
 
     ##############################
     # TIME

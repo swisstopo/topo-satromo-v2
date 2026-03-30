@@ -713,8 +713,8 @@ def get_stac_items_for_date(
     items_url = f"{base}/collections/{collection_id}/items"
 
     # Use midnight-to-midnight range with no microseconds
-    start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
-    end_dt   = datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
+    start_dt = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
+    end_dt   = datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
     datetime_str = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
     items = []
@@ -769,40 +769,44 @@ def get_stac_items_for_date(
     return items
 
 
-def check_stac_collection_availability(stac_catalog_url: str, collection_id: str,
-                                       target_date: datetime.date,
-                                       temporal_coverage: int) -> tuple[bool, List[datetime.date]]:
+def check_stac_collection_availability(
+    stac_catalog_url: str,
+    collection_id: str,
+    target_date: datetime.date,
+    temporal_coverage: int
+) -> tuple[bool, List[datetime.date]]:
     """
     Check if STAC items are available for all dates in the temporal coverage period.
-
     Args:
         stac_catalog_url: Base URL of the STAC catalog
         collection_id: Collection ID to check
         target_date: End date of the temporal coverage
         temporal_coverage: Number of days to check backwards from target_date
-
     Returns:
         Tuple of (all_present: bool, missing_dates: List[datetime.date])
     """
-    # Open catalog with conformance classes
-    catalog = Client.open(stac_catalog_url)
-    catalog.add_conforms_to("COLLECTIONS")
-    catalog.add_conforms_to("ITEM_SEARCH")
+    base = stac_catalog_url.rstrip("/")
+    items_url = f"{base}/collections/{collection_id}/items"
 
     check_date = target_date - timedelta(days=temporal_coverage)
-    end_date = target_date
     all_present = True
     missing_dates = []
 
-    while check_date <= end_date:
-        items = get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
+    while check_date <= target_date:
+        start_dt = datetime.datetime(check_date.year, check_date.month, check_date.day, 0, 0, 0)
+        end_dt   = datetime.datetime(check_date.year, check_date.month, check_date.day, 23, 59, 59)
+        datetime_str = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
-        if not items or len(items) == 0:
-            print(f'No STAC items found for date {check_date}')
+        response = requests.get(items_url, params={"datetime": datetime_str, "limit": 1}, timeout=30)
+        response.raise_for_status()
+        features = response.json().get("features", [])
+
+        if not features:
+            print(f"No STAC items found for date {check_date}")
             all_present = False
             missing_dates.append(check_date)
         else:
-            print(f'Found {len(items)} STAC item(s) for date {check_date}')
+            print(f"Found {len(features)} STAC item(s) for date {check_date}")
 
         check_date += timedelta(days=1)
 
