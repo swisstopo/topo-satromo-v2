@@ -94,7 +94,7 @@ os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without 
 
 ##############################
 # TIME
-current_date_str = "2026-03-04" # TODO: replace with dynamic date input from config / satromo_processor.py
+current_date_str = "2026-03-03" # TODO: replace with dynamic date input from config / satromo_processor.py
 current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
 # 2026-03-19
 doy = current_date.timetuple().tm_yday
