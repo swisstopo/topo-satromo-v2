@@ -693,9 +693,28 @@ vhi_masked = vhi.copy()
 vhi_masked[vegetation_mask == 0] = no_data
 
 ##############################
-# GENERATE METADATA
-# main_functions/main_utils.py. function metadata_add_entry
-# https://github.com/swisstopo/topo-satromo-v2/blob/49fcc1545b609823602c5c5dc43c845912013f1e/main_functions/main_utils.py#L833
+# SET METADATA
+# mTODO: controll if everything matches with the config file
+# vhi_masked = vhi_masked.set({
+#     'doy': doy,
+#     'alpha': alpha,
+#     'temporal_coverage': config.PRODUCT_VHI['temporal_coverage'],
+#     'missing_data': config.PRODUCT_VHI['missing_data'],
+#     'no_data': config.PRODUCT_VHI['no_data'],
+#     'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
+#     'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
+#     'collection': collection_ready,
+#     'system:time_start': current_date.advance((-1*d), 'day').millis(),
+#     'system:time_end': current_date.millis(),
+#     'NDVI_reference_data': config.PRODUCT_VHI['NDVI_reference_data'],
+#     'NDVI_index_list': NDVI_index_list,
+#     'NDVI_scene_count': NDVI_scene_count,
+#     'LST_reference_data': config.PRODUCT_VHI['LST_reference_data'],
+#     'LST_index_list': LST_index_list,
+#     'LST_scene_count': LST_scene_count,
+#     'VCI_and_TCI_calculated_with': CI_method,
+#     'pixel_size_meter': 10,
+# })
 
 ##############################
 # EXPORT VHI
