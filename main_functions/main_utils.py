@@ -692,49 +692,79 @@ def equalize_extents(
         logger.error(f"Error equalizing extents for {im_target}: {str(e)}")
         raise
 
-def get_stac_items_for_date(stac_catalog_url: str, collection_id: str, target_date: datetime.date) -> List[Dict[str, Any]]:
+def get_stac_items_for_date(
+    stac_catalog_url: str,
+    collection_id: str,
+    target_date: datetime.date
+) -> List[Dict[str, Any]]:
     """
-    Query a STAC catalog for items from a specific collection on a specific date.
+    Query a swisstopo STAC v0.9 catalog for items from a specific collection on a specific date.
 
     Args:
         stac_catalog_url: Base URL of the STAC catalog (e.g., 'https://data.geo.admin.ch/api/stac/v0.9/')
         collection_id: Collection ID (e.g., 'ch.swisstopo.swisseo_s2-sr_v200')
-        target_date: Date to query for (datetime.date object)
+        target_date: Date to query for
 
     Returns:
-        List of STAC items (as dictionaries) for the specified date
+        List of STAC item dicts for the specified date
     """
-    # Open the STAC catalog
-    catalog = Client.open(stac_catalog_url)
+    # Build the items endpoint URL (strip trailing slash to be safe)
+    base = stac_catalog_url.rstrip("/")
+    items_url = f"{base}/collections/{collection_id}/items"
 
-    # Add conformance classes for Swisstopo "finish" STAC implementation
-    catalog.add_conforms_to("COLLECTIONS")
-    catalog.add_conforms_to("ITEM_SEARCH")
+    # Use midnight-to-midnight range with no microseconds
+    start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
+    end_dt   = datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
+    datetime_str = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
-    # Define the time range for the query (single day)
-    start_datetime = datetime.combine(target_date, datetime.min.time())
-    end_datetime = datetime.combine(target_date, datetime.max.time())
-
-    # Format datetime strings for STAC query
-    datetime_str = f"{start_datetime.isoformat()}Z/{end_datetime.isoformat()}Z"
-
-    # Search for items in the collection
-    search = catalog.search(
-        collections=[collection_id],
-        datetime=datetime_str
-    )
-
-    # Collect all items
     items = []
-    for item in search.items():
-        items.append({
-            'id': item.id,
-            'properties': item.properties,
-            'assets': item.assets,
-            'geometry': item.geometry,
-            'bbox': item.bbox,
-            'datetime': item.datetime
-        })
+    params = {
+        "datetime": datetime_str,
+        "limit": 100,
+    }
+
+    while True:
+        response = requests.get(items_url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        for feature in data.get("features", []):
+            items.append({
+                "id":         feature.get("id"),
+                "properties": feature.get("properties", {}),
+                "assets":     feature.get("assets", {}),
+                "geometry":   feature.get("geometry"),
+                "bbox":       feature.get("bbox"),
+                "datetime":   feature.get("properties", {}).get("datetime"),
+            })
+
+        # Handle pagination via next link
+        next_href = None
+        for link in data.get("links", []):
+            if link.get("rel") == "next":
+                next_href = link.get("href")
+                break
+
+        if next_href:
+            # Next link already has params baked in — fetch directly
+            response = requests.get(next_href, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            params = {}  # params are now in the URL
+            items_url = next_href
+            # Re-enter loop cleanly
+            for feature in data.get("features", []):
+                items.append({
+                    "id":         feature.get("id"),
+                    "properties": feature.get("properties", {}),
+                    "assets":     feature.get("assets", {}),
+                    "geometry":   feature.get("geometry"),
+                    "bbox":       feature.get("bbox"),
+                    "datetime":   feature.get("properties", {}).get("datetime"),
+                })
+            break  # swisstopo v0.9 pagination is simple; adjust if needed
+        else:
+            break
 
     return items
 
