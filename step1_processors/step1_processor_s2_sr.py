@@ -347,6 +347,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         else:
                             print(f"Failed to download {file.key} after {max_retries} attempts")
                             dl_stats[1] += 1
+                            return
 
         # Print download statistics
         return dl_stats
@@ -356,7 +357,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     # Check if we have a failed download
-    if dl_stats[1] != 0:
+    if dl_stats is None or dl_stats[1] != 0:
         write_asset_as_empty(collection, day_to_process, 'Tile download incomplete')
         return
 
