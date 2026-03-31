@@ -18,6 +18,7 @@ import re
 from datetime import datetime, timedelta
 from pystac_client import Client
 import json
+import time
 
 import glob
 import math
@@ -186,45 +187,58 @@ def is_date_in_empty_asset_list(collection, check_date_str):
         return False  # Return False in case of any error to allow further processing
 
 
+import time
+import requests
+
 def get_github_info():
     """
     Retrieves GitHub repository information and generates a GitHub link based on the latest commit.
-
+    Retries up to 3 times with a 30-second delay on connection errors.
     Returns:
-        A dictionary containing the GitHub link. If the request fails or no commit hash is available, the link will be None.
+        A dictionary containing the GitHub link and release version.
+        Falls back to None / "github could not be reached" if all attempts fail.
     """
-    # Enter your GitHub repository information
     owner = config.GITHUB_OWNER
     repo = config.GITHUB_REPO
 
-    # Make a GET request to the GitHub API to retrieve information about the repository
-    response = requests.get(
-        f"https://api.github.com/repos/{owner}/{repo}/commits/main")
+    MAX_RETRIES = 3
+    RETRY_DELAY = 30  # seconds
+
+    def get_with_retry(url):
+        """Performs a GET request with retries on connection errors."""
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = requests.get(url, timeout=15)
+                return response
+            except requests.exceptions.ConnectionError as e:
+                if attempt < MAX_RETRIES:
+                    print(f"  Connection error on attempt {attempt}/{MAX_RETRIES}: {e}")
+                    print(f"  Retrying in {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    print(f"  All {MAX_RETRIES} attempts failed for {url}: {e}")
+                    return None
 
     github_info = {}
 
-    if response.status_code == 200:
-        # Extract the commit hash from the response
+    # --- Commit hash ---
+    response = get_with_retry(
+        f"https://api.github.com/repos/{owner}/{repo}/commits/main"
+    )
+    if response is not None and response.status_code == 200:
         commit_hash = response.json()["sha"]
-
-        # Generate the GitHub link
-        github_link = f"https://github.com/{owner}/{repo}/commit/{commit_hash}"
-        github_info["GithubLink"] = github_link
-
+        github_info["GithubLink"] = f"https://github.com/{owner}/{repo}/commit/{commit_hash}"
     else:
-        github_info["GithubLink"] = None
+        github_info["GithubLink"] = "github could not be reached"
 
-    # Make a GET request to the GitHub API to retrieve information about the repository releases
-    response = requests.get(
-        f"https://api.github.com/repos/{owner}/{repo}/releases/latest")
-
-    if response.status_code == 200:
-        # Extract the release version from the response
-        release_version = response.json()["tag_name"]
+    # --- Release version ---
+    response = get_with_retry(
+        f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    )
+    if response is not None and response.status_code == 200:
+        github_info["ReleaseVersion"] = response.json()["tag_name"]
     else:
-        release_version = "0.0.0"
-
-    github_info["ReleaseVersion"] = release_version
+        github_info["ReleaseVersion"] = "github could not be reached"
 
     return github_info
 
