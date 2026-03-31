@@ -929,6 +929,8 @@ def extract_and_compare_datetime_from_url(url, iso_string):
         bool: True if the extracted datetime value is on the same day or newer than the provided ISO string; False otherwise.
     """
     response = requests.get(url)  # Fetch the JSON data from the URL
+    if response.status_code == 404:
+        return True
     if response.status_code == 200:
         data = response.json()  # Parse the JSON data
         # Extract the "datetime" value
