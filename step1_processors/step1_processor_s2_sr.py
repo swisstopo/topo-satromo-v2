@@ -874,7 +874,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
 
         # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we write to empty asset and stop processing .
-        if (orbit_num in [8,22] and cloudcover >85.0) or (orbit_num in [108,65] and cloudcover >95.0):
+        orbit_num_int = int(orbit_num)
+        if (orbit_num_int in [8, 22] and cloudcover > 85.0) or (orbit_num_int in [108, 65] and cloudcover > 95.0):
             print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping further processing.")
             write_asset_as_empty(collection, day_to_process, 'cloudy')
             return
