@@ -83,19 +83,21 @@ PRODUCT_S2_LEVEL_2A = {
     "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
-# VHI – Trockenstress ch.swisstopo.swisseo_vhi_v100
+# VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
 PRODUCT_VHI = {
     # TODO: check if needed in context with step0
     "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
-    "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc",
+    # "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc", #TODO: needs to be updated for V2
     "temporal_coverage": 7,  # Days
-    "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
+    # "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_vhi_v200",
-    "asset_size": 2, # TODO: check if needed in context with V2
-    'NDVI_reference_data': 'projects/satromo-prod/assets/col/1991-2020_NDVI_SWISS',
-    'LST_reference_data': 'projects/satromo-prod/assets/col/1991-2020_LST_SWISS',
-    'LST_current_data': 'projects/satromo-prod/assets/col/LST_SWISS',
-    "step1_collection": 'projects/satromo-prod/assets/col/VHI_SWISS',
+    "no_data": 255,
+    "missing_data": 110,
+    "scaling_factor": 1,
+    "NDVI_reference_data": "projects/satromo-prod/assets/col/1991-2020_NDVI_SWISS",
+    "LST_reference_data": "projects/satromo-prod/assets/col/1991-2020_LST_SWISS",
+    "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
+    "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
     #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
