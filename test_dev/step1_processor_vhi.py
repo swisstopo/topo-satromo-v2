@@ -73,10 +73,6 @@ stac_swisstopo = 'https://sys-data.int.bgdi.ch/' # swissTOPO STAC API base URL T
 stac_swisstopo_prod = 'https://data.geo.admin.ch/'
 stac_swisstopo_version = 'api/stac/v0.9/'
 s2_sr_collection_id = 'ch.swisstopo.swisseo_s2-sr_v200' # swissEO S2-SR collection name
-lst_collection_id = 'ch.meteoschweiz.landoberflaechentemperatur'
-s3_bucket_satromo = 's3-topo-satromo-prod/'
-s3_path_key_ndvi_ref = 'data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/'
-s3_path_key_lst_ref = 'data/LST_REFERENCE/2004-2020_LST_MSGch02/' # options: 2004-2020_LST_MSGch02, 2004-2020_LST_MSGch02_M, 2004-2020_LST_MSGch05_M
 lst_aggregation = '11am' # options: 'mean', 'max', '11am'
 lst_ref_file = f'_MSG_ch02_2004-2020_7days_{lst_aggregation}' # MSG (2004-2020) / MFG (1991-2003)
 
@@ -359,7 +355,7 @@ del ndvi, cloud_mask, snow_mask #, terrain_shadow_mask, illumination_mask # free
 ##############################
 # INPUT DATA: REFERENCE NDVI
 # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
-s3_path_ndvi_ref = 's3://' + s3_bucket_satromo + s3_path_key_ndvi_ref + 'NDVI_Stats_DOY' + doy_str + '.tif'
+s3_path_ndvi_ref = f'{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif'
 
 with rasterio.open(s3_path_ndvi_ref) as src_ref:
     # Define window from ROI
@@ -449,14 +445,14 @@ print('Calculated VCI')
 # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
 # TODO: update elif part to include Feb 2026 after delivery from MCH
 if current_date < datetime(2024, 1, 1):
-    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
 elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 2, 1):
-    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
 else:
-    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
-    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
+    sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
+    sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
 
 ds_sdl = xr.open_dataset(sdl_path, engine='h5netcdf')
 ds_sol = xr.open_dataset(sol_path, engine='h5netcdf')
@@ -628,7 +624,7 @@ print(f'Calculated LST (using the aggregation method "{lst_aggregation}")')
 ##############################
 # INPUT DATA: REFERENCE LST
 # Load or compute long-term LST statistics for climate reference period (1991-2020)
-s3_path_lst_ref = f's3://{s3_bucket_satromo}{s3_path_key_lst_ref }LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
+s3_path_lst_ref = f'{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
 ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
 print('Loaded reference LST statistics for current day of year')
 
@@ -663,7 +659,7 @@ print(f'Calculated VHI for {current_date_str}')
 
 ##############################
 # APPLY VEGETATION MASK
-s3_path_forest_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
+s3_path_forest_mask = f's3://s3-topo-satromo-prod/data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
 
 # --- quick fix to handle different resolutions and extents of vegetation mask ---
 # 
