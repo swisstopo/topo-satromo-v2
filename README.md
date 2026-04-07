@@ -1,3 +1,4 @@
+[![GitHub commit](https://img.shields.io/github/last-commit/swisstopo/topo-satromo-v2)](https://github.com/swisstopo/topo-satromo-v2/commits/main)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/swisstopo/topo-satromo-v2)
 # topo-satromo-v2
 
 **Erdbeobachtungs-SAtellitendaten fürs TRockenheitsMOnitoring (SATROMO) — Version 2**

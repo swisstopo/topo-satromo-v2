@@ -35,22 +35,12 @@ BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
-# No data value
-# NODATA = 9999
-
-
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
 # ---------------------------
-# See https://github.com/swisstopo/topo-satromo/tree/main?tab=readme-ov-file#configuration-in-_configpy for details
-# TL;DR : First define in A) PRODUCTS, INDICES: for step0 (cloud, shadow, co-register, mosaic) the TOA SR data  custom  "step0_collection" to be generated / used
-# then
-
-
 
 # A) PRODUCTS, INDICES
 # ********************
-
 
 
 #  ch.swisstopo.swisseo_s2-sr
@@ -83,7 +73,7 @@ SENTINEL2_BAND_NAMES = {
 
 PRODUCT_S2_LEVEL_2A = {
     "image_collection": "S2_SR_HARMONIZED_SWISS",
-    "geocat_id": "7ae5cd5b-e872-4719-92c0-dc2f86c4d471",
+    "geocat_id": "a4bc1c7a-3e2f-4d95-9d86-a1a0b09b11a7",
     "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
     "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
