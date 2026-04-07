@@ -58,7 +58,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     # options': True, False - defines if we store the original data to S3 as backup
     s3_backup = False # backup copernicus tiles data to S3
-    gpu_check = True# Check if a GPU system is available for processing, if not write to empty asset list and skip processing
+    gpu_check = True # Check if a GPU system is available for processing, if not write to empty asset list and skip processing
 
     ##############################
     # TIME
@@ -347,6 +347,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         else:
                             print(f"Failed to download {file.key} after {max_retries} attempts")
                             dl_stats[1] += 1
+                            return
 
         # Print download statistics
         return dl_stats
@@ -356,7 +357,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
     # Check if we have a failed download
-    if dl_stats[1] != 0:
+    if dl_stats is None or dl_stats[1] != 0:
         write_asset_as_empty(collection, day_to_process, 'Tile download incomplete')
         return
 
@@ -873,7 +874,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
 
         # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we write to empty asset and stop processing .
-        if (orbit_num in [8,22] and cloudcover >85.0) or (orbit_num in [108,65] and cloudcover >95.0):
+        orbit_num_int = int(orbit_num)
+        if (orbit_num_int in [8, 22] and cloudcover > 85.0) or (orbit_num_int in [108, 65] and cloudcover > 95.0):
             print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping further processing.")
             write_asset_as_empty(collection, day_to_process, 'cloudy')
             return
@@ -974,7 +976,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             temp_files_to_clean = []
 
             # =========================================================================
-            # ONE-HOT ENCODING FOR CATEGORICAL (SCL) DATA
+            # Build per-class probability masks (initially 0/1) for resampling for categorical (SCL) DATA
+            # The name comes from digital circuit design.https://en.wikipedia.org/wiki/One-hot At any given time, exactly one bit is "hot" (set to 1) and all others are 0. Wikipedia Applied to your SCL data: for a pixel with class 4, band 4 = 1 and all other 11 bands = 0 — exactly one band is "hot" at a time.
+            #The reason you need it here is that only one of the columns can take on the value 1 for each sample, which prevents the algorithm from treating higher class numbers as more important than lower ones. Quora Without it, bilinear interpolation between SCL class 2 (dark vegetation) and class 8 (cloud medium probability) would produce a meaningless average of 5 — which is not a valid class.
             # =========================================================================
             is_scl = "_scl_" in str(input_path.name).lower()
 
@@ -983,72 +987,83 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 try:
                     # Temp file definitions for SCL pipeline
-                    onehot_init = input_path.parent / f"{input_path.stem}_onehot_init.tif"
-                    temp_1_os = input_path.parent / f"{input_path.stem}_temp1_os.tif"
-                    temp_2_rp = input_path.parent / f"{input_path.stem}_temp2_rp.tif"
-                    temp_3_ds = input_path.parent / f"{input_path.stem}_temp3_ds.tif"
+                    temp_1_os       = input_path.parent / f"{input_path.stem}_temp1_os.tif"
+                    onehot_init     = input_path.parent / f"{input_path.stem}_onehot_init.tif"
+                    temp_2_rp       = input_path.parent / f"{input_path.stem}_temp2_rp.tif"
+                    temp_3_ds       = input_path.parent / f"{input_path.stem}_temp3_ds.tif"
                     recombined_file = input_path.parent / f"{input_path.stem}_recombined.tif"
 
-                    temp_files_to_clean.extend([onehot_init, temp_1_os, temp_2_rp, temp_3_ds, recombined_file])
+                    temp_files_to_clean.extend([temp_1_os, onehot_init, temp_2_rp, temp_3_ds, recombined_file])
 
-                    # --- Step A: Split into 12 One-Hot Bands ---
-                    with rasterio.open(input_tif) as src:
-                        meta = src.meta.copy()
-                        original_dtype = src.dtypes[0]
-                        data = src.read(1)
+                    NUM_CLASSES = 12  # Sentinel-2 SCL classes 0-11
 
-                        num_classes = 12 # Sentinel-2 SCL uses classes 0 through 11
-                        meta.update(count=num_classes, dtype='float32', nodata=None)
-
-                        with rasterio.open(onehot_init, 'w', **meta) as dst:
-                            for i in range(num_classes):
-                                dst.write((data == i).astype('float32'), i + 1)
-                    print("✓ Step A: One-hot encoded 12-band file created.")
-
-                    # --- Step 1: Oversample (Nearest) ---
-                    print(f"\n--- SCL Step 1: Oversampling 12 bands to {intermediate_res}m (near) ---")
+                    # --- Step 1: Oversample SINGLE SCL band (nearest) + clip — 1x uint8, cheap ---
+                    # Done BEFORE band split: nearest is commutative with one-hot, so oversampling 1 band is 12x cheaper than oversampling 12 bands.
+                    print(f"\n--- SCL Step 1: Clipping + oversampling single SCL band to {intermediate_res}m (near) ---")
                     cmd_os = [
                         "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                        "-co", "COMPRESS=DEFLATE",
                         "-tr", str(intermediate_res), str(intermediate_res),
-                        "-r", "near", "-ot", "Float32", "-overwrite",
-                        str(onehot_init), str(temp_1_os)
+                        "-r", "near", "-ot", "Byte", "-overwrite",
+                        str(input_tif), str(temp_1_os)
                     ]
                     subprocess.run(cmd_os, check=True, capture_output=True)
+                    print(f"✓ Step 1: Single SCL band clipped + oversampled to {intermediate_res}m")
 
-                    # --- Step 2: Reproject (Bilinear) ---
-                    print(f"\n--- SCL Step 2: Reprojecting 12 bands to EPSG:{epsg} (bilinear) ---")
+                    # --- Step A: Split oversampled band into 12 one-hot uint8 bands ---
+                    # uint8 is sufficient here: one-hot values are only 0 or 1
+                    # gdalwarp in Step 2 handles the Byte → Float32 conversion via -ot Float32
+                    print(f"\n--- SCL Step A: One-hot encoding {NUM_CLASSES} classes (uint8) ---")
+                    with rasterio.open(temp_1_os) as src:
+                        meta           = src.meta.copy()
+                        original_dtype = src.dtypes[0]              # uint8, preserved for final output
+                        data           = src.read(1)                # (H, W) uint8
+
+                        meta.update(count=NUM_CLASSES, dtype='uint8', nodata=None)
+                        with rasterio.open(onehot_init, 'w', **meta) as dst:
+                            for i in range(NUM_CLASSES):
+                                dst.write((data == i).astype('uint8'), i + 1)  # 0 or 1, fits in Byte
+                    print(f"✓ Step A: One-hot encoded {NUM_CLASSES}-band uint8 file created")
+
+                    # --- Step 2: Reproject 12 bands to target CRS (bilinear, intermediate res) ---
+                    # -ot Float32 required: bilinear produces fractional values 0.0-1.0
+                    print(f"\n--- SCL Step 2: Reprojecting {NUM_CLASSES} bands to EPSG:{epsg} @ {intermediate_res}m (bilinear) ---")
                     cmd_rp = [
                         "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                         "-to", "ALLOW_BALLPARK=NO", "-to", "ONLY_BEST=YES",
+                        "-co", "COMPRESS=DEFLATE",
                         "-tr", str(intermediate_res), str(intermediate_res),
                         "-r", "bilinear", "-ot", "Float32", "-overwrite",
-                        str(temp_1_os), str(temp_2_rp)
+                        str(onehot_init), str(temp_2_rp)
                     ]
                     subprocess.run(cmd_rp, check=True, capture_output=True)
+                    print(f"✓ Step 2: Reprojected to EPSG:{epsg} @ {intermediate_res}m")
 
-                    # --- Step 3: Downsample (Bilinear) ---
-                    print(f"\n--- SCL Step 3: Downsampling 12 bands to {resolution}m (bilinear) ---")
+                    # --- Step 3: Downsample to final resolution (bilinear) ---
+                    print(f"\n--- SCL Step 3: Downsampling {NUM_CLASSES} bands to {resolution}m (bilinear) ---")
                     cmd_ds = [
                         "gdalwarp", "-of", "GTiff", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+                        "-co", "COMPRESS=DEFLATE",
                         "-tr", str(resolution), str(resolution), "-tap",
                         "-r", "bilinear", "-ot", "Float32", "-overwrite",
                         str(temp_2_rp), str(temp_3_ds)
                     ]
                     subprocess.run(cmd_ds, check=True, capture_output=True)
+                    print(f"✓ Step 3: Downsampled to {resolution}m")
 
-                    # --- Step B: Recombine using Argmax ---
-                    print(f"\n--- SCL Step B: Recombining bands using Argmax ---")
+                    # --- Step B: Argmax reconstruction → uint8 ---
+                    print(f"\n--- SCL Step B: Argmax reconstruction → {original_dtype} ---")
                     with rasterio.open(temp_3_ds) as src:
-                        meta = src.meta.copy()
-                        warped_data = src.read()
+                        meta        = src.meta.copy()
+                        warped_data = src.read()                    # (12, H, W) float32
 
-                        # Find the class with the highest fraction per pixel
-                        final_data = np.argmax(warped_data, axis=0).astype(original_dtype)
+                        # Class with highest fraction wins
+                        final_data  = np.argmax(warped_data, axis=0).astype(original_dtype)
 
                         meta.update(count=1, dtype=original_dtype)
                         if nodata_value is not None:
@@ -1056,12 +1071,13 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                         with rasterio.open(recombined_file, 'w', **meta) as dst:
                             dst.write(final_data, 1)
+                    print(f"✓ Step B: Argmax array {final_data.shape} dtype={original_dtype}")
 
-                    # --- Step C: Final COG Conversion ---
-                    print(f"\n--- SCL Step C: Converting to Final COG ---")
+                    # --- Step C: Convert to final COG ---
+                    print(f"\n--- SCL Step C: Converting to final COG ---")
                     cmd_cog = [
                         "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
-                        "-co", "COMPRESS=DEFLATE", # Always force lossless for SCL
+                        "-co", "COMPRESS=DEFLATE",
                         "-co", "PREDICTOR=2", "-co", "NUM_THREADS=ALL_CPUS",
                         "--config", "GDAL_NUM_THREADS", "ALL_CPUS"
                     ]
@@ -1070,7 +1086,6 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                     cmd_cog.extend([str(recombined_file), str(input_tif), "-overwrite"])
                     subprocess.run(cmd_cog, check=True, capture_output=True)
-
                     print(f"✓ Final SCL COG created: {input_tif}")
 
                 except Exception as e:
@@ -1393,7 +1408,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
         if is_current == True:
-            #print("Newest dataset detected: updating CURRENT")
+            print("Newest dataset detected: updating CURRENT")
             filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
             # Rename the file
             os.rename(filename, filename_current)
@@ -1404,7 +1419,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         filename=thumbnail
         main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Thumbnail")
         if is_current == True:
-            #print("Newest dataset detected: updating CURRENT")
+            print("Newest dataset detected: updating CURRENT")
             filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
             # Rename the file
             os.rename(filename, filename_current)

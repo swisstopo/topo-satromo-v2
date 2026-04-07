@@ -3,14 +3,14 @@ import xarray as xr
 from pystac_client import Client
 import os
 import numpy as np
-# import configuration as config
+import configuration as config
 from datetime import datetime, timedelta
 from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
-from rasterio.warp import reproject, transform_bounds, Resampling
-from pyproj import Transformer
+from rasterio.warp import reproject, Resampling
 from affine import Affine
-import matplotlib.pyplot as plt
+from main_functions import main_utils
+
 
 ##############################
 # INTRODUCTION
@@ -61,7 +61,11 @@ workWithPercentiles = True
 maskSnowWithNDSI = False
 # options: True, False - defines if snow masking is applied based on NDSI values
 # otherwise the SCL band will be used (False)
-
+exportForest = True
+# options: True, False - defines if the VHI masked for forest areas is exported
+exportVegetation = False
+# options: True, False - defines if the VHI masked for all vegetation is exported
+#    
 ##############################
 # CONFIGURATION / PARAMETERS
 # Paths
@@ -96,13 +100,16 @@ os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without 
 # TIME
 current_date_str = "2026-03-03" # TODO: replace with dynamic date input from config / satromo_processor.py
 current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
-# 2026-03-19
+
 doy = current_date.timetuple().tm_yday
 doy_str = f'{doy:03d}' # zero-padded three-digit day of year
 
 year = current_date_str[:4]
 month = current_date_str[5:7]
 day = current_date_str[8:10]
+
+# Create timestamp for export filename (YYYY-MM-DDt235959)
+timestamp = f'{current_date_str}t235959'
 
 ##############################
 # SPACE / ROI
@@ -440,11 +447,13 @@ print('Calculated VCI')
 ############################################################
 # INPUT DATA: TEMPERATURE
 # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
-
-# TODO: update to handle operational data since begining of 2026 or older data stored locally
-if current_date < datetime(2024, 1 ,1):
+# TODO: update elif part to include Feb 2026 after delivery from MCH
+if current_date < datetime(2024, 1, 1):
     sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
     sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 2, 1):
+    sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
+    sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
 else:
     sdl_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
     sol_path = f'{stac_swisstopo_prod}{lst_collection_id}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
@@ -654,7 +663,7 @@ print(f'Calculated VHI for {current_date_str}')
 
 ##############################
 # APPLY VEGETATION MASK
-s3_path_vegetation_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
+s3_path_forest_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
 
 # --- quick fix to handle different resolutions and extents of vegetation mask ---
 # 
@@ -666,17 +675,17 @@ s3_path_vegetation_mask = f's3://{s3_bucket_satromo}data/MASKS/Vegetation/wald_l
 #     vegetation_mask = src_veg.read(1, window=window)
 #
 # This is the quick fix:
-with rasterio.open(s3_path_vegetation_mask) as src_veg:
+with rasterio.open(s3_path_forest_mask) as src_veg:
     window = from_bounds(*roi, src_veg.transform)
     data_veg = src_veg.read(1, window=window)
     src_transform_veg = src_veg.window_transform(window)
     src_crs_veg = src_veg.crs
 
 # Resample to match target grid (same as all other layers)
-vegetation_mask = np.empty(target_shape, dtype=np.float32)
+forest_mask = np.empty(target_shape, dtype=np.float32)
 reproject(
     source=data_veg.astype(np.float32),
-    destination=vegetation_mask,
+    destination=forest_mask,
     src_transform=src_transform_veg,
     src_crs=src_crs_veg,
     dst_transform=target_transform,
@@ -685,114 +694,82 @@ reproject(
     src_nodata=0,
     dst_nodata=0
 )
-vegetation_mask = vegetation_mask.astype(np.uint8)
+forest_mask = forest_mask.astype(np.uint8)
 # ---
+# TODO: mask for all vegetation
 
 # Apply vegetation mask to VHI (set non-vegetated areas to no_data value)
-vhi_masked = vhi.copy()
-vhi_masked[vegetation_mask == 0] = no_data
+vhi_forest = vhi.copy()
+vhi_forest[forest_mask == 0] = no_data
 
 ##############################
-# GENERATE METADATA
-# main_functions/main_utils.py. function metadata_add_entry
-# https://github.com/swisstopo/topo-satromo-v2/blob/49fcc1545b609823602c5c5dc43c845912013f1e/main_functions/main_utils.py#L833
+# SET METADATA
+# mTODO: controll if everything matches with the config file
+# vhi_masked = vhi_masked.set({
+#     'doy': doy,
+#     'alpha': alpha,
+#     'temporal_coverage': config.PRODUCT_VHI['temporal_coverage'],
+#     'missing_data': config.PRODUCT_VHI['missing_data'],
+#     'no_data': config.PRODUCT_VHI['no_data'],
+#     'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
+#     'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
+#     'collection': collection_ready,
+#     'system:time_start': current_date.advance((-1*d), 'day').millis(),
+#     'system:time_end': current_date.millis(),
+#     'NDVI_reference_data': config.PRODUCT_VHI['NDVI_reference_data'],
+#     'NDVI_index_list': NDVI_index_list,
+#     'NDVI_scene_count': NDVI_scene_count,
+#     'LST_reference_data': config.PRODUCT_VHI['LST_reference_data'],
+#     'LST_index_list': LST_index_list,
+#     'LST_scene_count': LST_scene_count,
+#     'VCI_and_TCI_calculated_with': CI_method,
+#     'pixel_size_meter': 10,
+# })
 
 ##############################
 # EXPORT VHI
-# Save to file with metadata
+# SWITCH export (Drive/GCS)
+if exportVegetation is True:
+    # Generate the filename
+    filename = config.PRODUCT_VHI['product_name'] + \
+        '_mosaic_' + timestamp + '_vegetation-10m'
+    main_utils.prepare_export(roi, timestamp, filename, config.PRODUCT_VHI['product_name'],
+                            config.PRODUCT_VHI['spatial_scale_export'], vhi_vegetation,
+                            sensor_stats, current_date_str)
 
+if exportForest is True:
+    # Generate the filename
+    filename = config.PRODUCT_VHI['product_name'] + \
+        '_mosaic_' + timestamp + '_forest-10m'
+    main_utils.prepare_export(roi, timestamp, filename, config.PRODUCT_VHI['product_name'],
+                            config.PRODUCT_VHI['spatial_scale_export'], vhi_forest,
+                            sensor_stats, current_date_str)
 # print("********* finished processing {} *********".format(product_name))
 
 ##############################
 # PLOTS
 # Define VHI color bins and colors
-from matplotlib.colors import ListedColormap, BoundaryNorm
-vhi_bins = [0, 10, 20, 30, 40, 50, 60, 100, 110, 111]  # boundaries for each class
-vhi_colors = [
-    '#b56a29',  # [0,9]
-    '#ce8540',  # (10,19]
-    '#f5cd85',  # (20,29]
-    '#fff5ba',  # (30,39]
-    '#cbffca',  # (40,49]
-    '#52bd9f',  # (50,59]
-    '#0470b0',  # (60,100]
-    '#b3b6b7',  # [110] (missing data)
-    '#ffffff'   # placeholder for values > 110
-]
-# Create custom colormap for VHI
-vhi_cmap = ListedColormap(vhi_colors)
-vhi_norm = BoundaryNorm(vhi_bins, vhi_cmap.N)
-
-# Simple plot of VHI
-plt.figure(figsize=(10, 8))
-plt.imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
-plt.colorbar()
-plt.show()
-
-# Plot NDVI, VCI, TCI and VHI side by side
-# fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-# # NDVI
-# im0 = axes[0, 0].imshow(ndvi, cmap='RdYlGn', vmin=-1, vmax=1)
-# axes[0, 0].set_title('NDVI', fontsize=12, fontweight='bold')
-# plt.colorbar(im0, ax=axes[0, 0], label='NDVI')
-# # LST Mean (convert to Celsius)
-# im1 = axes[0, 1].imshow(vci, cmap='RdYlBu_r', vmin=0, vmax=100)
-# axes[0, 1].set_title('VCI', fontsize=12, fontweight='bold')
-# plt.colorbar(im1, ax=axes[0, 1], label='VCI')
-# # LST Max
-# im2 = axes[1, 0].imshow(tci, cmap='RdYlBu_r', vmin=0, vmax=100)
-# axes[1, 0].set_title('TCI', fontsize=12, fontweight='bold')
-# plt.colorbar(im2, ax=axes[1, 0], label='TCI')
-# # LST 11am
-# im3 = axes[1, 1].imshow(vhi_masked, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest')
-# axes[1, 1].set_title('VHI', fontsize=12, fontweight='bold')
-# cbar3 = plt.colorbar(im3, ax=axes[1, 1], boundaries=vhi_bins, 
-#                      ticks=[4.5, 14.5, 24.5, 34.5, 44.5, 54.5, 80, 110])
-# cbar3.ax.set_yticklabels(['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-100', '110'], fontsize=9)
-# cbar3.set_label('VHI')
-# plt.tight_layout()
-# plt.show()
-
-# # Not-so-simple plot
 # import matplotlib.pyplot as plt
+# from matplotlib.colors import ListedColormap, BoundaryNorm
+# vhi_bins = [0, 10, 20, 30, 40, 50, 60, 100, 110, 111]  # boundaries for each class
+# vhi_colors = [
+#     '#b56a29',  # [0,9]
+#     '#ce8540',  # (10,19]
+#     '#f5cd85',  # (20,29]
+#     '#fff5ba',  # (30,39]
+#     '#cbffca',  # (40,49]
+#     '#52bd9f',  # (50,59]
+#     '#0470b0',  # (60,100]
+#     '#b3b6b7',  # [110] (missing data)
+#     '#ffffff'   # placeholder for values > 110
+# ]
+# # Create custom colormap for VHI
+# vhi_cmap = ListedColormap(vhi_colors)
+# vhi_norm = BoundaryNorm(vhi_bins, vhi_cmap.N)
 
-# # Get coordinate arrays
-# lats = ds_mean.lat.values
-# lons = ds_mean.lon.values
-
-# # Create side-by-side visualization with proper geographic extent
-# fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-# # Common colormap settings
-# vmin = np.nanmin([lst_mean, lst_max, lst_11am])
-# vmax = np.nanmax([lst_mean, lst_max, lst_11am])
-
-# # Define extent for imshow: [left, right, bottom, top]
-# extent = [lons.min(), lons.max(), lats.min(), lats.max()]
-
-# # Plot LST Mean
-# im1 = axes[0].imshow(lst_mean, cmap='RdYlBu_r', vmin=vmin, vmax=vmax, 
-#                      extent=extent, origin='lower', aspect='auto')
-# axes[0].set_title(f'LST Mean - 2023-05-02', fontsize=12, fontweight='bold')
-# axes[0].set_xlabel('Longitude (°)')
-# axes[0].set_ylabel('Latitude (°)')
-# plt.colorbar(im1, ax=axes[0], label='Temperature (°C)')
-
-# # Plot LST Max
-# im2 = axes[1].imshow(lst_max, cmap='RdYlBu_r', vmin=vmin, vmax=vmax,
-#                      extent=extent, origin='lower', aspect='auto')
-# axes[1].set_title(f'LST Max - 2023-05-02', fontsize=12, fontweight='bold')
-# axes[1].set_xlabel('Longitude (°)')
-# axes[1].set_ylabel('Latitude (°)')
-# plt.colorbar(im2, ax=axes[1], label='Temperature (°C)')
-
-# # Plot LST 11am
-# im3 = axes[2].imshow(lst_11am, cmap='RdYlBu_r', vmin=vmin, vmax=vmax,
-#                      extent=extent, origin='lower', aspect='auto')
-# axes[2].set_title(f'LST 11:00 AM - 2023-05-02', fontsize=12, fontweight='bold')
-# axes[2].set_xlabel('Longitude (°)')
-# axes[2].set_ylabel('Latitude (°)')
-# plt.colorbar(im3, ax=axes[2], label='Temperature (°C)')
-
-# plt.tight_layout()
+# # -----
+# # Simple plot of VHI
+# plt.figure(figsize=(10, 8))
+# plt.imshow(vhi_forest, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
+# plt.colorbar()
 # plt.show()
