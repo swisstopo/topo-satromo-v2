@@ -79,19 +79,6 @@ if __name__ == "__main__":
                 result = "PRODUCT_S2_LEVEL_CSPLUS:  step0 only"
 
             elif product_to_be_processed == 'PRODUCT_S2_LEVEL_2A':
-                # ROI is only taking effect when testing. On prod we will use the clipping as defined in step0_processor_s2_sr
-                # border = ee.FeatureCollection(
-                #     "USDOS/LSIB_SIMPLE/2017").filter(ee.Filter.eq("country_co", "SZ"))
-                # roi = border.geometry().buffer(config.ROI_BORDER_BUFFER)
-                # roi = ee.Geometry.Rectangle(
-                #     [7.075402, 46.107098, 7.100894, 46.123639])
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
-                # roi = ee.Geometry.Rectangle(
-                #     [8.10, 47.18, 8.20, 47.25])  # 6221 Rickenbach
-                # roi = ee.Geometry.Rectangle(
-                #     [7.938447, 47.514378, 8.127522, 47.610846])
-
                 # Check if STAC items already exist for the given date, against the step0_collection
                 api_path = getattr(config, 'STAC_FSDI_API')
                 collection = getattr(config, 'PRODUCT_S2_LEVEL_2A')['step0_collection']
@@ -142,13 +129,9 @@ if __name__ == "__main__":
             #         roi, current_date_str)
 
             elif product_to_be_processed == 'PRODUCT_MSG_CLIMA':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
                 result = "PRODUCT_MSG_CLIMA:  step0 only"
 
             elif product_to_be_processed == 'PRODUCT_MSG':
-                # roi = ee.Geometry.Rectangle(
-                #     [9.49541, 47.22246, 9.55165, 47.26374,])  # Liechtenstein
                 result = "PRODUCT_MSG:  step0 only"
 
             else:
