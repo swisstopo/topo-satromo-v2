@@ -87,7 +87,8 @@ PRODUCT_S2_LEVEL_2A = {
 PRODUCT_VHI = {
     # TODO: check if needed in context with step0
     "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
-    # "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc", #TODO: needs to be updated for V2
+    # "geocat_id_forest": "...", #TODO: needs to be updated for V2
+    # "geocat_id_vegetation": "...", #TODO: needs to be updated for V2
     "temporal_coverage": 7,  # Days
     # "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_vhi_v200",
