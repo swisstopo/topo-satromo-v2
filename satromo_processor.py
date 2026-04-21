@@ -101,6 +101,7 @@ if __name__ == "__main__":
                 # For testing, we can set a specific ROI --> roi = (b.left, b.bottom, b.right, b.top) 
                 # roi = (2681000, 1230100, 2687500, 1237900) # Sihlwald
                 roi = (2743000, 1224000, 2748900, 1229500) # Wildhaus (Orbitgrenze)
+                # roi = (2596300, 1166700, 2674400, 1222700) # Emmental
                 # roi = (2573000, 1199600, 2583100, 1208400) # Kerzersmoos
                 # roi = (2534500, 1194100, 2550700, 1203300) # Val de Travers
 
