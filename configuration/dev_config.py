@@ -31,11 +31,10 @@ ROI_BORDER_BUFFER = 5000  # Buffer around Switzerland
 
 # Switzerland border and lakes with 5km buffer :
 BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
-
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
-
+DSM_FILE=os.path.join("local_assets","DSM_full_CH_nodata.tif")
 
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
@@ -152,7 +151,7 @@ STAC_FSDI_API = '/api/stac/v0.9/'
 
 
 
-# C AROSICS configuration
+# AROSICS configuration
 # ***********************
 # Contains dictionary used for co-registration of satellite imagery
 # using a reference image.
@@ -177,3 +176,4 @@ AROSICS_CONFIG = {
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
 }
+
