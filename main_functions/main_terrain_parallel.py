@@ -5,7 +5,9 @@ Parallel terrain processing pipeline for Switzerland DSM data.
 
 Computes per-pixel solar incidence angle and shadow mask for one or more
 Sentinel-2 orbit perimeters (or full Switzerland) and writes a single combined
-GeoTIFF per run. Developed initially by @stflury and DikshaAcharya as inhttps://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
+GeoTIFF per run.
+Developed initially by @stflury and DikshaAcharya as inhttps://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
+Depends on main_terrain_moduel.py
 
 Combined output encoding (uint8, EPSG:2056, 10 m resolution):
   0 - 180 : solar incidence angle in degrees (illuminated pixels)
@@ -61,22 +63,14 @@ CFG = {
     # Full-Switzerland DSM in LV95 (EPSG:2056), 10 m resolution, Float32
     "dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_full_CH_nodata.tif",
 
-    # --- Output directories ---
-    # Temporary intermediate files (incidence and shadow before merging)
-    "output_path_IG": r"D:\temp\github\topo-landschaftsgradient\local_assets\incidence_CH",
-    "output_path_SW": r"D:\temp\github\topo-landschaftsgradient\local_assets\illuminated_CH",
-
-    # --- Log directory ---
-    "logfolder_path": r"D:\temp\github\topo-landschaftsgradient\local_assets\log",
-
     # --- Skyfield ephemeris ---
     "planets": {
-        "path":     r"D:\temp\github\topo-landschaftsgradient\local_assets\planets",
+        "path":     r"D:\temp\github\topo-satromo-v2\assets\planets",
         "bsp_file": "de421.bsp",
     },
 
     # --- EGM96 geoid data directory (for hray.geoid.undulation) ---
-    "egm_path": r"D:\temp\github\topo-landschaftsgradient\EGM/",
+    "egm_path": r"D:\temp\github\topo-satromo-v2\local_assets\EGM/",
 
     # --- Shadow search radius [m] ---
     # Must be >= maximum expected cast-shadow distance.
@@ -252,6 +246,17 @@ def load_perimeter_bbox(gpkg_path):
     )
     return e_min, n_min, e_max, n_max
 
+# HORAYZON 1.2 hat path_to_aux_data entfernt und liest den Pfad stattdessen
+# aus path_aux_data.txt. Diese Datei wird hier einmalig geschrieben damit
+# Worker-Prozesse nicht input() aufrufen (was in multiprocessing fehlschlaegt).
+import horayzon as _hray_setup
+_path_horayzon = os.path.join(
+    os.path.split(os.path.dirname(_hray_setup.__file__))[0], "horayzon"
+)
+_path_file = os.path.join(_path_horayzon, "path_aux_data.txt")
+with open(_path_file, "w") as _f:
+    _f.write(CFG["egm_path"])
+logging.info(f"HORAYZON aux path: {CFG['egm_path']} -> {_path_file}")
 
 def calc_grid_for_perimeter(perimeter_key, cfg):
     """
@@ -368,7 +373,7 @@ def run_tile(args, cfg, coord_tuple):
         iw = InzidenWinkel(
             dom=cfg["dsm_path"],
             planets=cfg["planets"],
-            output_path=cfg["output_path_IG"],
+            output_path=".",
         )
         inc_tile, inc_transform, inc_nodata = iw.calc_incidence_grid(
             e_lv95=tile_e,
@@ -395,8 +400,7 @@ def run_tile(args, cfg, coord_tuple):
             dom=cfg["dsm_path"],
             planets=cfg["planets"],
             search_dist=cfg["search_dist"],
-            output_path=cfg["output_path_SW"],
-            egm_path=cfg["egm_path"],
+            output_path=".",
         )
         ilu_tile, ilu_transform, ilu_nodata = sw.calc_illuminate_grid(
             e_lv95=tile_e,
@@ -632,8 +636,8 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         timedate       : Acquisition date and time in UTC, format YYYY-MM-DDtHHMMSS.
                          Example: "2025-01-18t103351"
         outputfilename : Optional full path for the output GeoTIFF.
-                         If None, the file is written to CFG['output_path'] with
-                         the name  terrain_{orbit}_{timedate}.tif
+                         If None, the file is written to the current working directory
+                         with the name terrain_{orbit}_{timedate}.tif
 
     Returns:
         True  if the output file was created successfully.
@@ -642,6 +646,7 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
     Example:
         from main_terrain_parallel import main_terrain_parallel
         ok = main_terrain_parallel("108", "2023-12-25t103441")
+        ok = main_terrain_parallel("108", "2023-12-25t103441", "my_output.tif")
     """
     try:
         # --- Parse timedate string ---
@@ -650,23 +655,14 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         # --- Resolve output path ---
         if outputfilename is None:
             outputfilename = f"terrain_{orbit}_{timedate}.tif"
-        # Kein os.makedirs nötig: aktuelles Verzeichnis existiert immer.
-        # Falls outputfilename einen Verzeichnispfad enthält, diesen sicherstellen:
+        # If outputfilename contains a directory path, create it if needed
         out_dir = os.path.dirname(outputfilename)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
-        # --- Set up logging ---
+        # --- Set up logging (console only, no logfile) ---
         loglvl = logging.INFO
-        ctx    = mp.get_context("spawn")   # Windows-safe
-        log_queue = ctx.Queue(-1)
-        listener  = ctx.Process(
-            target=log_listener_process,
-            args=(log_queue, Path(CFG["logfolder_path"]), loglvl),
-            name="LogListener",
-        )
-        listener.start()
-        setup_logging(level=loglvl, logfolder=Path(CFG["logfolder_path"]))
+        setup_logging(level=loglvl, logfolder=None)
 
         # --- Build args dict for worker processes ---
         args = {
@@ -679,7 +675,7 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         }
 
         logging.info("=" * 60)
-        logging.info(f"Terrain processing start")
+        logging.info("Terrain processing start")
         logging.info(f"  Orbit    : {orbit}")
         logging.info(f"  Date UTC : {date_str}  Time UTC : {time_str}")
         logging.info(f"  Output   : {outputfilename}")
@@ -693,13 +689,11 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         ]
         logging.info(
             f"Tiles total={len(all_tiles)}, valid={len(valid_tiles)}, "
-            f"skipped (nodata)={len(all_tiles)-len(valid_tiles)}"
+            f"skipped (nodata)={len(all_tiles) - len(valid_tiles)}"
         )
 
         if not valid_tiles:
             logging.error("No valid tiles found for this perimeter. Aborting.")
-            log_queue.put_nowait(None)
-            listener.join()
             return False
 
         # --- Parallel processing ---
@@ -707,6 +701,7 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         n_proc = min(CFG["n_proc"], len(tasks))
         logging.info(f"Starting {len(tasks)} tiles on {n_proc} workers...")
 
+        ctx = mp.get_context("spawn")   # Windows-safe
         with ctx.Pool(
             processes=n_proc,
             initializer=setup_logging,
@@ -718,8 +713,6 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
                 logging.warning("KeyboardInterrupt: terminating workers")
                 pool.terminate()
                 pool.join()
-                log_queue.put_nowait(None)
-                listener.join()
                 return False
 
         # --- Merge incidence tiles ---
@@ -751,15 +744,10 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         # --- Verify output ---
         if not os.path.isfile(outputfilename):
             logging.error(f"Output file not found after writing: {outputfilename}")
-            log_queue.put_nowait(None)
-            listener.join()
             return False
 
         file_mb = os.path.getsize(outputfilename) / 1024 / 1024
         logging.info(f"Done. Output: {outputfilename} ({file_mb:.1f} MB)")
-
-        log_queue.put_nowait(None)
-        listener.join()
         return True
 
     except Exception as exc:
@@ -808,7 +796,7 @@ if __name__ == "__main__":
 
     # Override log level if specified on command line
     loglvl = getattr(logging, __args["loglevel"].strip().upper())
-    setup_logging(level=loglvl, logfolder=Path(CFG["logfolder_path"]))
+    setup_logging(level=loglvl, logfolder=None)
 
     success = main_terrain_parallel(
         orbit=__args["orbit"],

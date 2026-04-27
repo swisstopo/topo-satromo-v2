@@ -2,6 +2,7 @@
 main_terrain_module.py
 ======================
 Terrain illumination and incidence angle computation for Switzerland DSM data.
+Developed initially by @stflury and DikshaAcharya as in https://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON inspired by https://github.com/ChristianSteger/HORAYZON/blob/main/examples/shadow/gridded_curved_DEM_SRTM.py 
 
 Provides four classes:
   - HelperFunctions : Static coordinate conversion, sun position and incidence angle utilities
@@ -437,21 +438,19 @@ class SonnenWinkel:
 
     gdal.UseExceptions()
 
-    def __init__(self, dom, planets, search_dist, output_path, egm_path):
+    def __init__(self, dom, planets, search_dist, output_path):
         """
         Args:
             dom         : Full path to the DSM GeoTIFF (EPSG:2056)
             planets     : dict with keys 'path' (directory) and 'bsp_file' (filename)
             search_dist : Maximum shadow search radius [m]
             output_path : Directory for output files
-            egm_path    : Directory containing the EGM96 geoid data files
-                          (used by hray.geoid.undulation)
+
         """
         self.__dom         = DOM_sw(dom, search_dist, output_path)
         self.__planets     = planets
         self.__search_dist = search_dist
         self.__output_path = output_path
-        self.__egm_path    = egm_path
         self.__checkinput_planets()
         self.__checkinput_output()
 
@@ -521,11 +520,16 @@ class SonnenWinkel:
         elevation_ortho_inner = np.ascontiguousarray(self.__elevation[slice_in])
 
         # Add EGM96 geoid undulation to convert orthometric -> ellipsoidal heights
+        # self.__elevation += hray.geoid.undulation(
+        #     self.__lon, self.__lat,
+        #     geoid="EGM96",
+        #     path_to_aux_data=self.__egm_path,
+        # )
         self.__elevation += hray.geoid.undulation(
             self.__lon, self.__lat,
             geoid="EGM96",
-            path_to_aux_data=self.__egm_path,
         )
+
 
         # ECEF coordinates for all DSM pixels
         x_ecef, y_ecef, z_ecef = hray.transform.lonlat2ecef(
