@@ -103,12 +103,16 @@ pip install -r requirements.txt
 pip install arosics
 ```
 
-#### 6. Verify
+#### 6. Verify AROSICS
 
 ```bat
 python -c "import arosics; print('AROSICS OK')"
 python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
+
 ```
+#### 7. Install HORAYZON
+
+Follow the official [instructions on the HORAYZON repo](https://github.com/ChristianSteger/HORAYZON#package-dependencies)
 
 **Troubleshooting:**
 
@@ -119,6 +123,13 @@ python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
 | Import errors after `pip install arosics` | GDAL installed after arosics | Reinstall: uninstall both, reinstall GDAL wheel first |
 
 ---
+
+### Windows — HORAYZON Setup (EXPERIMENTAL)
+
+#### 1.Compiling and Installing HORAYZON Native on Windows
+Create a wheel file and install it, follow [This this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
+Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
+
 
 ### Linux / macOS
 
@@ -318,7 +329,9 @@ Distributed under the BSD-3-Clause License. See `LICENSE.txt` for details.
 Special thanks to the developers and maintainers of the open-source projects that made this work possible:
 
 * **[AROSICS](https://github.com/GFZ/arosics)**: An Automated and Robust Open-Source Image Co-Registration Software developed by the GFZ German Research Centre for Geosciences. We utilize AROSICS specifically for aligning our raw satellite datasets.
-* **[OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask)**: An open-source tool developed by DPIRD-DMA. We utilize OmniCloudMask for  generating robust cloud and shadow masks for our raw satellite imagery.
+* **[OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask)**: An open-source tool developed by DPIRD-DMA. We utilize OmniCloudMask for  generating 
+robust cloud and shadow masks for our raw satellite imagery.
+* **[HORAYZON](https://github.com/ChristianSteger/HORAYZON)**: An open-source terrain analysis and horizon computation tool developed by Christian Steger. We utilize HORAYZON for calculating terrain incindence angles and topographic induced shadows to support accurate modelling of terrain-related effects in our geospatial analyses.
 
 
 ---
