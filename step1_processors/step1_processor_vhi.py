@@ -49,9 +49,9 @@ config_PRODUCT_VHI = {
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
     "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
-day_to_process = '2025-04-10'
+day_to_process = '2025-07-24'
 roi = None # Default for operational mode
-roi = (2545400, 1195900, 2574800, 1218200)
+roi = (2596300, 1166700, 2674400, 1222700)
 if roi is None:
     roi = (2470800, 1062310, 2843120, 1309440)
     
@@ -389,6 +389,7 @@ with rasterio.open(first_red_path) as src:
 
 ndvi_combined = None
 
+NDVI_index_list = []
 for item in s2_sr_items_sorted:
 # Get file paths for required bands
     item_path = stac_swisstopo + s2_sr_collection_id + '/' + item.id + '/swisseo_s2-sr_v200_mosaic_' + item.id
@@ -430,9 +431,7 @@ for item in s2_sr_items_sorted:
             )
             cloud_mask = cloud_mask_f.astype(np.uint8)
 
-    
-
-    # --- TERRAIN SHADOW mask (10m) #TODO
+    # --- TERRAIN SHADOW and low ILLUMINATION mask (10m) #TODO
 
     # ---- SNOW mask based on NDSI or SCL (20m, resampled to 10m)
     if maskSnowWithNDSI is True:
@@ -479,12 +478,17 @@ for item in s2_sr_items_sorted:
         ndvi_combined[fill_mask] = ndvi_masked[fill_mask]
     del ndvi_masked
 
+    # Track this item as used
+    NDVI_index_list.append(item.id)
+
     # Stop early if no NaN pixels remain
     if not np.any(np.isnan(ndvi_combined)):
         print(f'All pixels filled after {item.id}, stopping early')
         break
 
-print(f'Calculated and combined masked NDVI from {len(s2_sr_items_sorted)} items, newest value takes priority') 
+NDVI_index_list_str = ','.join(NDVI_index_list)
+NDVI_scene_count = len(NDVI_index_list)
+print(f'Calculated and combined masked NDVI from {NDVI_scene_count} items, newest value takes priority') 
 
 ##############################
 # INPUT DATA: REFERENCE NDVI
@@ -564,11 +568,6 @@ else:
     CI_method = 'min_and_max'
     print('- Using min and max for VCI calculation')
 
-# import matplotlib.pyplot as plt
-# plt.figure(figsize=(10, 8))
-# plt.imshow(ndvi_ref_max, cmap='viridis', vmin=0, vmax=1)
-# plt.colorbar()
-# plt.show()
 ##############################
 # CALCULATE VCI
 # VCI = 100 * (NDVI - NDVI_min) / (NDVI_max - NDVI_min)
@@ -675,6 +674,9 @@ def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
     return ds_output
 
 ds_11am = calc_LST_for_date(ds_sol, ds_sdl, current_date_str, aggregation='hour', hour=11)
+
+LST_index_list = f'LST_{current_date_str}_{lst_aggregation}'
+LST_scene_count = 1
 
 # Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
 def resample_lst_to_s2_grid(ds_lst, var_name, target_transform, target_shape, target_crs='EPSG:2056'):
@@ -789,8 +791,6 @@ del lst_11am, lst_ref_10m_min, lst_ref_10m_max, tci_den
 tci *= 100
 print('Calculated TCI')
 
-
-
 ############################################################
 # CALCULATE VHI
 # VHI = a*VCI + (1-a)*TCI
@@ -805,6 +805,32 @@ vhi = np.clip(vhi, 0, 100)
 vhi = np.where(np.isnan(vhi), config_PRODUCT_VHI['missing_data'], vhi)
 # ... and converting the data type (to UINT8).
 vhi = vhi.astype(np.uint8)
+# Converting from NumPy array to xarray DataArray for easier handling and exporting
+vhi = xr.DataArray(vhi, dims=('y', 'x'), coords={'y': np.arange(target_shape[0]), 'x': np.arange(target_shape[1])})
+
+##############################
+# SET METADATA
+# mTODO: controll if everything matches with the config file
+vhi.attrs.update({
+    'doy': doy,
+    'alpha': alpha,
+    'temporal_coverage': config_PRODUCT_VHI['temporal_coverage'],
+    'missing_data': config_PRODUCT_VHI['missing_data'],
+    'no_data':config_PRODUCT_VHI['no_data'],
+    # 'SWISSTOPO_PROCESSOR': processor_version['GithubLink'], #TODO
+    # 'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'], #TODO
+    # 'collection': collection_ready, #TODO
+    'system:time_start': start_date,
+    'system:time_end': end_date - timedelta(seconds=1), 
+    'NDVI_reference_data': config_PRODUCT_VHI['NDVI_reference_data'],
+    'NDVI_index_list': NDVI_index_list_str,
+    'NDVI_scene_count': NDVI_scene_count,
+    'LST_reference_data': config_PRODUCT_VHI['LST_reference_data'],
+    'LST_index_list': LST_index_list,
+    'LST_scene_count': LST_scene_count,
+    'VCI_and_TCI_calculated_with': CI_method,
+    'pixel_size_meter': 10,
+})
 
 ##############################
 # APPLY VEGETATION MASK
@@ -865,36 +891,9 @@ reproject(
 )
 vegetation_mask = vegetation_mask.astype(np.uint8)
 
-# Apply vegetation mask to VHI (set non-vegetated areas to no_data value)
-vhi_forest = vhi.copy()
-vhi_forest[forest_mask == 0] = config_PRODUCT_VHI['no_data']
-
-vhi_vegetation = vhi.copy()
-vhi_vegetation[vegetation_mask == 0] = config_PRODUCT_VHI['no_data']
-
-##############################
-# SET METADATA
-# mTODO: controll if everything matches with the config file
-# vhi_masked = vhi_masked.set({
-#     'doy': doy,
-#     'alpha': alpha,
-#     'temporal_coverage': config_PRODUCT_VHI['temporal_coverage'],
-#     'missing_data': config_PRODUCT_VHI['missing_data'],
-#     'no_data': config_PRODUCT_VHI['no_data'],
-#     'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
-#     'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
-#     'collection': collection_ready,
-#     'system:time_start': current_date.advance((-1*d), 'day').millis(),
-#     'system:time_end': current_date.millis(),
-#     'NDVI_reference_data': config_PRODUCT_VHI['NDVI_reference_data'],
-#     'NDVI_index_list': NDVI_index_list,
-#     'NDVI_scene_count': NDVI_scene_count,
-#     'LST_reference_data': config_PRODUCT_VHI['LST_reference_data'],
-#     'LST_index_list': LST_index_list,
-#     'LST_scene_count': LST_scene_count,
-#     'VCI_and_TCI_calculated_with': CI_method,
-#     'pixel_size_meter': 10,
-# })
+# Apply vegetation mask to VHI
+vhi_forest = vhi.where(forest_mask != 0, other=config_PRODUCT_VHI['no_data'])
+vhi_vegetation = vhi.where(vegetation_mask != 0, other=config_PRODUCT_VHI['no_data'])
 
 ##############################
 # EXPORT VHI
