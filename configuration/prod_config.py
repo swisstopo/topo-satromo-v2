@@ -35,6 +35,7 @@ BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
+DSM_FILE=os.path.join("local_assets","DSM_full_CH_nodata.tif")
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
 # ---------------------------

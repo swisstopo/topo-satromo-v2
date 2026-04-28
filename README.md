@@ -126,10 +126,68 @@ Follow the official [instructions on the HORAYZON repo](https://github.com/Chris
 
 ### Windows — HORAYZON Setup (EXPERIMENTAL)
 
-#### 1.Compiling and Installing HORAYZON Native on Windows
-Create a wheel file and install it, follow [This this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
+#### 1. Compiling and Installing HORAYZON Native on Windows
+Create a wheel file and install it, follow [this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
 Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
 
+#### 2. EGM96 Geoid Data Setup
+
+HORAYZON requires EGM96 geoid data for ellipsoidal height correction. By default,
+HORAYZON attempts to download this data automatically from an external server.
+To avoid network blocking (e.g. since we donaloda it quite often), copy the
+data manually into your local assets folder before running the pipeline.
+
+**Required file structure:**
+```
+local_assets/
+└── EGM/
+    └── EGM96/
+        └── WW15MGH.GRD
+```
+
+**Windows:**
+
+Copy the EGM96 data into the `local_assets/EGM/EGM96/` folder, then register
+the path with HORAYZON by writing it to its configuration file. Run once in
+a command prompt (adapt the path to your installation):
+
+```dos
+echo D:\path\to\your\project\local_assets\EGM\ > "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Example:
+```dos
+echo D:\temp\github\topo-satromo-v2\local_assets\EGM\ > "D:\temp\github\topo-satromo-v2\.venv\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Verify the content:
+```dos
+type "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+**Linux:**
+
+Copy the EGM96 data into `local_assets/EGM/EGM96/`, then register the path:
+
+```bash
+echo "/path/to/your/project/local_assets/EGM/" > \
+  "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.dirname(horayzon.__file__))[0], "horayzon"))')/path_aux_data.txt"
+```
+
+Example:
+```bash
+echo "/home/user/topo-satromo-v2/local_assets/EGM/" > \
+  "/home/user/topo-satromo-v2/.venv/lib/python3.11/site-packages/horayzon/path_aux_data.txt"
+```
+
+Verify the content:
+```bash
+cat "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.dirname(horayzon.__file__))[0], "horayzon"))')/path_aux_data.txt"
+```
+
+> **Note:** This step is required only once per virtual environment. The path is
+> stored permanently in `path_aux_data.txt` inside the HORAYZON package directory.
+> If you recreate the virtual environment or move the project, repeat this step.
 
 ### Linux / macOS
 

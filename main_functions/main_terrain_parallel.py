@@ -5,7 +5,9 @@ Parallel terrain processing pipeline for Switzerland DSM data.
 
 Computes per-pixel solar incidence angle and shadow mask for one or more
 Sentinel-2 orbit perimeters (or full Switzerland) and writes a single combined
-GeoTIFF per run. Developed initially by @stflury and DikshaAcharya as inhttps://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
+GeoTIFF per run.
+Developed initially by @stflury and DikshaAcharya as inhttps://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
+Depends on main_terrain_moduel.py
 
 Combined output encoding (uint8, EPSG:2056, 10 m resolution):
   0 - 180 : solar incidence angle in degrees (illuminated pixels)
@@ -23,6 +25,7 @@ Dependencies: rasterio, numpy, GDAL (osgeo), pyproj, fiona, skyfield,
               horayzon, subprocess, multiprocessing
 """
 
+
 import datetime
 import logging
 import os
@@ -39,6 +42,7 @@ from rasterio.merge import merge
 from pathlib import Path
 from argparse import ArgumentParser
 from pyproj import CRS as PyprojCRS, Transformer
+#import configuration as config
 
 from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 
@@ -51,7 +55,6 @@ from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 # ===========================================================================
 
 
-
 CFG = {
     # --- Logging ---
     # Set to False to suppress INFO messages (WARNING and above are always shown)
@@ -59,24 +62,22 @@ CFG = {
 
     # --- Input DSM ---
     # Full-Switzerland DSM in LV95 (EPSG:2056), 10 m resolution, Float32
+    #Test
     "dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_full_CH_nodata.tif",
 
-    # --- Output directories ---
-    # Temporary intermediate files (incidence and shadow before merging)
-    "output_path_IG": r"D:\temp\github\topo-landschaftsgradient\local_assets\incidence_CH",
-    "output_path_SW": r"D:\temp\github\topo-landschaftsgradient\local_assets\illuminated_CH",
-
-    # --- Log directory ---
-    "logfolder_path": r"D:\temp\github\topo-landschaftsgradient\local_assets\log",
+    #PROD
+    #"dsm_path":config.DSM_FILE,
 
     # --- Skyfield ephemeris ---
     "planets": {
-        "path":     r"D:\temp\github\topo-landschaftsgradient\local_assets\planets",
+        #path: r"D:\temp\github\topo-satromo-v2\assets\planets",
+        "path":     os.path.join("assets", "planets"),
         "bsp_file": "de421.bsp",
     },
 
     # --- EGM96 geoid data directory (for hray.geoid.undulation) ---
-    "egm_path": r"D:\temp\github\topo-landschaftsgradient\EGM/",
+    #"egm_path": r"D:\temp\github\topo-satromo-v2\local_assets\EGM/",
+    "egm_path": os.path.join("local_assets", "EGM") + os.sep,
 
     # --- Shadow search radius [m] ---
     # Must be >= maximum expected cast-shadow distance.
@@ -89,36 +90,37 @@ CFG = {
     # All tile origins are multiples of grid_size away from this point.
 
     #testing NIESEN
-    "ch_origin_east":  2604000,   # [m LV95]
-    "ch_origin_north": 1160000,   # [m LV95]
+    #"ch_origin_east":  2604000,   # [m LV95]
+    #"ch_origin_north": 1160000,   # [m LV95]
 
     #PROD
-    # "ch_origin_east":  2480000,   # [m LV95]
-    # "ch_origin_north": 1060000,   # [m LV95]
+    "ch_origin_east":  2480000,   # [m LV95]
+    "ch_origin_north": 1060000,   # [m LV95]
 
     # --- Grid dimensions for full Switzerland coverage ---
     #testing NIESEN
-    "n_e": 1,   # number of tiles in East direction  (18 x 20 km = 360 km)
-    "n_n": 1,   # number of tiles in North direction (12 x 20 km = 240 km)
+    #"n_e": 1,   # number of tiles in East direction  (18 x 20 km = 360 km)
+    #"n_n": 1,   # number of tiles in North direction (12 x 20 km = 240 km)
 
     #PROD
-    # "n_e": 18,   # number of tiles in East direction  (18 x 20 km = 360 km)
-    # "n_n": 12,   # number of tiles in North direction (12 x 20 km = 240 km)
+    "n_e": 18,   # number of tiles in East direction  (18 x 20 km = 360 km)
+    "n_n": 12,   # number of tiles in North direction (12 x 20 km = 240 km)
 
     # --- Tile parameters ---
     "grid_size": 20000,  # tile side length [m]
     "grid_step": 10,     # pixel resolution [m]
 
     # --- Multiprocessing ---
-    "n_proc": 8,   # number of parallel worker processes TODO: #min(len(tasks), os.cpu_count() - 1)
+    #"n_proc": 8,   # number of parallel worker processes TODO: #min(len(tasks), os.cpu_count() - 1)
+    "n_proc": os.cpu_count() - 1,   # number of parallel worker processes
 
     # --- Perimeter GPKG files (one per Sentinel-2 orbit) ---
     "perimeters": {
         "CH":  None,
-        "108": r"D:\temp\github\topo-satromo-v2\assets\swissboundary_buffer_5000m_108.gpkg",
-        "22":  r"D:\temp\github\topo-satromo-v2\assets\swissboundary_buffer_5000m_22.gpkg",
-        "65":  r"D:\temp\github\topo-satromo-v2\assets\swissboundary_buffer_5000m_65.gpkg",
-        "8":   r"D:\temp\github\topo-satromo-v2\assets\swissboundary_buffer_5000m_8.gpkg",
+        "108": os.path.join("assets", "swissboundary_buffer_5000m_108.gpkg"),
+        "22":  os.path.join("assets", "swissboundary_buffer_5000m_22.gpkg"),
+        "65":  os.path.join("assets", "swissboundary_buffer_5000m_65.gpkg"),
+        "8":   os.path.join("assets", "swissboundary_buffer_5000m_8.gpkg"),
     },
 }
 
@@ -158,6 +160,11 @@ def setup_logging(level=logging.INFO, fmt="%(asctime)s [%(levelname)s] %(message
     logging.getLogger("rasterio").setLevel(logging.WARNING)
     logging.getLogger("pyproj").setLevel(logging.WARNING)
     logging.getLogger("skyfield").setLevel(logging.WARNING)
+    # HORAYZON gibt "No rotation matrices" direkt via print() aus,
+    # nicht via logging -> kann nicht mit logging unterdrueckt werden.
+    # GDAL-Warnungen via gdal.PushErrorHandler unterdruecken:
+    from osgeo import gdal
+    gdal.PushErrorHandler("CPLQuietErrorHandler")
 
 
 def log_listener_process(log_queue, log_path, loglvl=logging.INFO):
@@ -252,6 +259,17 @@ def load_perimeter_bbox(gpkg_path):
     )
     return e_min, n_min, e_max, n_max
 
+# HORAYZON 1.2 hat path_to_aux_data entfernt und liest den Pfad stattdessen
+# aus path_aux_data.txt. Diese Datei wird hier einmalig geschrieben damit
+# Worker-Prozesse nicht input() aufrufen (was in multiprocessing fehlschlaegt).
+import horayzon as _hray_setup
+_path_horayzon = os.path.join(
+    os.path.split(os.path.dirname(_hray_setup.__file__))[0], "horayzon"
+)
+_path_file = os.path.join(_path_horayzon, "path_aux_data.txt")
+with open(_path_file, "w") as _f:
+    _f.write(CFG["egm_path"])
+logging.info(f"HORAYZON aux path: {CFG['egm_path']} -> {_path_file}")
 
 def calc_grid_for_perimeter(perimeter_key, cfg):
     """
@@ -368,7 +386,7 @@ def run_tile(args, cfg, coord_tuple):
         iw = InzidenWinkel(
             dom=cfg["dsm_path"],
             planets=cfg["planets"],
-            output_path=cfg["output_path_IG"],
+            output_path=".",
         )
         inc_tile, inc_transform, inc_nodata = iw.calc_incidence_grid(
             e_lv95=tile_e,
@@ -395,8 +413,7 @@ def run_tile(args, cfg, coord_tuple):
             dom=cfg["dsm_path"],
             planets=cfg["planets"],
             search_dist=cfg["search_dist"],
-            output_path=cfg["output_path_SW"],
-            egm_path=cfg["egm_path"],
+            output_path=".",
         )
         ilu_tile, ilu_transform, ilu_nodata = sw.calc_illuminate_grid(
             e_lv95=tile_e,
@@ -568,7 +585,7 @@ def write_terrain_tif(combined, transform, output_tif, dsm_path):
     combined[nodata_mask] = 255
 
     # --- Step 2: Write intermediate temp file ---
-    tmp_dir = os.path.dirname(output_tif) or "."
+    tmp_dir = os.path.dirname(os.path.abspath(output_tif)) or "."
     tmp_fd, tmp_path = tempfile.mkstemp(suffix="_tmp.tif", dir=tmp_dir)
     os.close(tmp_fd)
 
@@ -585,32 +602,78 @@ def write_terrain_tif(combined, transform, output_tif, dsm_path):
         dst.set_band_description(1, "terrain_incidence_shadow")
         dst.update_tags(1, ENCODING="0-180=incidence_deg, 200=shadow, 255=nodata")
 
-    # --- Step 3: gdalwarp for compression and pixel alignment ---
-    if os.path.isfile(output_tif):
-        os.remove(output_tif)
+    # --- Step 3: gdalwarp fuer Pixelausrichtung (Zwischendatei) ---
+    tmp2_fd, tmp2_path = tempfile.mkstemp(suffix="_aligned.tif", dir=tmp_dir)
+    os.close(tmp2_fd)
 
-    cmd = [
+    cmd_warp = [
         "gdalwarp",
         "-of",      "GTiff",
-        "-co",      "BIGTIFF=YES",
-        "-co",      "NUM_THREADS=ALL_CPUS",
-        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-        "-co",      "COMPRESS=DEFLATE",
         "-co",      "TILED=YES",
+        "-co",      "BLOCKXSIZE=256",
+        "-co",      "BLOCKYSIZE=256",
         "-tr",      "10", "10",
         "-tap",
         "-r",       "near",
         "-ot",      "Byte",
         "-overwrite",
         tmp_path,
-        output_tif,
+        tmp2_path,
     ]
-    logging.info(f"gdalwarp: {' '.join(cmd)}")
-    result = subprocess.run(cmd, check=True, capture_output=True)
+    logging.info(f"gdalwarp: {' '.join(cmd_warp)}")
+    result = subprocess.run(cmd_warp, check=True, capture_output=True)
     if result.stderr:
         logging.debug(f"gdalwarp stderr: {result.stderr.decode()}")
+     # Sicher loeschen: nur wenn Datei noch existiert
+    if os.path.isfile(tmp_path):
+        os.remove(tmp_path)
+    else:
+        logging.warning(f"tmp_path already gone: {tmp_path}")
 
-    os.remove(tmp_path)
+    # --- Step 4: Overviews hinzufuegen (Pflicht fuer COG) ---
+    cmd_ovr = [
+        "gdaladdo",
+        "-r",      "nearest",
+        tmp2_path,
+        "2", "4", "8", "16", "32",
+    ]
+    logging.info(f"gdaladdo: {' '.join(cmd_ovr)}")
+    result = subprocess.run(cmd_ovr, check=True, capture_output=True)
+    if result.stderr:
+        logging.debug(f"gdaladdo stderr: {result.stderr.decode()}")
+
+    # --- Step 5: COG schreiben ---
+    if os.path.isfile(output_tif):
+        os.remove(output_tif)
+
+    cmd_cog = [
+        "gdal_translate",
+        "-of",      "COG",
+        "-co",      "COMPRESS=DEFLATE",
+        "-co",      "BLOCKSIZE=256",
+        "-co",      "RESAMPLING=NEAREST",
+        "-co",      "OVERVIEWS=IGNORE_EXISTING",
+        "-co",      "BIGTIFF=YES",
+        "-co",      "NUM_THREADS=ALL_CPUS",
+        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
+        "-ot",      "Byte",
+        tmp2_path,
+        output_tif,
+    ]
+    logging.info(f"gdal_translate COG: {' '.join(cmd_cog)}")
+    result = subprocess.run(cmd_cog, check=True, capture_output=True)
+    if result.stderr:
+        logging.debug(f"gdal_translate stderr: {result.stderr.decode()}")
+
+    if os.path.isfile(tmp2_path):
+        os.remove(tmp2_path)
+    else:
+        logging.warning(f"tmp2_path already gone: {tmp2_path}")
+
+    logging.info(f"COG terrain GeoTIFF written: {output_tif}")
+
+    if os.path.isfile(tmp_path):
+        os.remove(tmp_path)
     logging.info(f"Terrain GeoTIFF written: {output_tif}")
 
 
@@ -618,7 +681,7 @@ def write_terrain_tif(combined, transform, output_tif, dsm_path):
 # Main callable function
 # ===========================================================================
 
-def main_terrain_parallel(orbit, timedate, outputfilename=None):
+def create_terrain_mask(orbit, timedate, outputfilename=None, sequential=False):
     """
     Run the full terrain illumination pipeline for one orbit and acquisition time.
 
@@ -632,8 +695,12 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         timedate       : Acquisition date and time in UTC, format YYYY-MM-DDtHHMMSS.
                          Example: "2025-01-18t103351"
         outputfilename : Optional full path for the output GeoTIFF.
-                         If None, the file is written to CFG['output_path'] with
-                         the name  terrain_{orbit}_{timedate}.tif
+                         If None, the file is written to the current working directory
+                         with the name terrain_{orbit}_{timedate}.tif
+        sequential : if True, tiles are processed one by one without
+                     multiprocessing. Use this when calling from another
+                     script (e.g. util_terrain_backfill.py) to avoid
+                     nested multiprocessing issues with HORAYZON/Embree.
 
     Returns:
         True  if the output file was created successfully.
@@ -642,6 +709,7 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
     Example:
         from main_terrain_parallel import main_terrain_parallel
         ok = main_terrain_parallel("108", "2023-12-25t103441")
+        ok = main_terrain_parallel("108", "2023-12-25t103441", "my_output.tif")
     """
     try:
         # --- Parse timedate string ---
@@ -650,23 +718,14 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         # --- Resolve output path ---
         if outputfilename is None:
             outputfilename = f"terrain_{orbit}_{timedate}.tif"
-        # Kein os.makedirs nötig: aktuelles Verzeichnis existiert immer.
-        # Falls outputfilename einen Verzeichnispfad enthält, diesen sicherstellen:
+        # If outputfilename contains a directory path, create it if needed
         out_dir = os.path.dirname(outputfilename)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
-        # --- Set up logging ---
+        # --- Set up logging (console only, no logfile) ---
         loglvl = logging.INFO
-        ctx    = mp.get_context("spawn")   # Windows-safe
-        log_queue = ctx.Queue(-1)
-        listener  = ctx.Process(
-            target=log_listener_process,
-            args=(log_queue, Path(CFG["logfolder_path"]), loglvl),
-            name="LogListener",
-        )
-        listener.start()
-        setup_logging(level=loglvl, logfolder=Path(CFG["logfolder_path"]))
+        setup_logging(level=loglvl, logfolder=None)
 
         # --- Build args dict for worker processes ---
         args = {
@@ -679,7 +738,7 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         }
 
         logging.info("=" * 60)
-        logging.info(f"Terrain processing start")
+        logging.info("Terrain processing start")
         logging.info(f"  Orbit    : {orbit}")
         logging.info(f"  Date UTC : {date_str}  Time UTC : {time_str}")
         logging.info(f"  Output   : {outputfilename}")
@@ -693,34 +752,36 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         ]
         logging.info(
             f"Tiles total={len(all_tiles)}, valid={len(valid_tiles)}, "
-            f"skipped (nodata)={len(all_tiles)-len(valid_tiles)}"
+            f"skipped (nodata)={len(all_tiles) - len(valid_tiles)}"
         )
 
         if not valid_tiles:
             logging.error("No valid tiles found for this perimeter. Aborting.")
-            log_queue.put_nowait(None)
-            listener.join()
             return False
 
-        # --- Parallel processing ---
+        # --- Parallel oder sequenziell ---
         tasks  = [(args, CFG, t) for t in valid_tiles]
         n_proc = min(CFG["n_proc"], len(tasks))
-        logging.info(f"Starting {len(tasks)} tiles on {n_proc} workers...")
 
-        with ctx.Pool(
-            processes=n_proc,
-            initializer=setup_logging,
-            initargs=(logging.INFO,),
-        ) as pool:
-            try:
-                results = pool.starmap(run_tile, tasks)
-            except KeyboardInterrupt:
-                logging.warning("KeyboardInterrupt: terminating workers")
-                pool.terminate()
-                pool.join()
-                log_queue.put_nowait(None)
-                listener.join()
-                return False
+        if sequential:
+            # Kein Pool: tiles nacheinander verarbeiten
+            logging.info(f"Processing {len(tasks)} tiles sequentially (no multiprocessing)...")
+            results = [run_tile(*task) for task in tasks]
+        else:
+            logging.info(f"Starting {len(tasks)} tiles on {n_proc} workers...")
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(
+                processes=n_proc,
+                initializer=setup_logging,
+                initargs=(logging.INFO,),
+            ) as pool:
+                try:
+                    results = pool.starmap(run_tile, tasks)
+                except KeyboardInterrupt:
+                    logging.warning("KeyboardInterrupt: terminating workers")
+                    pool.terminate()
+                    pool.join()
+                    return False
 
         # --- Merge incidence tiles ---
         logging.info("Merging incidence angle tiles...")
@@ -751,19 +812,14 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
         # --- Verify output ---
         if not os.path.isfile(outputfilename):
             logging.error(f"Output file not found after writing: {outputfilename}")
-            log_queue.put_nowait(None)
-            listener.join()
             return False
 
         file_mb = os.path.getsize(outputfilename) / 1024 / 1024
         logging.info(f"Done. Output: {outputfilename} ({file_mb:.1f} MB)")
-
-        log_queue.put_nowait(None)
-        listener.join()
         return True
 
     except Exception as exc:
-        logging.exception(f"main_terrain_parallel failed: {exc}")
+        logging.exception(f"create_terrain_mask failed: {exc}")
         return False
 
 
@@ -772,7 +828,6 @@ def main_terrain_parallel(orbit, timedate, outputfilename=None):
 # ===========================================================================
 
 def parse_args():
-    """Parse command-line arguments for direct script invocation."""
     parser = ArgumentParser(
         description="Terrain illumination pipeline (incidence angle + shadow mask)"
     )
@@ -786,31 +841,27 @@ def parse_args():
         "--timedate", "-td",
         default="2023-12-25t103441",
         type=str,
-        help="UTC date+time, format YYYY-MM-DDtHHMMSS, e.g. 2025-01-18t103351",
+        help="UTC date+time, format YYYY-MM-DDtHHMMSS",
     )
     parser.add_argument(
         "--output", "-out",
         default=None,
         type=str,
-        help="Output GeoTIFF path (optional, default: terrain_{orbit}_{timedate}.tif)",
+        help="Output GeoTIFF path (optional)",
     )
     parser.add_argument(
         "--loglevel",
         choices=LOGLEVELS,
         default="INFO",
-        help=f"Log level, default: INFO",
     )
     return vars(parser.parse_args())
 
 
 if __name__ == "__main__":
     __args = parse_args()
+    setup_logging(level=getattr(logging, __args["loglevel"]))
 
-    # Override log level if specified on command line
-    loglvl = getattr(logging, __args["loglevel"].strip().upper())
-    setup_logging(level=loglvl, logfolder=Path(CFG["logfolder_path"]))
-
-    success = main_terrain_parallel(
+    success = create_terrain_mask(
         orbit=__args["orbit"],
         timedate=__args["timedate"],
         outputfilename=__args["output"],

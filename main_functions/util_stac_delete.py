@@ -15,7 +15,7 @@ Modified: 2026-01-13
 License: MIT License
 
 Usage:
-    python util_stac_delete_interactive.py
+    python util_stac_delete.py
 
 Dependencies:
     - pystac_client
