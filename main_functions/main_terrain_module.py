@@ -2,7 +2,7 @@
 main_terrain_module.py
 ======================
 Terrain illumination and incidence angle computation for Switzerland DSM data.
-Developed initially by @stflury and DikshaAcharya as in https://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON inspired by https://github.com/ChristianSteger/HORAYZON/blob/main/examples/shadow/gridded_curved_DEM_SRTM.py 
+Developed initially by @stflury and DikshaAcharya as in https://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON inspired by https://github.com/ChristianSteger/HORAYZON/blob/main/examples/shadow/gridded_curved_DEM_SRTM.py
 
 Provides four classes:
   - HelperFunctions : Static coordinate conversion, sun position and incidence angle utilities
@@ -806,6 +806,11 @@ class InzidenWinkel:
         """
         Compute the incidence angle raster for one DSM tile.
 
+        The DSM window is read with 1-pixel border on all sides so that
+        slope_plane_meth (which loses 1 pixel per edge via [1:-1, 1:-1])
+        produces valid values at tile boundaries. Without this border,
+        nodata strips 1-2 pixels wide appear at every tile edge (every 20 km).
+
         Args:
             e_lv95    : Tile origin easting  [m, LV95]
             dateoi    : UTC date string (DD.MM.YYYY or YYYY-MM-DD)
@@ -825,9 +830,17 @@ class InzidenWinkel:
         xmin, xmax = e_lv95, e_lv95 + grid_size
         ymin, ymax = n_lv95, n_lv95 + grid_size
 
-        # Read DSM window for the tile extent
+        # Read DSM window with 1-pixel border on all sides.
+        # slope_plane_meth loses 1 pixel per edge ([1:-1, 1:-1]).
+        # Without the border, nodata strips appear at every tile boundary.
+        border = abs(self.__dom._dx)   # = grid_step [m], e.g. 10 m = 1 pixel
+
         src    = self.__dom._src
-        window = window_from_bounds(xmin, ymin, xmax, ymax, src.transform)
+        window = window_from_bounds(
+            xmin - border, ymin - border,
+            xmax + border, ymax + border,
+            src.transform,
+        )
         window = window.round_offsets().round_lengths()
 
         elev_tile = src.read(1, window=window).astype(np.float32)
@@ -837,9 +850,10 @@ class InzidenWinkel:
 
         height, width = elev_tile.shape
 
-        # Pixel centre coordinates in LV95 for the window
-        x_window  = self.__dom._x0 + np.arange(width)  * self.__dom._dx
-        y_window  = self.__dom._y0 + np.arange(height) * self.__dom._dy
+        # Pixel-centre coordinates in LV95 for the extended window
+        win_transform = rasterio.windows.transform(window, src.transform)
+        x_window  = win_transform.c + (np.arange(width)  + 0.5) * win_transform.a
+        y_window  = win_transform.f + (np.arange(height) + 0.5) * win_transform.e
         x_full_2d, y_full_2d = np.meshgrid(x_window, y_window)
 
         # Compute surface tilt vectors with HORAYZON
@@ -850,8 +864,8 @@ class InzidenWinkel:
             np.nan_to_num(elev_tile).astype(np.float32),
         )
 
-        # Derive slope [deg] and aspect [deg from North, clockwise] from tilt vectors
-        # vec_tilt[:,:,2] is the z-component of the unit normal (= cos of slope angle)
+        # [1:-1, 1:-1] removes the border pixels added above.
+        # Result now covers exactly the tile extent (num_points x num_points).
         slope_tile  = np.rad2deg(np.arccos(vec_tilt[1:-1, 1:-1, 2]))
         aspect_vec  = vec_tilt[1:-1, 1:-1, :2]
         aspect_tile = np.rad2deg(np.arctan2(aspect_vec[..., 0], aspect_vec[..., 1]))
@@ -865,7 +879,7 @@ class InzidenWinkel:
         slope[:rows, :cols]  = slope_tile[:rows, :cols]
         aspect[:rows, :cols] = aspect_tile[:rows, :cols]
 
-        # Sun position at tile centre (one value per tile, sufficient at 20 km tile size)
+        # Sun position at tile centre (one value per tile, sufficient at 20 km)
         center_x = e_lv95 + grid_size / 2.0
         center_y = n_lv95 + grid_size / 2.0
         lon_c, lat_c = HelperFunctions.lv95_to_wgs84(center_x, center_y)
@@ -882,8 +896,8 @@ class InzidenWinkel:
         # Incidence angle computation
         NODATA_INC = np.float32(-9999.0)
         logging.info(f"{os.getpid()} Computing incidence angle...")
-        theta    = HelperFunctions.calculate_incidence_angle(slope, aspect, sun_elev, sun_az)
-        grid     = theta.astype(np.float32)
+        theta = HelperFunctions.calculate_incidence_angle(slope, aspect, sun_elev, sun_az)
+        grid  = theta.astype(np.float32)
         grid[np.isnan(grid)] = NODATA_INC
 
         # Output array and transform (always num_points x num_points)
