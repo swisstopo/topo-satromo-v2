@@ -1,6 +1,6 @@
-for year in 2025 2024 2023 2022 2021 2020 2019 2018 2017 2016 2015
+for year in 2025
 do
-  for month in {01..12}; do
+  for month in {09..12}; do
     # days in month (handles leap years)
     max_day=$(cal "$month" "$year" | awk 'NF {DAYS=$NF} END {print DAYS}')
     for day in $(seq -w 1 "$max_day"); do

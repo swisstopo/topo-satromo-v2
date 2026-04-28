@@ -249,6 +249,8 @@ def create_enhanced_rgb(b04_path, b03_path, b02_path, clip_orbit, output_path,
             "-cutline", str(clip_orbit),
             "-crop_to_cutline",
             "-dstalpha",
+            "-tr", "10", "10", 
+            "-tap",
             "-overwrite",
             temp_output,
             final_output
