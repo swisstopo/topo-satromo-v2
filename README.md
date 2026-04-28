@@ -110,8 +110,9 @@ python -c "import arosics; print('AROSICS OK')"
 python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
 
 ```
-#### 7. Install HORAYZON
+#### 7. Install HORAYZON 
 
+### LINUX — HORAYZON Setup with CONDA
 Follow the official [instructions on the HORAYZON repo](https://github.com/ChristianSteger/HORAYZON#package-dependencies)
 
 **Troubleshooting:**
@@ -123,6 +124,60 @@ Follow the official [instructions on the HORAYZON repo](https://github.com/Chris
 | Import errors after `pip install arosics` | GDAL installed after arosics | Reinstall: uninstall both, reinstall GDAL wheel first |
 
 ---
+### LINUX — HORAYZON Setup with PIP
+
+```bat
+bashsudo apt update
+
+# Intel Embree
+sudo apt install -y libembree-dev
+
+# Threading Building Blocks (TBB)
+sudo apt install -y libtbb-dev
+
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
+```
+the follow [Installation without Conda](https://github.com/ChristianSteger/HORAYZON#installation-without-conda)
+
+```bat
+# Activate your venv
+source /path/to/your/venv/bin/activate
+
+# Find Embree headers
+find /usr -name "embree4" -type d 2>/dev/null
+find /usr -name "rtcore.h" 2>/dev/null
+
+# Find Embree library
+find /usr -name "libembree*" 2>/dev/null
+
+# Find TBB
+find /usr -name "libtbb*" 2>/dev/null
+find /usr -name "tbb" -type d 2>/dev/null
+
+# Paths for Intel Embree and Threading Building Blocks (TBB) are for example
+path_include = ["/usr/include/"]
+path_lib = ["/usr/lib/x86_64-linux-gnu/libembree4"]  # without file ending
+
+#We need clang++ . if it is missing. Install it:
+sudo apt install -y clang
+
+# Clone and enter HORAYZON
+git clone https://github.com/ChristianSteger/HORAYZON.git
+cd HORAYZON
+
+# Edit setup_manual.py to set the paths above
+# path_include = ["/usr/include/"]
+# path_lib = ["/usr/lib/x86_64-linux-gnu/libembree4"]
+nano setup_manual.py
+
+# Rename and install into the active venv
+mv setup_manual.py setup.py
+python -m pip install .
+
+```
+
+After successful isntallation: remove the HORAYZON directory
 
 ### Windows — HORAYZON Setup (EXPERIMENTAL)
 

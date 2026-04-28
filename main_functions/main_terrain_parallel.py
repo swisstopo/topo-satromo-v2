@@ -42,7 +42,7 @@ from rasterio.merge import merge
 from pathlib import Path
 from argparse import ArgumentParser
 from pyproj import CRS as PyprojCRS, Transformer
-#import configuration as config
+import configuration as config
 
 from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 
@@ -63,10 +63,10 @@ CFG = {
     # --- Input DSM ---
     # Full-Switzerland DSM in LV95 (EPSG:2056), 10 m resolution, Float32
     #Test
-    "dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_full_CH_nodata.tif",
+    #"dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_full_CH_nodata.tif",
 
     #PROD
-    #"dsm_path":config.DSM_FILE,
+    "dsm_path":config.DSM_FILE,
 
     # --- Skyfield ephemeris ---
     "planets": {
