@@ -58,24 +58,26 @@ Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https:
 
 ---
 
-### Windows — AROSICS Setup
+### 1.  AROSICS 
+
+#### Windows — AROSICS Setup (EXPERIMENTAL)
 
 AROSICS requires a pre-compiled GDAL wheel on Windows due to C++ build dependencies. Follow the steps in order.
 
-#### 1. Create and activate a virtual environment
+##### 1. Create and activate a virtual environment
 
 ```bat
 python -m venv venv
 venv\Scripts\activate
 ```
 
-#### 2. Check your Python version
+##### 2. Check your Python version
 
 ```bat
 python --version
 ```
 
-#### 3. Download and install the GDAL wheel
+##### 3. Download and install the GDAL wheel
 
 GDAL must be installed **before** `arosics` and **before** `requirements.txt`.
 
@@ -91,28 +93,51 @@ pip install path\to\GDAL-X.X.X-cpXXX-cpXXX-win_amd64.whl
 
 > The `requirements.txt` also references a local GDAL wheel at `secrets/gdal-*.whl` for reproducibility. Place your downloaded wheel there if preferred.
 
-#### 4. Install requirements
+##### 4. Install requirements
 
 ```bat
 pip install -r requirements.txt
 ```
 
-#### 5. Install AROSICS
+##### 5. Install AROSICS
 
 ```bat
 pip install arosics
 ```
 
-#### 6. Verify AROSICS
+##### 6. Verify AROSICS
 
 ```bat
 python -c "import arosics; print('AROSICS OK')"
 python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
 
 ```
-#### 7. Install HORAYZON 
 
-### LINUX — HORAYZON Setup with CONDA
+#### LINUX — AROSICS Setup 
+
+##### 1. Install requirements
+
+```bat
+pip install -r requirements.txt
+```
+
+##### 2. Install AROSICS
+
+```bat
+pip install arosics
+```
+
+##### 3. Verify AROSICS
+
+```bat
+python -c "import arosics; print('AROSICS OK')"
+python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
+
+```
+
+### 2. Install HORAYZON 
+
+#### LINUX — HORAYZON Setup with CONDA
 Follow the official [instructions on the HORAYZON repo](https://github.com/ChristianSteger/HORAYZON#package-dependencies)
 
 **Troubleshooting:**
@@ -124,7 +149,9 @@ Follow the official [instructions on the HORAYZON repo](https://github.com/Chris
 | Import errors after `pip install arosics` | GDAL installed after arosics | Reinstall: uninstall both, reinstall GDAL wheel first |
 
 ---
-### LINUX — HORAYZON Setup with PIP
+#### LINUX — HORAYZON Setup with PIP
+
+##### 1. Installing HORAYZON Native on Linux
 
 ```bat
 bashsudo apt update
@@ -179,13 +206,7 @@ python -m pip install .
 
 After successful isntallation: remove the HORAYZON directory
 
-### Windows — HORAYZON Setup (EXPERIMENTAL)
-
-#### 1. Compiling and Installing HORAYZON Native on Windows
-Create a wheel file and install it, follow [this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
-Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
-
-#### 2. EGM96 Geoid Data Setup
+##### 2. EGM96 Geoid Data Setup
 
 HORAYZON requires EGM96 geoid data for ellipsoidal height correction. By default,
 HORAYZON attempts to download this data automatically from an external server.
@@ -200,38 +221,20 @@ local_assets/
         └── WW15MGH.GRD
 ```
 
-**Windows:**
-
 Copy the EGM96 data into the `local_assets/EGM/EGM96/` folder, then register
 the path with HORAYZON by writing it to its configuration file. Run once in
 a command prompt (adapt the path to your installation):
 
-```dos
-echo D:\path\to\your\project\local_assets\EGM\ > "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
-```
-
-Example:
-```dos
-echo D:\temp\github\topo-satromo-v2\local_assets\EGM\ > "D:\temp\github\topo-satromo-v2\.venv\Lib\site-packages\horayzon\path_aux_data.txt"
-```
-
-Verify the content:
-```dos
-type "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
-```
-
-**Linux:**
-
 Copy the EGM96 data into `local_assets/EGM/EGM96/`, then register the path:
 
 ```bash
-echo "/path/to/your/project/local_assets/EGM/" > \
+echo "local_assets/EGM/" > \
   "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.dirname(horayzon.__file__))[0], "horayzon"))')/path_aux_data.txt"
 ```
 
 Example:
 ```bash
-echo "/home/user/topo-satromo-v2/local_assets/EGM/" > \
+echo "local_assets/EGM/" > \
   "/home/user/topo-satromo-v2/.venv/lib/python3.11/site-packages/horayzon/path_aux_data.txt"
 ```
 
@@ -244,19 +247,68 @@ cat "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.
 > stored permanently in `path_aux_data.txt` inside the HORAYZON package directory.
 > If you recreate the virtual environment or move the project, repeat this step.
 
-### Linux / macOS
+#### Windows — HORAYZON Setup (EXPERIMENTAL)
 
+##### 1. Compiling and Installing HORAYZON Native on Windows
+Create a wheel file and install it, follow [this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
+Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
+
+##### 2. EGM96 Geoid Data Setup
+
+HORAYZON requires EGM96 geoid data for ellipsoidal height correction. By default,
+HORAYZON attempts to download this data automatically from an external server.
+To avoid network blocking (e.g. since we donaloda it quite often), copy the
+data manually into your local assets folder before running the pipeline.
+
+**Required file structure:**
+```
+local_assets/
+└── EGM/
+    └── EGM96/
+        └── WW15MGH.GRD
+```
+
+Copy the EGM96 data into the `local_assets/EGM/EGM96/` folder, then register
+the path with HORAYZON by writing it to its configuration file. Run once in
+a command prompt (adapt the path to your installation):
+
+```dos
+echo local_assets\EGM\ > "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Example:
+```dos
+echo local_assets\EGM\ > "D:\temp\github\topo-satromo-v2\.venv\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Verify the content:
+```dos
+type "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+> **Note:** This step is required only once per virtual environment. The path is
+> stored permanently in `path_aux_data.txt` inside the HORAYZON package directory.
+> If you recreate the virtual environment or move the project, repeat this step.
+
+### 3. WIN / Linux / macOS
+
+LINUX macOS
 ```bash
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate 
+pip install -r requirements.txt
+```
+WIN
+```bash
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
 
-
 ---
 
-### Secrets Setup
+### 4. Secrets Setup
 
 **secrets** (for int):
 

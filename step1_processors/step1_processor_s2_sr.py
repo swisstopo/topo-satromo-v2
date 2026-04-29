@@ -4,7 +4,7 @@ import subprocess
 import numpy as np
 from datetime import datetime
 import configuration as config
-from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb,main_cloudpercentage,main_omnicloudmask
+from main_functions import main_utils, main_publish_stac_fsdi, main_coregistration, main_reprojection, main_mosaicing,main_thumbnails,main_create_rgb,main_cloudpercentage,main_omnicloudmask,main_terrain_module,main_terrain_parallel
 from collections import defaultdict
 import requests
 import os
@@ -921,11 +921,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_PROCESSOR_VERSION",processor_version['GithubLink'])
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","SWISSTOPO_RELEASE_VERSION",processor_version['ReleaseVersion'])
 
-        ##############################
-        # Terrainshadowmask and incidence angle calculation: pass orbit ans date time and outputfilename
-        #terrain_result = main_terrain.create_mask(
-                            # f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif", config.PRODUCT_S2_LEVEL_2A['product_name'])
-
+        
         ##############################
         # Clip Data to Switzerland and Reproject to CH1903LV95
 
@@ -1342,6 +1338,12 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     oversample_factor=5,
                     orbit_nr=orbit_num
                 )
+        
+        ##############################
+        # Terrainshadowmask and incidence angle calculation: pass orbit ans date time and outputfilename
+        #     
+        terrain_result = main_terrain_parallel.create_terrain_mask(orbit_num,timestamp,f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_terrainmask_10m.tif")                     
+        
         ##############################
         # Generate TCI
 
@@ -1379,6 +1381,14 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 'filename': f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_tci_10m.tif"
             })
 
+            # Since we generate Terrain manually, add it in the file list
+            file_list.append({
+                'timestamp': timestamp,
+                'band': 'TERRAINMASK',
+                'resolution': 10,
+                'filename': f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_terrainmask_10m.tif"
+            })
+
             # TCI last, resolution descending (bigger first), bands Z to A, so it is alphabetically in STAC
             file_list.sort(key=lambda x: (x['band'] == 'TCI', x['resolution'], x['band']), reverse=True)
 
@@ -1389,8 +1399,11 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 # Get band title using config
                 band_names = config.PRODUCT_S2_LEVEL_2A['band_names']
 
+                # Since TCI and TERRAINMASK are generated manually, title generated manually as well
                 if band == 'TCI':
                     band_title = "True color image - 10m"
+                elif band == 'TERRAINMASK':
+                    band_title = "Terrain mask - 10m"
                 else:
                     band_title = band_names.get(band, band)
 
