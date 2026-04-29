@@ -6,7 +6,7 @@ Parallel terrain processing pipeline for Switzerland DSM data.
 Computes per-pixel solar incidence angle and shadow mask for one or more
 Sentinel-2 orbit perimeters (or full Switzerland) and writes a single combined
 GeoTIFF per run.
-Developed initially by @stflury and DikshaAcharya as inhttps://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
+Developed initially by @stflury and DikshaAcharya as in https://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
 Depends on main_terrain_moduel.py
 
 Combined output encoding (uint8, EPSG:2056, 10 m resolution):
@@ -43,8 +43,8 @@ from pathlib import Path
 from argparse import ArgumentParser
 from pyproj import CRS as PyprojCRS, Transformer
 import configuration as config
-
-from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
+from .main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
+#from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 
 
 # ===========================================================================
