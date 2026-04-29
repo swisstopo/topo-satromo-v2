@@ -48,7 +48,6 @@ def process_product_vhi(
         roi: Optional bounding box as (min_x, min_y, max_x, max_y) in EPSG:2056.
             If None, processes all available data.
     """
-
     product_name = config.PRODUCT_VHI['product_name']
     print("********* processing {} *********".format(product_name))
 
@@ -80,7 +79,7 @@ def process_product_vhi(
     ref_ndvi_offset = -100 # Offset for reference NDVI statistics
     alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
     threshold_ndsi = 0.43 # values equal or above indicate snow
-    threshold_illumination = 0.65 # values equal or above indicate insufficient illumination
+    threshold_illumination = 70 # values equal or above indicate insufficient illumination angles [°degrees]
 
     # Environments
     os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without credentials
@@ -256,10 +255,8 @@ def process_product_vhi(
 
         return data_10m
 
-    # Function to apply masks (clouds, snow, terrain shadow) to a specific band #TODO: add terrain shadow and illumination masking
-    def apply_masks(band, cloudmask, snowmask,
-                    # illuminationmask=illumination_mask,  th_illumination=threshold_illumination, # TODO
-                    ):
+    # Function to apply masks (clouds, snow, terrain shadow) to a specific band
+    def apply_masks(band, cloudmask, snowmask, illumination_mask, th_illumination=threshold_illumination):
         """
         Apply masks to a specific band.
         
@@ -271,8 +268,8 @@ def process_product_vhi(
             Cloud mask (0=Clear, 1=Thick Cloud, 2=Thin Cloud, 3=Cloud Shadow)
         snowmask : numpy.ndarray
             Snow mask (0=Clear, 1=Snow)
-        illuminationmask : numpy.ndarray
-            Illumination mask
+        illumination_mask : numpy.ndarray
+            Illumination angles (in degrees) for insufficient illumination and terrain shadow detection
         th_illumination : float
             Threshold for illumination detection
         
@@ -293,11 +290,10 @@ def process_product_vhi(
             snow_condition = (snowmask != 0)
             masked_band[snow_condition] = np.nan
             
-        # TODO: Apply terrain shadow mask
-        # if illuminationmask is not None:
-        #     shadow_condition = illuminationmask > th_illumination
-        #     masked_band[shadow_condition] = np.nan
-        #     print(f'- Applied terrain shadow mask and removed areas of insufficient illumination (threshold: {threshold_illumination})')
+        # Apply terrain shadow mask
+        if illumination_mask is not None:
+            shadow_condition = illumination_mask > th_illumination
+            masked_band[shadow_condition] = np.nan
         
         return masked_band
 
@@ -402,7 +398,28 @@ def process_product_vhi(
                 )
                 cloud_mask = cloud_mask_f.astype(np.uint8)
 
-        # --- TERRAIN SHADOW and low ILLUMINATION mask (10m) #TODO
+        # --- TERRAIN SHADOW and low ILLUMINATION mask (10m)
+        illumination_mask_path = item_path + '_terrainmask_10m.tif'
+        with rasterio.open(illumination_mask_path) as src_illumination:
+            window, src_transform = get_window_and_transform(src_illumination, roi)
+            if src_transform is None:
+                illumination_mask = np.full(target_shape, dtype=np.uint8)  # treat as no shadow if no overlap
+            else:
+                data = src_illumination.read(1, window=window)
+                src_crs = src_illumination.crs
+                illumination_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
+                reproject(
+                    source=data.astype(np.float32),
+                    destination=illumination_mask_f,
+                    src_transform=src_transform,
+                    src_crs=src_crs,
+                    dst_transform=target_transform,
+                    dst_crs=src_crs,
+                    resampling=Resampling.nearest,
+                    src_nodata=0,
+                    dst_nodata=0
+                )
+                illumination_mask = illumination_mask_f.astype(np.uint8)
 
         # ---- SNOW mask based on NDSI or SCL (20m, resampled to 10m)
         if maskSnowWithNDSI is True:
@@ -437,8 +454,8 @@ def process_product_vhi(
             del scl
 
         # Apply masks to NDVI
-        ndvi_masked = apply_masks(ndvi, cloudmask=cloud_mask, snowmask=snow_mask) #TODO: add terrain shadow masking 
-        del ndvi, cloud_mask, snow_mask #, terrain_shadow_mask, illumination_mask
+        ndvi_masked = apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
+        del ndvi, cloud_mask, snow_mask, illumination_mask
 
         # Combine: fill gaps in combined NDVI with values from this (older) item
         if ndvi_combined is None:
@@ -557,7 +574,7 @@ def process_product_vhi(
     if current_date < datetime(2024, 1, 1):
         sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
         sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
-    elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 2, 1):
+    elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 4, 1):
         sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
         sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
     else:
@@ -1011,4 +1028,4 @@ def process_product_vhi(
     # plt.colorbar()
     # plt.show()
 
-    return f"VHI: Successfully processed {day_to_process}."
+    # return f"VHI: Successfully processed {day_to_process}."
