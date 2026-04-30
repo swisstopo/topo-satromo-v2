@@ -248,7 +248,7 @@ cat "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.
 #### Windows — HORAYZON Setup (EXPERIMENTAL)
 
 ##### 1. Compiling and Installing HORAYZON Native on Windows
-Create a wheel file and install it, follow [this installation guide]([https://deepwiki.com/swisstopo/topo-satromo-v2](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#compiling-and-installing-horayzon-native-on-windows)
+Create a wheel file and install it, follow [this installation guide](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#compiling-and-installing-horayzon-native-on-windows)
 Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
 
 ##### 2. EGM96 Geoid Data Setup
