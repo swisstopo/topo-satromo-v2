@@ -7,7 +7,7 @@ Computes per-pixel solar incidence angle and shadow mask for one or more
 Sentinel-2 orbit perimeters (or full Switzerland) and writes a single combined
 GeoTIFF per run.
 Developed initially by @stflury and DikshaAcharya as in https://github.com/swisstopo/topo-landschaftsgradient/tree/parallelism based on https://github.com/ChristianSteger/HORAYZON
-Depends on main_terrain_moduel.py
+Depends on main_terrain_module.py
 
 Combined output encoding (uint8, EPSG:2056, 10 m resolution):
   0 - 180 : solar incidence angle in degrees (illuminated pixels)
@@ -44,6 +44,7 @@ from argparse import ArgumentParser
 from pyproj import CRS as PyprojCRS, Transformer
 import configuration as config
 from .main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
+#from main_functions.main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 #from main_terrain_module import HelperFunctions, InzidenWinkel, SonnenWinkel
 
 
@@ -63,7 +64,8 @@ CFG = {
     # --- Input DSM ---
     # Full-Switzerland DSM in LV95 (EPSG:2056), 10 m resolution, Float32
     #Test
-    #"dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_full_CH_nodata.tif",
+    #"dsm_path": r"D:\temp\github\topo-satromo-v2\local_assets\DSM_10m_EPSG2056_CH_clipped_10km_extended_9999.tif",
+    #"dsm_path": os.path.join("/mnt/c/Users/Localadmin/Documents/SATROMO/topo-satromo-v2/topo-satromo-v2", "local_assets", "DSM_10m_EPSG2056_CH_clipped_10km_extended_9999.tif"),
 
     #PROD
     "dsm_path":config.DSM_FILE,
@@ -112,7 +114,7 @@ CFG = {
 
     # --- Multiprocessing ---
     #"n_proc": 8,   # number of parallel worker processes TODO: #min(len(tasks), os.cpu_count() - 1)
-    "n_proc": os.cpu_count() - 1,   # number of parallel worker processes
+    "n_proc": min(os.cpu_count() - 1, 16),  # number of parallel worker processes, maxmum 16 to avoid overloading with HORAYZON/Embree
 
     # --- Perimeter GPKG files (one per Sentinel-2 orbit) ---
     "perimeters": {
