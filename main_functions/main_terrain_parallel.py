@@ -101,8 +101,8 @@ CFG = {
 
     # --- Grid dimensions for full Switzerland coverage ---
     #testing NIESEN
-    #"n_e": 1,   # number of tiles in East direction  (18 x 20 km = 360 km)
-    #"n_n": 1,   # number of tiles in North direction (12 x 20 km = 240 km)
+    #"n_e": 1,   # number of tiles in East direction  (1 x 20 km = 20 km)
+    #"n_n": 1,   # number of tiles in North direction (1 x 20 km = 20 km)
 
     #PROD
     "n_e": 18,   # number of tiles in East direction  (18 x 20 km = 360 km)
