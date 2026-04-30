@@ -58,10 +58,7 @@ def process_product_vhi(
     workWithPercentiles = True
     # options: True, False - defines if the p05 and p95 percentiles of the reference data sets are used,
     # otherwise the min and max will be used (False)
-    maskSnowWithNDSI = False
-    # options: True, False - defines if snow masking is applied based on NDSI values
-    # otherwise the SCL band will be used (False)
-    #    
+  
     ##############################
     # CONFIGURATION / PARAMETERS
     # Paths
@@ -78,7 +75,7 @@ def process_product_vhi(
     ref_ndvi_scale_factor = 0.01 # Scale factor for reference NDVI statistics
     ref_ndvi_offset = -100 # Offset for reference NDVI statistics
     alpha = 0.5 # Weighting factor for VHI calculation (0.5 means equal weight for VCI and TCI)
-    threshold_ndsi = 0.43 # values equal or above indicate snow
+    threshold_ndsi = 0 # values equal or above indicate snow
     threshold_illumination = 70 # values equal or above indicate insufficient illumination angles [°degrees]
 
     # Environments
@@ -421,37 +418,36 @@ def process_product_vhi(
                 )
                 illumination_mask = illumination_mask_f.astype(np.uint8)
 
-        # ---- SNOW mask based on NDSI or SCL (20m, resampled to 10m)
-        if maskSnowWithNDSI is True:
-            green_path = item_path + '_b03_10m.tif'
-            swir_path = item_path + '_b11_20m.tif'
-            # Load green and SWIR bands only for snow masking based on NDSI, to save processing time and memory
-            green = load_and_scale_band(green_path, roi, target_transform, target_shape)
-            swir = load_scale_and_resample_20m_to_10m(swir_path, roi, target_transform, target_shape)
-            # NDSI --> ndsi = (green - swir) / (green + swir)
-            ndsi = green - swir # numerator
-            ndsi_den = green + swir # denominator
-            ndsi_den[ndsi_den == 0] = np.nan # avoid division by zero
-            ndsi /= ndsi_den  # divide in-place
-            del green, swir, ndsi_den
-            # Create snow mask based on NDSI
-            snow_mask = np.zeros_like(ndsi, dtype=np.uint8)
-            snow_mask[ndsi > threshold_ndsi] = 1  # 1 indicates snow
-            del ndsi
-        else:
-            # Load SCL band only for snow masking based on SCL, to save processing time and memory
-            scl_path = item_path + '_scl_20m.tif'
-            # SCL classification values:
-            # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
-            # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
-            # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
-            # 11: Snow or ice
-            scl = load_scale_and_resample_20m_to_10m(scl_path, roi, target_transform, target_shape,
-                                                nodata=0, scale=1, offset=0) # no scaling for SCL
-            # Create snow mask based on SCL
-            snow_mask = np.zeros_like(scl, dtype=np.uint8)
-            snow_mask[scl == 11] = 1  # 1 indicates snow
-            del scl
+        # ---- SNOW mask based on NDSI and SCL (20m, resampled to 10m)
+        # First, calculate NDSI-based snow mask from green and SWIR bands
+        green_path = item_path + '_b03_10m.tif'
+        swir_path = item_path + '_b11_20m.tif'
+        # Load green and SWIR bands only for snow masking based on NDSI, to save processing time and memory
+        green = load_and_scale_band(green_path, roi, target_transform, target_shape)
+        swir = load_scale_and_resample_20m_to_10m(swir_path, roi, target_transform, target_shape)
+        # NDSI --> ndsi = (green - swir) / (green + swir)
+        ndsi = green - swir # numerator
+        ndsi_den = green + swir # denominator
+        ndsi_den[ndsi_den == 0] = np.nan # avoid division by zero
+        ndsi /= ndsi_den  # divide in-place
+        del green, swir, ndsi_den
+        # Create snow mask based on NDSI
+        snow_mask = np.zeros_like(ndsi, dtype=np.uint8)
+        snow_mask[ndsi > threshold_ndsi] = 1  # 1 indicates snow
+
+        # Load SCL band for additional snow masking based on SCL
+        scl_path = item_path + '_scl_20m.tif'
+        # SCL classification values:
+        # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
+        # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
+        # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
+        # 11: Snow or ice
+        scl = load_scale_and_resample_20m_to_10m(scl_path, roi, target_transform, target_shape,
+                                            nodata=0, scale=1, offset=0) # no scaling for SCL
+        
+        # Add to snow mask based on SCL classification
+        snow_mask[scl == 11] = 1  # 1 indicates snow
+        del scl, ndsi
 
         # Apply masks to NDVI
         ndvi_masked = apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
