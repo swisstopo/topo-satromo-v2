@@ -798,16 +798,18 @@ def process_product_vhi(
 
     ##############################
     # SET METADATA
-    # TODO: controll if everything matches with the config file
+    # Getting swisstopo Processor Version
+    processor_version = main_utils.get_github_info()
+    
     vhi.attrs.update({
         'doy': doy,
         'alpha': alpha,
         'temporal_coverage': config.PRODUCT_VHI['temporal_coverage'],
         'missing_data': config.PRODUCT_VHI['missing_data'],
         'no_data':config.PRODUCT_VHI['no_data'],
-        # 'SWISSTOPO_PROCESSOR': processor_version['GithubLink'], #TODO
-        # 'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'], #TODO
-        # 'collection': collection_ready, #TODO
+        'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
+        'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
+        'collection': collection,
         'system:time_start': start_date,
         'system:time_end': (end_date - timedelta(seconds=1)), 
         'NDVI_reference_data': config.PRODUCT_VHI['NDVI_reference_data'],
@@ -817,7 +819,7 @@ def process_product_vhi(
         'LST_index_list': LST_index_list,
         'LST_scene_count': LST_scene_count,
         'VCI_and_TCI_calculated_with': CI_method,
-        'pixel_size_meter': 10,
+        'pixel_size_meter': config.PRODUCT_VHI['spatial_scale_export'],
     })
 
     ##############################
@@ -948,7 +950,6 @@ def process_product_vhi(
 
     ##############################
     # EXPORT VHI
-    print('test')
 
     for file_info in file_list_forest:
         band = file_info['band']
