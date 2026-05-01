@@ -148,6 +148,11 @@ def setup_logging(level=logging.INFO, fmt="%(asctime)s [%(levelname)s] %(message
     if not CFG.get("log_info", True) and level == logging.INFO:
         level = logging.WARNING
 
+    # Bestehende Handler entfernen (wichtig wenn bereits konfiguriert)
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
     handlers = [logging.StreamHandler()]
     if logfolder:
         Path(logfolder).mkdir(parents=True, exist_ok=True)
@@ -158,7 +163,10 @@ def setup_logging(level=logging.INFO, fmt="%(asctime)s [%(levelname)s] %(message
         fh = logging.FileHandler(os.path.join(logfolder, log_file))
         fh.setFormatter(logging.Formatter(fmt))
         handlers.append(fh)
-    logging.basicConfig(level=level, format=fmt, handlers=handlers)
+
+    logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)  # force=True erzwingt Neusetzen
+    root.setLevel(level)  # explizit setzen
+
     logging.getLogger("rasterio").setLevel(logging.WARNING)
     logging.getLogger("pyproj").setLevel(logging.WARNING)
     logging.getLogger("skyfield").setLevel(logging.WARNING)
