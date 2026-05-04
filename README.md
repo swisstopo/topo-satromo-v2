@@ -60,6 +60,27 @@ Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https:
 
 ### 1.  AROSICS 
 
+#### LINUX — AROSICS Setup 
+
+##### 1. Install requirements
+
+```bat
+pip install -r requirements.txt
+```
+
+##### 2. Install AROSICS
+
+```bat
+pip install arosics
+```
+
+##### 3. Verify AROSICS
+
+```bat
+python -c "import arosics; print('AROSICS OK')"
+python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
+
+```
 #### Windows — AROSICS Setup (EXPERIMENTAL)
 
 AROSICS requires a pre-compiled GDAL wheel on Windows due to C++ build dependencies. Follow the steps in order.
@@ -112,29 +133,6 @@ python -c "import arosics; print('AROSICS OK')"
 python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
 
 ```
-
-#### LINUX — AROSICS Setup 
-
-##### 1. Install requirements
-
-```bat
-pip install -r requirements.txt
-```
-
-##### 2. Install AROSICS
-
-```bat
-pip install arosics
-```
-
-##### 3. Verify AROSICS
-
-```bat
-python -c "import arosics; print('AROSICS OK')"
-python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
-
-```
-
 ### 2. Install HORAYZON 
 
 #### LINUX — HORAYZON Setup with CONDA
@@ -250,7 +248,7 @@ cat "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.
 #### Windows — HORAYZON Setup (EXPERIMENTAL)
 
 ##### 1. Compiling and Installing HORAYZON Native on Windows
-Create a wheel file and install it, follow [this installation guide](https://deepwiki.com/swisstopo/topo-satromo-v2)
+Create a wheel file and install it, follow [this installation guide](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#compiling-and-installing-horayzon-native-on-windows)
 Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
 
 ##### 2. EGM96 Geoid Data Setup
