@@ -35,7 +35,7 @@ OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
 DSM_FILE=os.path.join("local_assets","DSM_10m_EPSG2056_CH_clipped_10km_extended_9999.tif")
-
+GPU_ENFORCEMENT = False # Set to True to enforce GPU usage for AROSICS, False to allow CPU fallback (only for testing purposes)
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
 # ---------------------------
@@ -79,7 +79,7 @@ PRODUCT_S2_LEVEL_2A = {
     "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    # "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200

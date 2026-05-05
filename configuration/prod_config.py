@@ -35,7 +35,8 @@ BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
-DSM_FILE=os.path.join("local_assets","DSM_full_CH_nodata.tif")
+DSM_FILE=os.path.join("local_assets","DSM_10m_EPSG2056_CH_clipped_10km_extended_9999.tif")
+GPU_ENFORCEMENT = False # Set to True to enforce GPU usage for AROSICS, False to allow CPU fallback (only for testing purposes)
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
 # ---------------------------
