@@ -35,14 +35,17 @@ from main_publish_stac_fsdi import publish_to_stac       # noqa: E402
 # ---------------------------------------------------------------------------
 # Constants  --  adjust if needed
 # ---------------------------------------------------------------------------
-STAC_BASE_URL = "https://sys-data.int.bgdi.ch/api/stac/v0.9/"
+STAGING = "sys-data.int.bgdi.ch"
+#STAGING = "data.geo.admin.ch"
+STAC_BASE_URL = f"https://{STAGING}/api/stac/v0.9/"
 COLLECTION_ID = "ch.swisstopo.swisseo_s2-sr_v200"
 ASSET_TITLE   = "True color image - 10m"
 GEOCAT_ID     = ""
-DATE_FROM     = "2025-06-01T00:00:00Z"
-DATE_TO       = "2025-06-18T23:59:59Z"
-SECRETS_PATH  = r"D:\temp\github\topo-satromo-v2\secrets\stac_fsdi-int.json"
-WORK_DIR = r"D:\temp\temp"
+DATE_FROM     = "2025-01-01T00:00:00Z"
+DATE_TO       = "2026-03-31T23:59:59Z"
+SECRETS_PATH  = r"/mnt/c/Users/Localadmin/Documents/SATROMO/topo-satromo-v2/topo-satromo-v2/secrets/stac_fsdi-int" \
+".json"
+WORK_DIR = r"/mnt/c/temp"
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +118,11 @@ def main() -> None:
 
     # Point config at the provided secrets file so publish_to_stac
     # enters run_type 2 (DEV/local) and reads the right credentials.
-    config.FSDI_SECRETS = secrets_path
+        # Patch config so publish_to_stac uses the correct INT endpoint
+    config.FSDI_SECRETS        = secrets_path
+    config.STAC_FSDI_SCHEME    = "https"
+    config.STAC_FSDI_HOSTNAME  = STAGING
+    config.STAC_FSDI_API       = "/api/stac/v0.9/"
 
     auth = load_credentials(secrets_path)
 

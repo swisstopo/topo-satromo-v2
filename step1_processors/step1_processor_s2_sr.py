@@ -58,7 +58,7 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
     # options': True, False - defines if we store the original data to S3 as backup
     s3_backup = False # backup copernicus tiles data to S3
-    gpu_check = True # Check if a GPU system is available for processing, if not write to empty asset list and skip processing
+    gpu_check = config.GPU_ENFORCEMENT # AROSICS : on Prod we use True to enforce GPU usage, on Dev we use False to allow CPU fallback (only for testing purposes)
 
     ##############################
     # TIME
@@ -973,16 +973,169 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             # =========================================================================
             # Build per-class probability masks (initially 0/1) for resampling for categorical (SCL) DATA
-            # The name comes from digital circuit design.https://en.wikipedia.org/wiki/One-hot At any given time, exactly one bit is "hot" (set to 1) and all others are 0. Wikipedia Applied to your SCL data: for a pixel with class 4, band 4 = 1 and all other 11 bands = 0 — exactly one band is "hot" at a time.
-            #The reason you need it here is that only one of the columns can take on the value 1 for each sample, which prevents the algorithm from treating higher class numbers as more important than lower ones. Quora Without it, bilinear interpolation between SCL class 2 (dark vegetation) and class 8 (cloud medium probability) would produce a meaningless average of 5 — which is not a valid class.
+            # The name comes from digital circuit design. https://en.wikipedia.org/wiki/One-hot
+            # At any given time, exactly one bit is "hot" (set to 1) and all others are 0.
+            # Applied to SCL data: for a pixel with class 4, band 4 = 1 and all other 11 bands = 0.
+            # Without one-hot encoding, bilinear interpolation between SCL class 2 (dark vegetation)
+            # and class 8 (cloud medium probability) would produce a meaningless average of 5.
             # =========================================================================
             is_scl = "_scl_" in str(input_path.name).lower()
 
             if is_scl:
                 print("\n=== SCL Data Detected: Applying Consistent 3-Step Process with One-Hot Encoding ===")
 
+                # -------------------------------------------------------------------------
+                def calculate_chunk_rows(image_width, num_bands=1, dtype_bytes=1, ram_fraction=0.10):
+                    """
+                    Berechnet chunk_rows basierend auf verfuegbarem System-RAM.
+
+                    Args:
+                        image_width:  Bildbreite in Pixeln
+                        num_bands:    Anzahl Baender (1 fuer normales Bild, 12 fuer One-Hot)
+                        dtype_bytes:  Bytes pro Pixel (uint8=1, float32=4)
+                        ram_fraction: Anteil des verfuegbaren RAM nutzen (0.10 = 10%)
+
+                    Returns:
+                        int: chunk_rows, mindestens 100, hoechstens 5000
+                    """
+                    # Verfuegbaren RAM lesen
+                    try:
+                        # Linux: /proc/meminfo
+                        with open("/proc/meminfo", "r") as f:
+                            for line in f:
+                                if line.startswith("MemAvailable:"):
+                                    available_bytes = int(line.split()[1]) * 1024  # kB -> Bytes
+                                    break
+                    except FileNotFoundError:
+                        # Windows/Mac Fallback
+                        try:
+                            import psutil
+                            available_bytes = psutil.virtual_memory().available
+                        except ImportError:
+                            available_bytes = 4 * 1024 ** 3  # 4 GB konservativer Fallback
+                            print(f"  RAM-Erkennung nicht moeglich, verwende 4 GB als Fallback")
+
+                    # Nutzbaren RAM berechnen
+                    usable_bytes  = available_bytes * ram_fraction
+                    bytes_per_row = image_width * num_bands * dtype_bytes
+                    chunk_rows    = int(usable_bytes / bytes_per_row)
+
+                    # Grenzen setzen: mindestens 100, hoechstens 5000
+                    chunk_rows = max(100, min(chunk_rows, 5000))
+
+                    available_gb = available_bytes / 1024 ** 3
+                    usable_gb    = usable_bytes    / 1024 ** 3
+                    print(f"  RAM verfuegbar:                    {available_gb:.1f} GB")
+                    print(f"  RAM fuer diesen Schritt ({ram_fraction*100:.0f}%):   {usable_gb:.1f} GB")
+                    print(f"  Bildbreite:                        {image_width} Pixel")
+                    print(f"  Baender x Bytes pro Pixel:         {num_bands} x {dtype_bytes}")
+                    print(f"  chunk_rows:                        {chunk_rows}")
+
+                    return chunk_rows
+
+                # -------------------------------------------------------------------------
+                def write_onehot_chunked(input_file, output_file, num_classes=12, chunk_rows=1000):
+                    """
+                    Liest das SCL-Bild zeilenweise und schreibt num_classes One-Hot-Baender.
+                    RAM-Verbrauch pro Chunk: chunk_rows * Bildbreite * num_classes * 1 Byte
+
+                    Args:
+                        input_file:  Pfad zum geclippten + oversampleten SCL-Bild (1 Band, uint8)
+                        output_file: Pfad zur One-Hot-Ausgabedatei (12 Baender, uint8)
+                        num_classes: Anzahl SCL-Klassen (Standard: 12 fuer Sentinel-2)
+                        chunk_rows:  Anzahl Zeilen pro Verarbeitungsblock
+
+                    Returns:
+                        str: original_dtype des Eingabebildes (fuer spaeteren Argmax-Schritt)
+                    """
+                    with rasterio.open(input_file) as src:
+                        width          = src.width
+                        height         = src.height
+                        original_dtype = src.dtypes[0]
+                        meta           = src.meta.copy()
+                        meta.update(
+                            count=num_classes,
+                            dtype='uint8',
+                            nodata=None,
+                            compress='deflate',
+                            tiled=True,
+                            blockxsize=512,
+                            blockysize=512
+                        )
+
+                        with rasterio.open(output_file, 'w', **meta) as dst:
+                            for row_start in range(0, height, chunk_rows):
+                                row_end = min(row_start + chunk_rows, height)
+
+                                window = rasterio.windows.Window(
+                                    col_off=0,
+                                    row_off=row_start,
+                                    width=width,
+                                    height=row_end - row_start
+                                )
+
+                                # Nur diesen Zeilenblock lesen: (row_count, width) uint8
+                                data_chunk = src.read(1, window=window)
+
+                                # Jede Klasse einzeln kodieren und sofort schreiben
+                                for class_idx in range(num_classes):
+                                    band_data = (data_chunk == class_idx).astype('uint8')
+                                    dst.write(band_data, class_idx + 1, window=window)
+
+                                pct = (row_end / height) * 100
+                                print(f"  One-Hot Encoding: {pct:.0f}%  ({row_end}/{height} Zeilen)", end='\r')
+
+                    print(f"\n✓ Step A: One-Hot Datei erstellt ({num_classes} Baender): {output_file}")
+                    return original_dtype
+
+                # -------------------------------------------------------------------------
+                def write_argmax_chunked(input_file, output_file, original_dtype, nodata_value, chunk_rows=1000):
+                    """
+                    Liest das 12-Band Float32-Bild zeilenweise und schreibt das Argmax-Ergebnis.
+                    RAM-Verbrauch pro Chunk: chunk_rows * Bildbreite * 12 * 4 Byte (Float32)
+
+                    Args:
+                        input_file:     Pfad zum downgesampleten 12-Band Float32-Bild
+                        output_file:    Pfad zur Argmax-Ausgabedatei (1 Band, original_dtype)
+                        original_dtype: Ziel-Datentyp (uint8 fuer SCL)
+                        nodata_value:   NoData-Wert
+                        chunk_rows:     Anzahl Zeilen pro Verarbeitungsblock
+                    """
+                    with rasterio.open(input_file) as src:
+                        width  = src.width
+                        height = src.height
+                        meta   = src.meta.copy()
+                        meta.update(count=1, dtype=original_dtype)
+                        if nodata_value is not None:
+                            meta.update(nodata=nodata_value)
+
+                        with rasterio.open(output_file, 'w', **meta) as dst:
+                            for row_start in range(0, height, chunk_rows):
+                                row_end = min(row_start + chunk_rows, height)
+
+                                window = rasterio.windows.Window(
+                                    col_off=0,
+                                    row_off=row_start,
+                                    width=width,
+                                    height=row_end - row_start
+                                )
+
+                                # Alle 12 Baender fuer diesen Block: (12, row_count, width) float32
+                                block = src.read(window=window)
+
+                                # Klasse mit hoechstem Anteil gewinnt
+                                result = np.argmax(block, axis=0).astype(original_dtype)
+                                dst.write(result, 1, window=window)
+
+                                pct = (row_end / height) * 100
+                                print(f"  Argmax: {pct:.0f}%  ({row_end}/{height} Zeilen)", end='\r')
+
+                    print(f"\n✓ Step B: Argmax Datei erstellt: {output_file}")
+
+                # -------------------------------------------------------------------------
+
                 try:
-                    # Temp file definitions for SCL pipeline
+                    # Temp-Dateipfade
                     temp_1_os       = input_path.parent / f"{input_path.stem}_temp1_os.tif"
                     onehot_init     = input_path.parent / f"{input_path.stem}_onehot_init.tif"
                     temp_2_rp       = input_path.parent / f"{input_path.stem}_temp2_rp.tif"
@@ -991,11 +1144,10 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                     temp_files_to_clean.extend([temp_1_os, onehot_init, temp_2_rp, temp_3_ds, recombined_file])
 
-                    NUM_CLASSES = 12  # Sentinel-2 SCL classes 0-11
+                    NUM_CLASSES = 12  # Sentinel-2 SCL Klassen 0-11
 
-                    # --- Step 1: Oversample SINGLE SCL band (nearest) + clip — 1x uint8, cheap ---
-                    # Done BEFORE band split: nearest is commutative with one-hot, so oversampling 1 band is 12x cheaper than oversampling 12 bands.
-                    print(f"\n--- SCL Step 1: Clipping + oversampling single SCL band to {intermediate_res}m (near) ---")
+                    # --- Step 1: Einzelnes SCL-Band oversampeln + clippen (nearest, guenstig) ---
+                    print(f"\n--- SCL Step 1: Clipping + oversampling einzelnes SCL-Band auf {intermediate_res}m (near) ---")
                     cmd_os = [
                         "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
@@ -1006,26 +1158,33 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         str(input_tif), str(temp_1_os)
                     ]
                     subprocess.run(cmd_os, check=True, capture_output=True)
-                    print(f"✓ Step 1: Single SCL band clipped + oversampled to {intermediate_res}m")
+                    print(f"✓ Step 1: Einzelnes SCL-Band geclippt + overgesampelt auf {intermediate_res}m")
 
-                    # --- Step A: Split oversampled band into 12 one-hot uint8 bands ---
-                    # uint8 is sufficient here: one-hot values are only 0 or 1
-                    # gdalwarp in Step 2 handles the Byte → Float32 conversion via -ot Float32
-                    print(f"\n--- SCL Step A: One-hot encoding {NUM_CLASSES} classes (uint8) ---")
+                    # --- Step A: One-Hot Kodierung zeilenweise (RAM-schonend) ---
+                    print(f"\n--- SCL Step A: One-Hot Encoding {NUM_CLASSES} Klassen (chunked, RAM-schonend) ---")
+
+                    # Bildbreite fuer RAM-Berechnung auslesen
                     with rasterio.open(temp_1_os) as src:
-                        meta           = src.meta.copy()
-                        original_dtype = src.dtypes[0]              # uint8, preserved for final output
-                        data           = src.read(1)                # (H, W) uint8
+                        img_width_a = src.width
 
-                        meta.update(count=NUM_CLASSES, dtype='uint8', nodata=None)
-                        with rasterio.open(onehot_init, 'w', **meta) as dst:
-                            for i in range(NUM_CLASSES):
-                                dst.write((data == i).astype('uint8'), i + 1)  # 0 or 1, fits in Byte
-                    print(f"✓ Step A: One-hot encoded {NUM_CLASSES}-band uint8 file created")
+                    # RAM-Verbrauch pro Zeile: Bildbreite * 12 Baender * 1 Byte (uint8)
+                    chunk_rows_a = calculate_chunk_rows(
+                        image_width=img_width_a,
+                        num_bands=NUM_CLASSES,
+                        dtype_bytes=1,           # uint8
+                        ram_fraction=0.10
+                    )
 
-                    # --- Step 2: Reproject 12 bands to target CRS (bilinear, intermediate res) ---
-                    # -ot Float32 required: bilinear produces fractional values 0.0-1.0
-                    print(f"\n--- SCL Step 2: Reprojecting {NUM_CLASSES} bands to EPSG:{epsg} @ {intermediate_res}m (bilinear) ---")
+                    original_dtype = write_onehot_chunked(
+                        input_file=str(temp_1_os),
+                        output_file=str(onehot_init),
+                        num_classes=NUM_CLASSES,
+                        chunk_rows=chunk_rows_a
+                    )
+
+                    # --- Step 2: 12 Baender nach Ziel-CRS umprojizieren (bilinear, intermediate res) ---
+                    # -ot Float32 erforderlich: bilinear erzeugt Bruchwerte 0.0-1.0
+                    print(f"\n--- SCL Step 2: Reprojizierung {NUM_CLASSES} Baender nach EPSG:{epsg} @ {intermediate_res}m (bilinear) ---")
                     cmd_rp = [
                         "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
@@ -1037,10 +1196,15 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         str(onehot_init), str(temp_2_rp)
                     ]
                     subprocess.run(cmd_rp, check=True, capture_output=True)
-                    print(f"✓ Step 2: Reprojected to EPSG:{epsg} @ {intermediate_res}m")
+                    print(f"✓ Step 2: Reprojiziert nach EPSG:{epsg} @ {intermediate_res}m")
 
-                    # --- Step 3: Downsample to final resolution (bilinear) ---
-                    print(f"\n--- SCL Step 3: Downsampling {NUM_CLASSES} bands to {resolution}m (bilinear) ---")
+                    # onehot_init sofort loeschen (Disk freigeben)
+                    if onehot_init.exists():
+                        onehot_init.unlink()
+                        print(f"  Zwischendatei geloescht: {onehot_init.name}")
+
+                    # --- Step 3: Auf finale Aufloesung runtersampeln (bilinear) ---
+                    print(f"\n--- SCL Step 3: Downsampling {NUM_CLASSES} Baender auf {resolution}m (bilinear) ---")
                     cmd_ds = [
                         "gdalwarp", "-of", "GTiff", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
@@ -1050,27 +1214,38 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                         str(temp_2_rp), str(temp_3_ds)
                     ]
                     subprocess.run(cmd_ds, check=True, capture_output=True)
-                    print(f"✓ Step 3: Downsampled to {resolution}m")
+                    print(f"✓ Step 3: Downgesampelt auf {resolution}m")
 
-                    # --- Step B: Argmax reconstruction → uint8 ---
-                    print(f"\n--- SCL Step B: Argmax reconstruction → {original_dtype} ---")
+                    # temp_2_rp sofort loeschen (Disk freigeben)
+                    if temp_2_rp.exists():
+                        temp_2_rp.unlink()
+                        print(f"  Zwischendatei geloescht: {temp_2_rp.name}")
+
+                    # --- Step B: Argmax Rekombination zeilenweise (RAM-schonend) ---
+                    print(f"\n--- SCL Step B: Argmax Rekombination -> {original_dtype} (chunked) ---")
+
+                    # Bildbreite fuer RAM-Berechnung auslesen
                     with rasterio.open(temp_3_ds) as src:
-                        meta        = src.meta.copy()
-                        warped_data = src.read()                    # (12, H, W) float32
+                        img_width_b = src.width
 
-                        # Class with highest fraction wins
-                        final_data  = np.argmax(warped_data, axis=0).astype(original_dtype)
+                    # RAM-Verbrauch pro Zeile: Bildbreite * 12 Baender * 4 Byte (float32)
+                    chunk_rows_b = calculate_chunk_rows(
+                        image_width=img_width_b,
+                        num_bands=NUM_CLASSES,
+                        dtype_bytes=4,           # float32
+                        ram_fraction=0.10
+                    )
 
-                        meta.update(count=1, dtype=original_dtype)
-                        if nodata_value is not None:
-                            meta.update(nodata=nodata_value)
+                    write_argmax_chunked(
+                        input_file=str(temp_3_ds),
+                        output_file=str(recombined_file),
+                        original_dtype=original_dtype,
+                        nodata_value=nodata_value,
+                        chunk_rows=chunk_rows_b
+                    )
 
-                        with rasterio.open(recombined_file, 'w', **meta) as dst:
-                            dst.write(final_data, 1)
-                    print(f"✓ Step B: Argmax array {final_data.shape} dtype={original_dtype}")
-
-                    # --- Step C: Convert to final COG ---
-                    print(f"\n--- SCL Step C: Converting to final COG ---")
+                    # --- Step C: Finale COG-Konvertierung ---
+                    print(f"\n--- SCL Step C: Konvertierung zu finalem COG ---")
                     cmd_cog = [
                         "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
                         "-co", "COMPRESS=DEFLATE",
@@ -1082,19 +1257,20 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                     cmd_cog.extend([str(recombined_file), str(input_tif), "-overwrite"])
                     subprocess.run(cmd_cog, check=True, capture_output=True)
-                    print(f"✓ Final SCL COG created: {input_tif}")
+                    print(f"✓ Finales SCL COG erstellt: {input_tif}")
 
                 except Exception as e:
-                    print(f"\n✗ Error occurred during SCL processing: {e}")
+                    print(f"\n Fehler waehrend SCL-Verarbeitung: {e}")
                     raise e
+
                 finally:
-                    # Clean up all One-Hot temp files
+                    # Alle verbleibenden Temp-Dateien aufraumen
                     for f in temp_files_to_clean:
                         if f.exists():
-                            print(f"Cleaning up: {f}")
+                            print(f"Bereinigung: {f}")
                             f.unlink()
 
-                # Exit the function early since SCL processing is complete
+                # SCL-Verarbeitung abgeschlossen
                 return
             # =========================================================================
 
