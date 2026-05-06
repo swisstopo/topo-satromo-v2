@@ -244,8 +244,8 @@ def process_product_vhi(
         # Apply scaling and offset
         nodata_mask = data_10m == nodata # Create nodata mask before modifying data
         # Apply scaling in-place on the full array — no temporary copy
-        data_10m += offset
         data_10m *= scale
+        data_10m += offset
         
         # Restore nodata pixels to NaN
         data_10m[nodata_mask] = np.nan
@@ -896,6 +896,7 @@ def process_product_vhi(
         BIGTIFF='YES',
         NUM_THREADS='ALL_CPUS',
         ADD_ALPHA='NO',
+        OVERVIEW_RESAMPLING='NEAREST', # to ensure overview pixels to be actual values from the original raster and not interpolated values
     )
 
     filename_vegetation = product_name.replace('ch.swisstopo.','') + \
@@ -908,6 +909,7 @@ def process_product_vhi(
         BIGTIFF='YES',
         NUM_THREADS='ALL_CPUS',
         ADD_ALPHA='NO',
+        OVERVIEW_RESAMPLING='NEAREST',
     )
 
     ##############################
