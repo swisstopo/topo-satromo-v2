@@ -45,7 +45,7 @@ if __name__ == "__main__":
     # Check for debug override (second priority)
     if debug_mode:
         current_date_str = "2026-02-02"
-        force_reprocess = False  # <-- toggle this manually during debug
+        force_reprocess = True  # <-- toggle this manually during debug
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print(f"Force reprocess: {force_reprocess}")
