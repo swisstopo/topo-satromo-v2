@@ -11,7 +11,7 @@ from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, Resampling, transform_bounds
 from affine import Affine
-from main_functions import main_utils, main_publish_stac_fsdi
+from main_functions import main_utils, main_publish_stac_fsdi, main_extract_warnregions, main_thumbnails
 
 ##############################
 # INTRODUCTION
@@ -912,6 +912,41 @@ def process_product_vhi(
 
     ##############################
     # WARNREGIONS
+    def check_substrings_presence(file, substring_to_check, additional_substrings):
+        """
+        Check if the main substring and at least one of the additional substrings are present in the file_merged string.
+        Args:
+        - file (str): The string to check.
+        - substring_to_check (str): The main substring to check for.
+        - additional_substrings (list of str): List of additional substrings to check for.
+        Returns:
+        - bool: True if the main substring and at least one of the additional substrings are present, False otherwise.
+        """
+        # Check if the main substring is present in the string
+        if substring_to_check in file:
+            # Check if any of the additional substrings are also present
+            additional_substring_found = any(
+                substring in file for substring in additional_substrings)
+            return additional_substring_found
+        else:
+            return False
+
+    # Create warnregions for forest areas
+    #TODO
+
+    # Create warnregions for vegetation areas
+    #TODO
+
+    ##############################
+    # METADATA FILE AND THUMBNAIL
+    #TODO
+
+    # Create thumbnail
+    filename_thumbnail = main_thumbnails.create_thumbnail(f'{filename_forest}.tif', config.PRODUCT_VHI['product_name'])
+
+    ##############################
+    # EXPORT VHI
+
     # Create file list for export
     file_list_forest = []
     # Add forest-masked VHI to file list
@@ -921,9 +956,6 @@ def process_product_vhi(
         'resolution': '10m',
         'filename': f'{filename_forest}.tif',
     })
-
-    # Create warnregions for forest areas
-    #TODO
 
     # Add warnregions for forest areas to file list
     #TODO
@@ -937,26 +969,16 @@ def process_product_vhi(
         'resolution': '10m',
         'filename': f'{filename_vegetation}.tif',
     })
-
-    # Create warnregions for vegetation areas
-    #TODO
-
     # Add warnregions for vegetation areas to file list
     #TODO
-
-    ##############################
-    # METADATA FILE AND THUMBNAIL
-    #TODO
-
-    ##############################
-    # EXPORT VHI
 
     for file_info in file_list_forest:
         band = file_info['band']
         filename = file_info['filename']
 
         # STAC Upload
-        main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id_forest'],None,asset_title=band)
+        main_publish_stac_fsdi.publish_to_stac(filename, timestamp, config.PRODUCT_VHI['product_name'], 
+                                               config.PRODUCT_VHI['geocat_id_forest'], None, asset_title=band)
         # if is_current == True:
         #     print("Newest dataset detected: updating CURRENT")
         #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
@@ -966,25 +988,25 @@ def process_product_vhi(
         #     os.rename(filename_current, filename)
 
     # Upload metadata file
-    # filename=f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
-    # main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Metadata")
+    # filename=f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
+    # main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],None,asset_title="Metadata")
     # if is_current == True:
     #     print("Newest dataset detected: updating CURRENT")
     #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
     #     # Rename the file
     #     os.rename(filename, filename_current)
-    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],asset_title="Metadata", current=True)
+    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],asset_title="Metadata", current=True)
     #     os.rename(filename_current, filename)
 
-    # # Upload Thumbnail
-    # filename=thumbnail
-    # main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],None,asset_title="Thumbnail")
+    # Upload Thumbnail
+    main_publish_stac_fsdi.publish_to_stac(filename_thumbnail, timestamp, config.PRODUCT_VHI['product_name'], 
+                                           config.PRODUCT_VHI['geocat_id_forest'], None, asset_title="Thumbnail")
     # if is_current == True:
     #     print("Newest dataset detected: updating CURRENT")
     #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
     #     # Rename the file
     #     os.rename(filename, filename_current)
-    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_S2_LEVEL_2A['product_name'],config.PRODUCT_S2_LEVEL_2A['geocat_id'],asset_title="Thumbnail", current=True)
+    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],asset_title="Thumbnail", current=True)
     #     os.rename(filename_current, filename)
 
     # # Clean up Thumbnailfile
