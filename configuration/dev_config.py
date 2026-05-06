@@ -31,12 +31,11 @@ ROI_BORDER_BUFFER = 5000  # Buffer around Switzerland
 
 # Switzerland border and lakes with 5km buffer :
 BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
-
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
-
-
+DSM_FILE=os.path.join("local_assets","DSM_10m_EPSG2056_CH_clipped_10km_extended_9999.tif")
+GPU_ENFORCEMENT = False # Set to True to enforce GPU usage for AROSICS, False to allow CPU fallback (only for testing purposes)
 
 ## PRODUCTS, INDICES and custom COLLECTIONS ###
 # ---------------------------
@@ -80,25 +79,26 @@ PRODUCT_S2_LEVEL_2A = {
     "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
 PRODUCT_VHI = {
     # TODO: check if needed in context with step0
     "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
-    # "geocat_id": "bc4d0e6b-e92e-4f28-a7d2-f41bf61e98bc", #TODO: needs to be updated for V2
+    "geocat_id_forest": "a6ea2b6f-d723-4f10-b36c-b09cdc7fa0d3",
+    "geocat_id_vegetation": "859e8dcf-1882-481d-a878-30f6c1edd0d2",
     "temporal_coverage": 7,  # Days
-    # "spatial_scale_export": 10,  # Meters # TODO: check if needed in context with V2
+    "spatial_scale_export": 10,  # Meters
     "product_name": "ch.swisstopo.swisseo_vhi_v200",
     "no_data": 255,
     "missing_data": 110,
     "scaling_factor": 1,
-    "NDVI_reference_data": "projects/satromo-prod/assets/col/1991-2020_NDVI_SWISS",
-    "LST_reference_data": "projects/satromo-prod/assets/col/1991-2020_LST_SWISS",
+    "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/",
+    "LST_reference_data": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing
@@ -151,7 +151,7 @@ STAC_FSDI_API = '/api/stac/v0.9/'
 
 
 
-# C AROSICS configuration
+# AROSICS configuration
 # ***********************
 # Contains dictionary used for co-registration of satellite imagery
 # using a reference image.
@@ -176,3 +176,4 @@ AROSICS_CONFIG = {
     'cloudprob_mosaic_pattern': 'S2-L1C-mosaic_*_cloud.vrt',
     'coreg_file_suffix': '_coreg',
 }
+

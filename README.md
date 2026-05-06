@@ -58,24 +58,47 @@ Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https:
 
 ---
 
-### Windows — AROSICS Setup
+### 1.  AROSICS 
+
+#### LINUX — AROSICS Setup 
+
+##### 1. Install requirements
+
+```bat
+pip install -r requirements.txt
+```
+
+##### 2. Install AROSICS
+
+```bat
+pip install arosics
+```
+
+##### 3. Verify AROSICS
+
+```bat
+python -c "import arosics; print('AROSICS OK')"
+python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
+
+```
+#### Windows — AROSICS Setup (EXPERIMENTAL)
 
 AROSICS requires a pre-compiled GDAL wheel on Windows due to C++ build dependencies. Follow the steps in order.
 
-#### 1. Create and activate a virtual environment
+##### 1. Create and activate a virtual environment
 
 ```bat
 python -m venv venv
 venv\Scripts\activate
 ```
 
-#### 2. Check your Python version
+##### 2. Check your Python version
 
 ```bat
 python --version
 ```
 
-#### 3. Download and install the GDAL wheel
+##### 3. Download and install the GDAL wheel
 
 GDAL must be installed **before** `arosics` and **before** `requirements.txt`.
 
@@ -91,24 +114,29 @@ pip install path\to\GDAL-X.X.X-cpXXX-cpXXX-win_amd64.whl
 
 > The `requirements.txt` also references a local GDAL wheel at `secrets/gdal-*.whl` for reproducibility. Place your downloaded wheel there if preferred.
 
-#### 4. Install requirements
+##### 4. Install requirements
 
 ```bat
 pip install -r requirements.txt
 ```
 
-#### 5. Install AROSICS
+##### 5. Install AROSICS
 
 ```bat
 pip install arosics
 ```
 
-#### 6. Verify
+##### 6. Verify AROSICS
 
 ```bat
 python -c "import arosics; print('AROSICS OK')"
 python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
+
 ```
+### 2. Install HORAYZON 
+
+#### LINUX — HORAYZON Setup with CONDA
+Follow the official [instructions on the HORAYZON repo](https://github.com/ChristianSteger/HORAYZON#package-dependencies)
 
 **Troubleshooting:**
 
@@ -119,20 +147,166 @@ python -c "from osgeo import gdal; print('GDAL OK:', gdal.__version__)"
 | Import errors after `pip install arosics` | GDAL installed after arosics | Reinstall: uninstall both, reinstall GDAL wheel first |
 
 ---
+#### LINUX — HORAYZON Setup with PIP
 
-### Linux / macOS
+##### 1. Installing HORAYZON Native on Linux
+
+```bat
+bashsudo apt update
+
+# Intel Embree
+sudo apt install -y libembree-dev
+
+# Threading Building Blocks (TBB)
+sudo apt install -y libtbb-dev
+
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
+```
+the follow [Installation without Conda](https://github.com/ChristianSteger/HORAYZON#installation-without-conda)
+
+```bat
+# Activate your venv
+source /path/to/your/venv/bin/activate
+
+# Find Embree headers
+find /usr -name "embree4" -type d 2>/dev/null
+find /usr -name "rtcore.h" 2>/dev/null
+
+# Find Embree library
+find /usr -name "libembree*" 2>/dev/null
+
+# Find TBB
+find /usr -name "libtbb*" 2>/dev/null
+find /usr -name "tbb" -type d 2>/dev/null
+
+# Paths for Intel Embree and Threading Building Blocks (TBB) are for example
+path_include = ["/usr/include/"]
+path_lib = ["/usr/lib/x86_64-linux-gnu/libembree4"]  # without file ending
+
+#We need clang++ . if it is missing. Install it:
+sudo apt install -y clang
+
+# Clone and enter HORAYZON
+git clone https://github.com/ChristianSteger/HORAYZON.git
+cd HORAYZON
+
+# Edit setup_manual.py to set the paths above
+# path_include = ["/usr/include/"]
+# path_lib = ["/usr/lib/x86_64-linux-gnu/libembree4"]
+nano setup_manual.py
+
+# Rename and install into the active venv
+mv setup_manual.py setup.py
+python -m pip install .
+
+```
+
+After successful isntallation: remove the HORAYZON directory
+
+##### 2. EGM96 Geoid Data Setup
+
+HORAYZON requires EGM96 geoid data for ellipsoidal height correction. By default,
+HORAYZON attempts to download this data automatically from an external server.
+To avoid network blocking (e.g. since we donaloda it quite often), copy the
+data manually into your local assets folder before running the pipeline.
+
+**Required file structure:**
+```
+local_assets/
+└── EGM/
+    └── EGM96/
+        └── WW15MGH.GRD
+```
+
+Copy the EGM96 data into the `local_assets/EGM/EGM96/` folder, then register
+the path with HORAYZON by writing it to its configuration file. Run once in
+a command prompt (adapt the path to your installation):
+
+Copy the EGM96 data into `local_assets/EGM/EGM96/`, then register the path:
 
 ```bash
+echo "local_assets/EGM/" > \
+  "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.dirname(horayzon.__file__))[0], "horayzon"))')/path_aux_data.txt"
+```
+
+Example:
+```bash
+echo "local_assets/EGM/" > \
+  "/home/user/topo-satromo-v2/.venv/lib/python3.11/site-packages/horayzon/path_aux_data.txt"
+```
+
+Verify the content:
+```bash
+cat "$(python -c 'import horayzon, os; print(os.path.join(os.path.split(os.path.dirname(horayzon.__file__))[0], "horayzon"))')/path_aux_data.txt"
+```
+
+> **Note:** This step is required only once per virtual environment. The path is
+> stored permanently in `path_aux_data.txt` inside the HORAYZON package directory.
+> If you recreate the virtual environment or move the project, repeat this step.
+
+#### Windows — HORAYZON Setup (EXPERIMENTAL)
+
+##### 1. Compiling and Installing HORAYZON Native on Windows
+Create a wheel file and install it, follow [this installation guide](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#compiling-and-installing-horayzon-native-on-windows)
+Mind the [Step Windows DLL](https://github.com/davidoesch/HORAYZON/blob/main/WINDOWS_Install_Native.md#step-4-the-windows-dll-fix-crucial)
+
+##### 2. EGM96 Geoid Data Setup
+
+HORAYZON requires EGM96 geoid data for ellipsoidal height correction. By default,
+HORAYZON attempts to download this data automatically from an external server.
+To avoid network blocking (e.g. since we donaloda it quite often), copy the
+data manually into your local assets folder before running the pipeline.
+
+**Required file structure:**
+```
+local_assets/
+└── EGM/
+    └── EGM96/
+        └── WW15MGH.GRD
+```
+
+Copy the EGM96 data into the `local_assets/EGM/EGM96/` folder, then register
+the path with HORAYZON by writing it to its configuration file. Run once in
+a command prompt (adapt the path to your installation):
+
+```dos
+echo local_assets\EGM\ > "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Example:
+```dos
+echo local_assets\EGM\ > "D:\temp\github\topo-satromo-v2\.venv\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+Verify the content:
+```dos
+type "%VIRTUAL_ENV%\Lib\site-packages\horayzon\path_aux_data.txt"
+```
+
+> **Note:** This step is required only once per virtual environment. The path is
+> stored permanently in `path_aux_data.txt` inside the HORAYZON package directory.
+> If you recreate the virtual environment or move the project, repeat this step.
+
+### 3. WIN / Linux / macOS
+
+LINUX macOS
+```bash
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate 
+pip install -r requirements.txt
+```
+WIN
+```bash
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
 
-
 ---
 
-### Secrets Setup
+### 4. Secrets Setup
 
 **secrets** (for int):
 
@@ -318,7 +492,9 @@ Distributed under the BSD-3-Clause License. See `LICENSE.txt` for details.
 Special thanks to the developers and maintainers of the open-source projects that made this work possible:
 
 * **[AROSICS](https://github.com/GFZ/arosics)**: An Automated and Robust Open-Source Image Co-Registration Software developed by the GFZ German Research Centre for Geosciences. We utilize AROSICS specifically for aligning our raw satellite datasets.
-* **[OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask)**: An open-source tool developed by DPIRD-DMA. We utilize OmniCloudMask for  generating robust cloud and shadow masks for our raw satellite imagery.
+* **[OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask)**: An open-source tool developed by DPIRD-DMA. We utilize OmniCloudMask for  generating 
+robust cloud and shadow masks for our raw satellite imagery.
+* **[HORAYZON](https://github.com/ChristianSteger/HORAYZON)**: An open-source terrain analysis and horizon computation tool developed by Christian Steger. We utilize HORAYZON for calculating terrain incindence angles and topographic induced shadows to support accurate modelling of terrain-related effects in our geospatial analyses.
 
 
 ---

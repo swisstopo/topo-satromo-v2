@@ -380,10 +380,10 @@ def create_thumbnail_indexed(
             with rasterio.open(input_file) as src:
                 data = src.read(1)
                 profile = src.profile.copy()
-                profile.update(nodata=nodata_value)
+                profile.update(nodata=None)
 
                 with rasterio.open(f"{TEMP_PREFIX}_preprocessed.tif", "w", **profile) as dst:
-                    dst.write(data, 1)
+                    dst.write(rgb_data)
 
             input_for_thumbnail = f"{TEMP_PREFIX}_preprocessed.tif"
             nodata_arg = ["-a_nodata", str(nodata_value)]
@@ -428,14 +428,24 @@ def create_thumbnail_indexed(
             "gdalwarp",
             "-s_srs", "EPSG:2056",
             "-overwrite",
-            "-dstnodata", "255,255,255",
+            "-srcnodata", "255,255,255",
             f"{TEMP_PREFIX}swissfill.tif",
             f"{TEMP_PREFIX}RGB.tif",
             f"{TEMP_PREFIX}RGB_merged.tif",
         ])
 
+        # Clip back to the original ROI extent
+        bbox = get_raster_bounds(input_file)
+        run_gdal_command([
+            "gdalwarp",
+            "-overwrite",
+            "-te", *bbox,
+            f"{TEMP_PREFIX}RGB_merged.tif",
+            f"{TEMP_PREFIX}RGB_clipped.tif",
+        ])
+
         # Apply overlays and export
-        return apply_overlays_and_export(f"{TEMP_PREFIX}RGB_merged.tif", THUMBNAIL_FILENAME)
+        return apply_overlays_and_export(f"{TEMP_PREFIX}RGB_clipped.tif", THUMBNAIL_FILENAME)
 
     except Exception as e:
         print(f"Error creating indexed thumbnail: {e}")
@@ -465,7 +475,7 @@ def create_thumbnail(
 
     # VHI products
     elif product.startswith("ch.swisstopo.swisseo_vhi") and (
-        input_file.endswith("forest-10m.tif") or input_file.endswith("forest-30m.tif")
+        input_file.endswith("forest-10m.tif") or input_file.endswith("forest-30m.tif") or input_file.endswith("vegetation-10m.tif") or input_file.endswith("vegetation-30m.tif")
     ):
         return create_thumbnail_indexed(
             input_file,

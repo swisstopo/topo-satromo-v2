@@ -15,7 +15,7 @@ Modified: 2026-01-13
 License: MIT License
 
 Usage:
-    python util_stac_delete_interactive.py
+    python util_stac_delete.py
 
 Dependencies:
     - pystac_client
@@ -56,6 +56,9 @@ from pathlib import Path
 # Configuration
 base_url = "https://sys-data.int.bgdi.ch/api/stac/v0.9/"
 config_path = Path("secrets") / "stac_fsdi-int.json"
+
+# base_url = "https://data.geo.admin.ch/api/stac/v0.9/"
+# config_path = Path("secrets") / "stac_fsdi-prod.json"
 
 def load_credentials(config_path: str) -> tuple:
     """
