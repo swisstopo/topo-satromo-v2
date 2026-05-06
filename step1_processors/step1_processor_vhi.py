@@ -66,6 +66,7 @@ def process_product_vhi(
     stac_swisstopo_version = 'api/stac/v0.9/'
     lst_aggregation = '11am' # options: 'mean', 'max', '11am'
     lst_ref_file = f'_MSG_ch02_2004-2020_7days_{lst_aggregation}' # MSG (2004-2020) / MFG (1991-2003)
+    warnregions = 'assets/warnregionen_vhi_2056.shp'
 
     # Constants
     s2_nodata = 0 # NoData value in swissEO S2-SR products
@@ -914,30 +915,36 @@ def process_product_vhi(
 
     ##############################
     # WARNREGIONS
-    def check_substrings_presence(file, substring_to_check, additional_substrings):
-        """
-        Check if the main substring and at least one of the additional substrings are present in the file_merged string.
-        Args:
-        - file (str): The string to check.
-        - substring_to_check (str): The main substring to check for.
-        - additional_substrings (list of str): List of additional substrings to check for.
-        Returns:
-        - bool: True if the main substring and at least one of the additional substrings are present, False otherwise.
-        """
-        # Check if the main substring is present in the string
-        if substring_to_check in file:
-            # Check if any of the additional substrings are also present
-            additional_substring_found = any(
-                substring in file for substring in additional_substrings)
-            return additional_substring_found
-        else:
-            return False
+    warnformats = ['.csv', '.geojson', '.parquet']
+    dateISO8601 = f'{current_date_str}T235959Z'
 
     # Create warnregions for forest areas
-    #TODO
+    warnregionfilename_forest = f'{filename_forest}_warnregions'
+    main_extract_warnregions.export(
+        f'{filename_forest}.tif',
+        warnregions,
+        warnregionfilename_forest,
+        dateISO8601,
+        config.PRODUCT_VHI['missing_data'],
+        config.PRODUCT_VHI['no_data'],
+        config.PRODUCT_VHI['scaling_factor'],
+        'forest'
+    )
+    print(f'Created warnregions for forest areas')
 
     # Create warnregions for vegetation areas
-    #TODO
+    warnregionfilename_vegetation = f'{filename_vegetation}_warnregions'
+    main_extract_warnregions.export(
+        f'{filename_vegetation}.tif',
+        warnregions,
+        warnregionfilename_vegetation,
+        dateISO8601,
+        config.PRODUCT_VHI['missing_data'],
+        config.PRODUCT_VHI['no_data'],
+        config.PRODUCT_VHI['scaling_factor'],
+        'vegetation'
+    )
+    print(f'Created warnregions for vegetation areas')
 
     ##############################
     # METADATA FILE AND THUMBNAIL
@@ -949,8 +956,9 @@ def process_product_vhi(
     ##############################
     # EXPORT VHI
 
-    # Create file list for export
+    # Create forest file list for export
     file_list_forest = []
+
     # Add forest-masked VHI to file list
     file_list_forest.append({
         'timestamp': timestamp,
@@ -960,10 +968,17 @@ def process_product_vhi(
     })
 
     # Add warnregions for forest areas to file list
-    #TODO
+    for fmt in warnformats:
+        file_list_forest.append({
+            'timestamp': timestamp,
+            'band': f'FOREST-WARNREGIONS{fmt.replace(".", "-").upper()}',
+            'resolution': None,
+            'filename': warnregionfilename_forest + fmt,
+        })
 
-    # Create file list for export
+    # Create vegetationfile list for export
     file_list_vegetation = []
+
     # Add vegetation-masked VHI to file list
     file_list_vegetation.append({
         'timestamp': timestamp,
@@ -971,10 +986,34 @@ def process_product_vhi(
         'resolution': '10m',
         'filename': f'{filename_vegetation}.tif',
     })
+    
     # Add warnregions for vegetation areas to file list
-    #TODO
+    for fmt in warnformats:
+        file_list_vegetation.append({
+            'timestamp': timestamp,
+            'band': f'VEGETATION-WARNREGIONS{fmt.replace(".", "-").upper()}',
+            'resolution': None,
+            'filename': warnregionfilename_vegetation + fmt
+        })
 
+    # Export forest-masked VHI and warnregions for forest areas
     for file_info in file_list_forest:
+        band = file_info['band']
+        filename = file_info['filename']
+
+        # STAC Upload
+        main_publish_stac_fsdi.publish_to_stac(filename, timestamp, config.PRODUCT_VHI['product_name'], 
+                                               config.PRODUCT_VHI['geocat_id_forest'], None, asset_title=band)
+        # if is_current == True:
+        #     print("Newest dataset detected: updating CURRENT")
+        #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+        #     # Rename the file
+        #     os.rename(filename, filename_current)
+        #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id_forest'],asset_title=band, current=True)
+        #     os.rename(filename_current, filename)
+
+    # Export forest-masked VHI and warnregions for vegetation areas
+    for file_info in file_list_vegetation:
         band = file_info['band']
         filename = file_info['filename']
 
