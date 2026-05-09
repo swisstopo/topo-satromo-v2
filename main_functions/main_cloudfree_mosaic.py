@@ -8,8 +8,30 @@ temporal cloud-free composite following the approach of the S2Mosaic library
 (https://github.com/DPIRD-DMA/S2Mosaic).
 
 Usage (CLI):
-    python main_functions/main_cloudfree_mosaic.py
-    python main_functions/main_cloudfree_mosaic.py --date 2025-07-01 --days 30 --sort valid_data --method first
+    python main_functions/main_cloudfree_mosaic.py [options]
+
+    Options:
+      --date DATE        End date of the search window (YYYY-MM-DD). Default: 2025-07-01
+      --days N           Days to look back from --date. Default: 15
+      --sort METHOD      Scene ordering: valid_data | oldest | newest. Default: valid_data
+      --method METHOD    Pixel combination: first | mean. Default: first
+      --threshold F      Stop early when remaining AOI fraction ≤ F. Default: 0.001
+                         Use 0 to disable early stopping.
+      --output PATH      Output file path (auto-generated from params if omitted)
+      --bands TITLE ...  Asset title(s) to mosaic. Default: "True color image - 10m"
+      --stac-url URL     STAC catalogue base URL. Default: data.geo.admin.ch
+      --collection ID    STAC collection ID. Default: ch.swisstopo.swisseo_s2-sr_v200
+      --cloud-mask-title TITLE
+                         Asset title of the cloud-mask COGtif. Default: "Cloud mask - 10m"
+      --username USER    HTTP Basic Auth username (staging/protected endpoints)
+      --password PASS    HTTP Basic Auth password
+      --aoi PATH         GeoPackage with area-of-interest polygon. Default: assets/swissboundary_buffer_5000m.gpkg
+                         Pass '' or 'none' to disable.
+
+    Examples:
+        python main_functions/main_cloudfree_mosaic.py
+        python main_functions/main_cloudfree_mosaic.py --date 2025-07-01 --days 30 --sort valid_data --method first
+        python main_functions/main_cloudfree_mosaic.py --date 2025-08-15 --days 60 --threshold 0 --output my_mosaic.tif
 
 Programmatic:
     from main_functions.main_cloudfree_mosaic import create_cloudfree_mosaic
