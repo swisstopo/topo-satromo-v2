@@ -91,13 +91,17 @@ def _compute_valid_fraction(
                     resampling=Resampling.nearest,
                 )
             with rasterio.open(tci_href) as tci_ds:
-                nodata_mask = tci_ds.dataset_mask(
-                    out_shape=(SCORE_H, SCORE_W)
+                tci_bands = tci_ds.read(
+                    out_shape=(tci_ds.count, SCORE_H, SCORE_W),
+                    resampling=Resampling.nearest,
                 )
 
-        # Cloud mask: 0 = cloud-free
-        valid = (nodata_mask > 0) & (cloud == 0)
-        return float(valid.sum()) / max(float(valid.size), 1)
+        # Cloud mask value 0 = clear; 1 = cloud; 2 = thin cloud; 3 = shadow.
+        # Cloud mask value 0 also means no-data outside the orbit footprint,
+        # so only count pixels where TCI actually has data (at least one band > 0).
+        has_data = tci_bands.max(axis=0) > 0
+        valid = has_data & (cloud == 0)
+        return float(valid.sum()) / max(float(has_data.sum()), 1)
     except Exception as exc:
         print(f"    [warn] valid_fraction estimation failed: {exc}")
         return 0.0
@@ -417,10 +421,18 @@ def create_cloudfree_mosaic(
             # dataset_mask() is unreliable for out-of-footprint detection through
             # WarpedVRT (may return 255/valid even where data is truly absent).
             # Use band values directly: a pixel has data iff at least one band != 0.
+            # Cloud mask: 0=clear, 1=cloud, 2=thin cloud, 3=shadow — keep only 0.
+            # Cloud mask value 0 also means no-data outside the orbit, so restrict
+            # to pixels where TCI actually has data.
             has_data = bands.max(axis=0) > 0
             valid = has_data & (cloud == 0) & aoi_mask
-            n_valid = int(valid.sum())
-            print(f"    Valid pixels in scene: {n_valid:,} / {total_px:,} ({n_valid/total_px:.1%})")
+            n_valid      = int(valid.sum())
+            n_tci_in_aoi = int((has_data & aoi_mask).sum())
+            print(
+                f"    TCI coverage in AOI: {n_tci_in_aoi:,} px  |  "
+                f"cloud-free: {n_valid:,} px "
+                f"({n_valid/max(n_tci_in_aoi,1):.1%} of TCI coverage)"
+            )
 
             if not valid.any():
                 print("    No valid pixels — skipping.")
