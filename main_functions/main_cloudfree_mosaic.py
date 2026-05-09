@@ -7,6 +7,8 @@ and the alpha band of the TCI asset (band 4, value 0 = no data) to build a
 temporal cloud-free composite following the approach of the S2Mosaic library
 (https://github.com/DPIRD-DMA/S2Mosaic).
 
+The STAC catalogue is publicly accessible — no authentication required.
+
 Usage (CLI):
     python main_functions/main_cloudfree_mosaic.py [options]
 
@@ -23,8 +25,6 @@ Usage (CLI):
       --collection ID    STAC collection ID. Default: ch.swisstopo.swisseo_s2-sr_v200
       --cloud-mask-title TITLE
                          Asset title of the cloud-mask COGtif. Default: "Cloud mask - 10m"
-      --username USER    HTTP Basic Auth username (staging/protected endpoints)
-      --password PASS    HTTP Basic Auth password
       --aoi PATH         GeoPackage with area-of-interest polygon. Default: assets/swissboundary_buffer_5000m.gpkg
                          Pass '' or 'none' to disable.
 
@@ -39,14 +39,13 @@ Programmatic:
 """
 
 import argparse
-import os
 import subprocess
 import sys
 import tempfile
 from math import ceil, floor
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import geopandas as gpd
 import numpy as np
@@ -84,19 +83,7 @@ def _find_asset_by_title(item, title: str):
     return None
 
 
-def _gdal_auth_env(auth: Optional[Tuple[str, str]]) -> dict:
-    """Build os.environ additions to let GDAL access password-protected URLs."""
-    if auth is None:
-        return {}
-    username, password = auth
-    return {"GDAL_HTTP_USERPWD": f"{username}:{password}"}
-
-
-def _compute_valid_fraction(
-    cloud_mask_href: str,
-    tci_href: str,
-    auth_env: dict,
-) -> float:
+def _compute_valid_fraction(cloud_mask_href: str, tci_href: str) -> float:
     """
     Estimate fraction of cloud-free, non-no-data pixels at coarse resolution.
 
@@ -105,18 +92,17 @@ def _compute_valid_fraction(
     """
     SCORE_H, SCORE_W = 256, 256
     try:
-        with rasterio.Env(**auth_env):
-            with rasterio.open(cloud_mask_href) as cm_ds:
-                cloud = cm_ds.read(
-                    1,
-                    out_shape=(SCORE_H, SCORE_W),
-                    resampling=Resampling.nearest,
-                )
-            with rasterio.open(tci_href) as tci_ds:
-                tci_bands = tci_ds.read(
-                    out_shape=(tci_ds.count, SCORE_H, SCORE_W),
-                    resampling=Resampling.nearest,
-                )
+        with rasterio.open(cloud_mask_href) as cm_ds:
+            cloud = cm_ds.read(
+                1,
+                out_shape=(SCORE_H, SCORE_W),
+                resampling=Resampling.nearest,
+            )
+        with rasterio.open(tci_href) as tci_ds:
+            tci_bands = tci_ds.read(
+                out_shape=(tci_ds.count, SCORE_H, SCORE_W),
+                resampling=Resampling.nearest,
+            )
 
         # Cloud mask value 0 = clear; 1 = cloud; 2 = thin cloud; 3 = shadow.
         # Cloud mask value 0 also means no-data outside the orbit footprint,
@@ -134,7 +120,6 @@ def _sort_items(
     sort_method: str,
     asset_title: str,
     cloud_mask_title: str,
-    auth_env: dict,
 ) -> list:
     """Order STAC items according to sort_method."""
     if sort_method == "oldest":
@@ -150,7 +135,7 @@ def _sort_items(
             cm_asset  = _find_asset_by_title(item, cloud_mask_title)
             tci_asset = _find_asset_by_title(item, asset_title)
             if cm_asset and tci_asset:
-                score = _compute_valid_fraction(cm_asset.href, tci_asset.href, auth_env)
+                score = _compute_valid_fraction(cm_asset.href, tci_asset.href)
             else:
                 score = 0.0
             scored.append((score, item))
@@ -178,7 +163,6 @@ def create_cloudfree_mosaic(
     stac_url: str = STAC_BASE_URL,
     collection_id: str = COLLECTION_ID,
     cloud_mask_title: str = CLOUD_MASK_TITLE,
-    auth: Optional[Tuple[str, str]] = None,
     aoi_gpkg: Optional[Union[str, Path]] = AOI_GPKG,
 ) -> Optional[Path]:
     """
@@ -204,10 +188,7 @@ def create_cloudfree_mosaic(
         the catalogue items. Defaults to ["True color image - 10m"].
     no_data_threshold : float or None
         Stop cloud-free filling once the fraction of remaining unfilled AOI
-        pixels drops at or below this value — BUT only if every remaining
-        unfilled AOI pixel already has a fallback (any non-nodata) observation.
-        This prevents stopping before scenes that cover otherwise-empty areas
-        have been read.  Default None = process all scenes.
+        pixels drops at or below this value. Default 0.001. None = process all scenes.
     output_name : str or None
         Path of the output GeoTIFF. Auto-generated from parameters if None.
     mosaic_method : str
@@ -219,10 +200,7 @@ def create_cloudfree_mosaic(
     collection_id : str
         STAC collection identifier.
     cloud_mask_title : str
-        Asset title of the cloud-mask COGtif (uint8, value 0 = cloud-free).
-    auth : tuple (username, password) or None
-        HTTP Basic Auth for password-protected catalogues (e.g. staging).
-        Passed to GDAL via GDAL_HTTP_USERPWD so COG range-requests work.
+        Asset title of the cloud-mask COGtif (uint8, 0=clear, 1=cloud, 2=thin cloud, 3=shadow).
     aoi_gpkg : str, Path, or None
         GeoPackage defining the area of interest (e.g. Switzerland boundary
         + 5 km buffer). When provided:
@@ -251,8 +229,6 @@ def create_cloudfree_mosaic(
         f"{start_dt.strftime('%Y-%m-%dT00:00:00Z')}/"
         f"{end_dt.strftime('%Y-%m-%dT23:59:59Z')}"
     )
-
-    auth_env = _gdal_auth_env(auth)
 
     print("=" * 60)
     print("Cloud-free mosaic")
@@ -313,20 +289,17 @@ def create_cloudfree_mosaic(
             continue
 
         # Sort scenes
-        sorted_items = _sort_items(
-            valid_items, sort_method, asset_title, cloud_mask_title, auth_env
-        )
+        sorted_items = _sort_items(valid_items, sort_method, asset_title, cloud_mask_title)
 
         # ------------------------------------------------------------------
         # Peek at one item for CRS, band count, and dtype
         # ------------------------------------------------------------------
         ref_href = _find_asset_by_title(sorted_items[0], asset_title).href
-        with rasterio.Env(**auth_env):
-            with rasterio.open(ref_href) as ref_ds:
-                ref_profile_src = ref_ds.profile.copy()
-                data_bands      = ref_ds.count      # 3 for TCI (R/G/B)
-                dtype           = ref_ds.dtypes[0]  # e.g. 'uint8'
-                ref_crs         = ref_ds.crs
+        with rasterio.open(ref_href) as ref_ds:
+            ref_profile_src = ref_ds.profile.copy()
+            data_bands      = ref_ds.count      # 3 for TCI (R/G/B)
+            dtype           = ref_ds.dtypes[0]  # e.g. 'uint8'
+            ref_crs         = ref_ds.crs
 
         # ------------------------------------------------------------------
         # Build reference grid from the AOI bounding box (not from any
@@ -342,9 +315,8 @@ def create_cloudfree_mosaic(
             gpkg_name = Path(aoi_gpkg).name
         else:
             # Fallback: use first item's extent
-            with rasterio.Env(**auth_env):
-                with rasterio.open(ref_href) as ref_ds:
-                    b = ref_ds.bounds
+            with rasterio.open(ref_href) as ref_ds:
+                b = ref_ds.bounds
             bnd = (b.left, b.bottom, b.right, b.top)
             gdf = None
             gpkg_name = None
@@ -396,7 +368,6 @@ def create_cloudfree_mosaic(
         weight     = np.zeros((height, width), dtype=np.int32)
         filled     = np.zeros((height, width), dtype=bool)
 
-        # warp_kwargs used in both passes
         warp_kwargs = dict(
             crs=ref_crs,
             transform=ref_transform,
@@ -406,7 +377,7 @@ def create_cloudfree_mosaic(
         )
 
         # ------------------------------------------------------------------
-        # Pass 1: cloud-free mosaic
+        # Cloud-free mosaic loop
         # ------------------------------------------------------------------
         for idx, item in enumerate(sorted_items, 1):
             filled_aoi     = int((filled & aoi_mask).sum())
@@ -428,24 +399,21 @@ def create_cloudfree_mosaic(
             cm_asset  = _find_asset_by_title(item, cloud_mask_title)
 
             try:
-                with rasterio.Env(**auth_env):
-                    with rasterio.open(tci_asset.href) as _tci_raw:
-                        with WarpedVRT(_tci_raw, **warp_kwargs) as tci_ds:
-                            bands = tci_ds.read()               # (data_bands, H, W) uint8
-                    with rasterio.open(cm_asset.href) as _cm_raw:
-                        with WarpedVRT(_cm_raw, **warp_kwargs) as cm_ds:
-                            cloud = cm_ds.read(1)               # uint8: 0=clear
+                with rasterio.open(tci_asset.href) as _tci_raw:
+                    with WarpedVRT(_tci_raw, **warp_kwargs) as tci_ds:
+                        bands = tci_ds.read()       # (data_bands, H, W) uint8
+                with rasterio.open(cm_asset.href) as _cm_raw:
+                    with WarpedVRT(_cm_raw, **warp_kwargs) as cm_ds:
+                        cloud = cm_ds.read(1)        # uint8: 0=clear
             except Exception as exc:
                 print(f"    [error] Could not read asset: {exc} — skipping item.")
                 continue
 
             # WarpedVRT fills pixels outside the scene footprint with 0 in all bands.
-            # dataset_mask() is unreliable for out-of-footprint detection through
-            # WarpedVRT (may return 255/valid even where data is truly absent).
-            # Use band values directly: a pixel has data iff at least one band != 0.
+            # dataset_mask() is unreliable through WarpedVRT; use band values instead.
             # Cloud mask: 0=clear, 1=cloud, 2=thin cloud, 3=shadow — keep only 0.
-            # Cloud mask value 0 also means no-data outside the orbit, so restrict
-            # to pixels where TCI actually has data.
+            # Cloud mask 0 also means no-data outside the orbit, so restrict to
+            # pixels where TCI actually has data (at least one band > 0).
             has_data = bands.max(axis=0) > 0
             valid = has_data & (cloud == 0) & aoi_mask
             n_valid      = int(valid.sum())
@@ -473,7 +441,7 @@ def create_cloudfree_mosaic(
                 filled |= valid
 
         # ------------------------------------------------------------------
-        # Finalise Pass 1
+        # Finalise mosaic
         # ------------------------------------------------------------------
         if mosaic_method == "mean":
             has_data_w = weight > 0
@@ -538,9 +506,7 @@ def create_cloudfree_mosaic(
         for key in ("AREA_OR_POINT", "JPEGTABLESMODE", "JPEG_QUALITY"):
             tmp_profile.pop(key, None)
 
-        with tempfile.NamedTemporaryFile(
-            suffix="_mosaic_tmp.tif", delete=False
-        ) as tmp_fh:
+        with tempfile.NamedTemporaryFile(suffix="_mosaic_tmp.tif", delete=False) as tmp_fh:
             tmp_path = tmp_fh.name
 
         try:
@@ -634,10 +600,7 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.001,
         metavar="F",
-        help=(
-            "Stop Pass 1 (cloud-free) when remaining AOI fraction ≤ F. "
-            "Pass 2 always fills remaining holes regardless. 0 = no early stop."
-        ),
+        help="Stop early when remaining AOI fraction ≤ F. 0 = no early stop.",
     )
     parser.add_argument(
         "--output",
@@ -668,21 +631,11 @@ def _parse_args() -> argparse.Namespace:
         help="Asset title of the cloud-mask COGtif.",
     )
     parser.add_argument(
-        "--username",
-        default=None,
-        help="HTTP Basic Auth username (for staging/protected endpoints).",
-    )
-    parser.add_argument(
-        "--password",
-        default=None,
-        help="HTTP Basic Auth password.",
-    )
-    parser.add_argument(
         "--aoi",
         default=str(AOI_GPKG),
         metavar="PATH",
         help=(
-            "GeoPackage with the area-of-interest polygon. Fill % and the "
+            "GeoPackage with the area-of-interest polygon. Fill %% and the "
             "no-data threshold are computed over AOI pixels only. "
             "Pass '' or 'none' to disable."
         ),
@@ -692,7 +645,6 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args      = _parse_args()
-    auth      = (args.username, args.password) if args.username else None
     threshold = args.threshold if args.threshold > 0 else None
     aoi       = None if args.aoi.lower() in ("", "none") else args.aoi
 
@@ -707,7 +659,6 @@ def main() -> None:
         stac_url=args.stac_url,
         collection_id=args.collection,
         cloud_mask_title=args.cloud_mask_title,
-        auth=auth,
         aoi_gpkg=aoi,
     )
 
