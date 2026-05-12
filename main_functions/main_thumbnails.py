@@ -426,9 +426,9 @@ def create_thumbnail_indexed(
         # Overlay on Switzerland
         run_gdal_command([
             "gdalwarp",
-            "-s_srs", "EPSG:2056",
+            # "-s_srs", "EPSG:2056",
             "-overwrite",
-            "-srcnodata", "255,255,255",
+            "-srcnodata", "255 255 255",
             f"{TEMP_PREFIX}swissfill.tif",
             f"{TEMP_PREFIX}RGB.tif",
             f"{TEMP_PREFIX}RGB_merged.tif",
