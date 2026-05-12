@@ -129,6 +129,50 @@ CFG = {
 LOGLEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 # ===========================================================================
+# stdout suppression helper
+# HORAYZON prints directly via C-level stdout (not Python logging), so the
+# only way to silence it is to redirect the OS-level file descriptor 1.
+# ===========================================================================
+
+import contextlib
+
+@contextlib.contextmanager
+def _suppress_stdout():
+    """
+    Suppress HORAYZON stdout output for the duration of the block.
+
+    HORAYZON prints via Python's sys.stdout (Cython print calls).
+    On Windows, os.dup2 to NUL breaks debugpy's stdout wrapper
+    (OSError WinError 1), so we only replace sys.stdout there.
+    On Linux/Mac we also redirect the OS-level fd 1 to catch any
+    C-level output from Embree.
+    Active only when CFG['log_info'] is False.
+    """
+    if not CFG.get("log_info", True):
+        old_stdout = sys.stdout
+        null_file  = open(os.devnull, "w")
+        sys.stdout = null_file
+        # fd-level redirect for C extensions (Linux/Mac only)
+        _old_fd = None
+        if sys.platform != "win32":
+            try:
+                _old_fd = os.dup(1)
+                os.dup2(null_file.fileno(), 1)
+            except OSError:
+                _old_fd = None
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            if _old_fd is not None:
+                os.dup2(_old_fd, 1)
+                os.close(_old_fd)
+            null_file.close()
+    else:
+        yield
+
+
+# ===========================================================================
 # Logging helpers
 # ===========================================================================
 
@@ -393,20 +437,21 @@ def run_tile(args, cfg, coord_tuple):
 
     try:
         # --- Incidence angle ---
-        iw = InzidenWinkel(
-            dom=cfg["dsm_path"],
-            planets=cfg["planets"],
-            output_path=".",
-        )
-        inc_tile, inc_transform, inc_nodata = iw.calc_incidence_grid(
-            e_lv95=tile_e,
-            n_lv95=tile_n,
-            dateoi=args["date"],
-            timeoi=args["time"],
-            grid_size=args["grid_size"],
-            grid_step=args["grid_step"],
-        )
-        iw.close()
+        with _suppress_stdout():
+            iw = InzidenWinkel(
+                dom=cfg["dsm_path"],
+                planets=cfg["planets"],
+                output_path=".",
+            )
+            inc_tile, inc_transform, inc_nodata = iw.calc_incidence_grid(
+                e_lv95=tile_e,
+                n_lv95=tile_n,
+                dateoi=args["date"],
+                timeoi=args["time"],
+                grid_size=args["grid_size"],
+                grid_step=args["grid_step"],
+            )
+            iw.close()
 
         # Log incidence statistics (exclude nodata)
         valid = inc_tile[inc_tile > inc_nodata + 1]
@@ -419,21 +464,22 @@ def run_tile(args, cfg, coord_tuple):
             logging.warning(f"{os.getpid()} Incidence: no valid values")
 
         # --- Shadow / illumination mask ---
-        sw = SonnenWinkel(
-            dom=cfg["dsm_path"],
-            planets=cfg["planets"],
-            search_dist=cfg["search_dist"],
-            output_path=".",
-        )
-        ilu_tile, ilu_transform, ilu_nodata = sw.calc_illuminate_grid(
-            e_lv95=tile_e,
-            n_lv95=tile_n,
-            dateoi=args["date"],
-            timeoi=args["time"],
-            grid_size=args["grid_size"],
-            grid_step=args["grid_step"],
-        )
-        sw.close()
+        with _suppress_stdout():
+            sw = SonnenWinkel(
+                dom=cfg["dsm_path"],
+                planets=cfg["planets"],
+                search_dist=cfg["search_dist"],
+                output_path=".",
+            )
+            ilu_tile, ilu_transform, ilu_nodata = sw.calc_illuminate_grid(
+                e_lv95=tile_e,
+                n_lv95=tile_n,
+                dateoi=args["date"],
+                timeoi=args["time"],
+                grid_size=args["grid_size"],
+                grid_step=args["grid_step"],
+            )
+            sw.close()
 
         # Stack to [1, H, W] (single time-step; keeps merge_tiles compatible
         # with potential multi-time-step extensions)
