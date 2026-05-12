@@ -825,7 +825,12 @@ def create_terrain_mask(orbit, timedate, outputfilename=None, sequential=False):
             results = [run_tile(*task) for task in tasks]
         else:
             logging.info(f"Starting {len(tasks)} tiles on {n_proc} workers...")
-            ctx = mp.get_context("spawn")
+            # "fork" on Linux/Mac: workers inherit the parent's address space,
+            # so native extensions like _gdal_array are already loaded and don't
+            # need to be re-imported (avoids ImportError with venv GDAL builds).
+            # "spawn" on Windows: fork is not available there.
+            _ctx_method = "fork" if sys.platform != "win32" else "spawn"
+            ctx = mp.get_context(_ctx_method)
             with ctx.Pool(
                 processes=n_proc,
                 initializer=setup_logging,
