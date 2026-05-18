@@ -82,8 +82,8 @@ def process_product_vhi(
     # Environments
     os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without credentials
 
-    # ROI if not provided
-    bbox_ch = (2484000, 1074000, 2834000, 1300000) # bounding box for Switzerland with a ~10km buffer
+    # ROI (if not provided)
+    bbox_ch = (2480400, 1059000, 2839000, 1302500) # bounding box for Switzerland with a ~5km buffer
 
     ##############################
     # TIME
