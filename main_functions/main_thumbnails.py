@@ -26,7 +26,7 @@ COLOR_MAPS = {
         (41, 50): (203, 255, 202),    # normal - light green
         (51, 60): (82, 189, 159),     # good - green
         (61, 100): (4, 112, 176),     # excellent - blue
-        (110, 110): (128, 128, 128),  # missing data - gray
+        (110, 110): (255, 255, 255),  # missing data - gray (128, 128, 128)
         (255, 255): (255, 255, 255),  # no data - white
     },
     "ndvi_z": {  # scaling factor 100
@@ -383,7 +383,7 @@ def create_thumbnail_indexed(
                 profile.update(nodata=None)
 
                 with rasterio.open(f"{TEMP_PREFIX}_preprocessed.tif", "w", **profile) as dst:
-                    dst.write(rgb_data)
+                    dst.write(data)
 
             input_for_thumbnail = f"{TEMP_PREFIX}_preprocessed.tif"
             nodata_arg = ["-a_nodata", str(nodata_value)]
@@ -400,6 +400,7 @@ def create_thumbnail_indexed(
             "-b", "1",
             "-of", "GTiff",
             "-outsize", str(thumb_width), str(thumb_height),
+            "-r", "near",
             *nodata_arg,
             input_for_thumbnail,
             f"{TEMP_PREFIX}.tif",
@@ -426,9 +427,9 @@ def create_thumbnail_indexed(
         # Overlay on Switzerland
         run_gdal_command([
             "gdalwarp",
-            "-s_srs", "EPSG:2056",
+            # "-s_srs", "EPSG:2056",
             "-overwrite",
-            "-srcnodata", "255,255,255",
+            "-srcnodata", "255 255 255",
             f"{TEMP_PREFIX}swissfill.tif",
             f"{TEMP_PREFIX}RGB.tif",
             f"{TEMP_PREFIX}RGB_merged.tif",
@@ -482,7 +483,7 @@ def create_thumbnail(
             gpkg_path,
             layer_name,
             COLOR_MAPS["vhi"],
-            special_values={110: (128, 128, 128), 255: (255, 255, 255)},
+            special_values={110: (255, 255, 255), 255: (255, 255, 255)}
         )
 
     # NDVI-Z products

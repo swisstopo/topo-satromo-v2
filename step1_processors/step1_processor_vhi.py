@@ -82,6 +82,9 @@ def process_product_vhi(
     # Environments
     os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without credentials
 
+    # ROI (if not provided)
+    bbox_ch = (2480400, 1059000, 2839000, 1302500) # bounding box for Switzerland with a ~5km buffer
+
     ##############################
     # TIME
     current_date_str = day_to_process
@@ -343,9 +346,7 @@ def process_product_vhi(
     first_red_path = first_item_path + '_b04_10m.tif'
 
     if roi is None:
-        with rasterio.open(first_red_path) as src:
-            b = src.bounds
-            roi = (b.left, b.bottom, b.right, b.top)
+        roi = bbox_ch
 
     with rasterio.open(first_red_path) as src:
         window_10m = from_bounds(*roi, src.transform)
@@ -951,7 +952,7 @@ def process_product_vhi(
     #TODO
 
     # Create thumbnail
-    filename_thumbnail = main_thumbnails.create_thumbnail(f'{filename_forest}.tif', config.PRODUCT_VHI['product_name'])
+    filename_thumbnail = main_thumbnails.create_thumbnail(f'{filename_vegetation}.tif', config.PRODUCT_VHI['product_name'])
 
     ##############################
     # EXPORT VHI
