@@ -55,6 +55,19 @@ jobs:
   #             GOOGLE_CLIENT_SECRET, S3_SECRETS
   #   Variables: AWS_REGION, EC2_AMI_ID, EC2_INSTANCE_TYPE,
   #              EC2_SUBNET_ID, EC2_SECURITY_GROUP_ID
+  
+  # Type	    Name	                    Purpose
+  # Secret	  AWS_ACCESS_KEY_ID	AWS     credentials for EC2 start/stop
+  # Secret	  AWS_SECRET_ACCESS_KEY	    AWS credentials
+  # Secret	  GH_PAT	                  Personal access token for the machulav runner action
+  # Secret	  S3_SECRETS	              Existing processing secret
+  # Secret	  COPERNICUS_S3_SECRETS	    Existing processing secret
+  # Variable	AWS_REGION	              e.g. eu-central-1
+  # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc.
+  # Variable	EC2_INSTANCE_TYPE	        e.g. g4dn.xlarge (GPU instance)
+  # Variable	EC2_SUBNET_ID	VPC         subnet for the runner
+  # Variable	EC2_SECURITY_GROUP_ID	    Security group allowing GitHub Actions traffic
+
   # ============================================================================
   start-ec2:
     needs: check-and-update
@@ -119,8 +132,8 @@ jobs:
       - name: Run rerun processor
         run: python rerun.py prod_config.py
         env:
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
+          COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
 
       - name: Push tools files to repo
         run: |
