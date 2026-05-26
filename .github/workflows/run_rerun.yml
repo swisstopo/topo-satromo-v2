@@ -62,6 +62,8 @@ jobs:
   # Secret	  GH_PAT	                  Personal access token for the machulav runner action
   # Secret	  S3_SECRETS	              Existing processing secret
   # Secret	  COPERNICUS_S3_SECRETS	    Existing processing secret
+  # Secret	  FSDI_STAC_USER	          Existing processing secret
+  # Secret	  FSDI_STAC_PASSWORD	      Existing processing secret
   # Variable	AWS_REGION	              e.g. eu-central-1
   # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc.
   # Variable	EC2_INSTANCE_TYPE	        e.g. g4dn.xlarge (GPU instance)
@@ -131,6 +133,8 @@ jobs:
         env:
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
+          FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
+          FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}         
 
       - name: Push tools files to repo
         run: |
