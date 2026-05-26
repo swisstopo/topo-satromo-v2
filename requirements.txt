@@ -87,5 +87,5 @@ urllib3>=2.7.0,<3
 wget==3.2
 xarray==2025.10.1
 xyzservices==2025.10.0
-./secrets/gdal-3.11.4-cp312-cp312-win_amd64.whl ; sys_platform == 'win32'
+#./secrets/gdal-3.11.4-cp312-cp312-win_amd64.whl ; sys_platform == 'win32'
 
