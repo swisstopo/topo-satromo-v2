@@ -119,15 +119,12 @@ jobs:
       - name: Increase git buffer size
         run: git config --global http.postBuffer 1048576000
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
+      - name: Activate venv and install dependencies
         run: |
-          python -m pip install --upgrade pip
+          source /home/ubuntu/.venv/bin/activate
           pip install -r requirements.txt
+          echo "VIRTUAL_ENV=/home/ubuntu/.venv" >> $GITHUB_ENV
+          echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
 
       - name: Run rerun processor
         run: python rerun.py prod_config.py

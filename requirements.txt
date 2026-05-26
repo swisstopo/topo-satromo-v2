@@ -22,7 +22,7 @@ fonttools==4.60.1
 gdal
 geoarray==0.19.2
 geojson==3.2.0
-geopandas==1.1.1
+geopandas>=1.1.2
 geographiclib
 h5py==3.9.0
 h5netcdf==1.2.0
@@ -48,11 +48,11 @@ numpy<2.0.0
 omnicloudmask==1.7.0
 packaging==25.0
 pandas==2.3.3
-pillow==12.0.0
+pillow>=12.2.0
 plotly==6.4.0
 py_tools_ds==0.23.3
 pyarrow==21.0.0
-pyasn1==0.6.1
+pyasn1>=0.6.3
 pyasn1_modules==0.4.2
 PyKrige==1.7.3
 pyogrio==0.11.1
@@ -83,7 +83,7 @@ tqdm==4.67.1
 typing_extensions==4.15.0
 tzdata==2025.2
 uritemplate==4.2.0
-urllib3==2.5.0
+urllib3>=2.7.0,<3
 wget==3.2
 xarray==2025.10.1
 xyzservices==2025.10.0
