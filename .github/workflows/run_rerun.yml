@@ -121,6 +121,9 @@ jobs:
       - name: Increase git buffer size
         run: git config --global http.postBuffer 1048576000
 
+      - name: Link local_assets into workspace
+        run: ln -s /home/ubuntu/local_assets $GITHUB_WORKSPACE/local_assets
+
       - name: Activate venv and install dependencies
         run: |
           source /home/ubuntu/.venv/bin/activate
