@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import configuration as config
 import csv
-import ee
 from datetime import datetime, timedelta
 from main_functions import main_utils
 from step0_processors import *
