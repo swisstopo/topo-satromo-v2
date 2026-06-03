@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 # import pytz
-"""
+r"""
 Extract raster statistics for each polygon in a shapefile, calculate the percentage of data availability, and export
 the results to CSV, GeoJSON, and GeoParquet formats.
 

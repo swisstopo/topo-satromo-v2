@@ -136,7 +136,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
-          git diff --staged --quiet || git commit -m 'Tools files done' && git push origin main
+          git diff --staged --quiet || git commit -m 'Tools files done'
+          git pull --rebase origin main
+          git push origin main
 
   # ============================================================================
   # STAGE 2c — Stop EC2 runner (always runs if EC2 was started)
