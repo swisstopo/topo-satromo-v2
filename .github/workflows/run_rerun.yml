@@ -112,6 +112,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: main
 
       - name: Link local_assets into workspace
         run: ln -s /home/ubuntu/local_assets $GITHUB_WORKSPACE/local_assets
