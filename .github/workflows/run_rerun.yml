@@ -97,11 +97,6 @@ jobs:
           ec2-instance-type: ${{ vars.EC2_INSTANCE_TYPE }}
           subnet-id: ${{ vars.EC2_SUBNET_ID }}
           security-group-id: ${{ vars.EC2_SECURITY_GROUP_ID }}
-          aws-resource-tags: >
-            [
-              {"Key": "Name", "Value": "s2-processor-runner"},
-              {"Key": "Project", "Value": "topo-satromo-v2"}
-            ]
 
   # ============================================================================
   # STAGE 2b — Full processing on EC2 (3-hour hard limit for cost protection)
@@ -117,9 +112,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-
-      - name: Increase git buffer size
-        run: git config --global http.postBuffer 1048576000
 
       - name: Link local_assets into workspace
         run: ln -s /home/ubuntu/local_assets $GITHUB_WORKSPACE/local_assets

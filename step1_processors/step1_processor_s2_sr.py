@@ -462,8 +462,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             temp_tif = output_file.replace('.jp2', '_merged.tif')
 
+            gdal_merge_cmd = shutil.which("gdal_merge.py") or shutil.which("gdal_merge") or "gdal_merge.py"
             command = [
-                "gdal_merge",
+                gdal_merge_cmd,
                 "-o", temp_tif,
                 "-n", "0",
                 "-a_nodata", "0",
