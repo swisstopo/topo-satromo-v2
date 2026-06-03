@@ -223,7 +223,7 @@ def set_github_output(key, value):
 # ============================================================================
 
 def main():
-    today = sys.argv[1] if len(sys.argv) > 1 else "2026-02-01"
+    today = sys.argv[1] if len(sys.argv) > 1 else "2026-06-03"
     days_back = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 
     print("=" * 60)
