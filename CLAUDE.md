@@ -48,6 +48,7 @@ python satromo_processor.py dev_config.py 2024-06-12 --force  # force reprocess
 - Config values come from the imported config module (e.g., `config.S3_BUCKET_NAME`) — never hardcode environment-specific paths or endpoints
 - Secrets are loaded from `secrets/` folder (dev) or environment variables (prod); never commit secrets
 - `tools/step0_empty_assets.csv` is the live tile-status tracking file; it is committed to git by CI after each run
+- gdal is used via subprocess module
 
 
 Preferred style:
@@ -66,7 +67,7 @@ The primary maintainer is a Python beginner and prefers straightforward code.
 | GDAL / rasterio | Raster I/O | Windows: pre-compiled wheel required |
 | AROSICS 1.13.2 | Sub-pixel co-registration | Requires GDAL C++ bindings |
 | OmniCloudMask 1.7.0 | Cloud/shadow masking | Deep learning based |
-| HORAYZON | Topographic correction | C++ native; conda on Linux |
+| HORAYZON | Topographic correction | C++ native |
 | pystac 1.14.1 + pystac-client | STAC catalog access/publish | |
 | boto3 / s3fs | AWS S3 I/O | |
 | geopandas ≥ 1.1.2 | Vector operations | |
@@ -87,6 +88,7 @@ The primary maintainer is a Python beginner and prefers straightforward code.
 - Heavy design patterns
 - Unnecessary abstractions
 - Additional dependencies unless required
+- using gdal binding in python
 
 ## Proposing Changes
 1. Work on a the current active feature branch
