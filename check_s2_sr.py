@@ -25,6 +25,7 @@ Usage:
 import os
 import sys
 import json
+import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
@@ -70,9 +71,18 @@ def search_copernicus(date_str):
         "limit": 100,
     }
 
-    response = requests.post(STAC_SEARCH_URL, json=query_body, timeout=60)
-    response.raise_for_status()
-    items = response.json().get("features", [])
+    for attempt in range(3):
+        response = requests.post(STAC_SEARCH_URL, json=query_body, timeout=60)
+        response.raise_for_status()
+        try:
+            items = response.json().get("features", [])
+            break
+        except Exception as e:
+            if attempt < 2:
+                print(f"  Copernicus API non-JSON response (attempt {attempt + 1}/3), retrying in 10s...")
+                time.sleep(10)
+            else:
+                raise ValueError(f"Copernicus API returned non-JSON after 3 attempts (HTTP {response.status_code}): {response.text[:200]!r}") from e
 
     # Keep only items above the minimum baseline version
     items = [
