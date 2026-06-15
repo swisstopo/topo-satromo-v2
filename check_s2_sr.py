@@ -8,8 +8,9 @@ processing in tools/step0_empty_assets.csv.
 
 Two categories of dates are checked on each run:
   1. The target date (today, or the date passed as argv[1])
-  2. Historical entries in the CSV where remark is "No candidate scene" or
-     starts with "Tile upload incomplete" (e.g. "Tile upload incomplete: [22]")
+  2. Historical entries in the CSV where remark is "No candidate scene",
+     starts with "Tile upload incomplete" (e.g. "Tile upload incomplete: [22]"),
+     or is "Tile download incomplete" (download failed during processing),
      and collection matches COLLECTION_NAME, within the lookback window.
 
 At the end, sets the GitHub Actions output 'needs-processing=true' if the
@@ -48,6 +49,7 @@ COLLECTION_NAME = "ch.swisstopo.swisseo_s2-sr_v200"
 REMARK_READY = "Tiles ready awaiting GPU system run"
 REMARK_NO_CANDIDATE = "No candidate scene"
 REMARK_TILE_INCOMPLETE = "Tile upload incomplete"
+REMARK_DOWNLOAD_INCOMPLETE = "Tile download incomplete"
 
 
 # ============================================================================
@@ -246,13 +248,15 @@ def main():
     df = pd.read_csv(EMPTY_ASSET_LIST)
     print(f"\nLoaded {len(df)} rows from {EMPTY_ASSET_LIST}")
 
-    # Historical entries worth re-checking: "No candidate scene" (exact) or
-    # any "Tile upload incomplete" variant (e.g. "Tile upload incomplete: [22]")
+    # Historical entries worth re-checking: "No candidate scene" (exact),
+    # any "Tile upload incomplete" variant (e.g. "Tile upload incomplete: [22]"),
+    # or "Tile download incomplete" (download failed during processing)
     historical_mask = (
         (df["collection"] == COLLECTION_NAME)
         & (
             (df["remark"] == REMARK_NO_CANDIDATE)
             | df["remark"].str.contains(REMARK_TILE_INCOMPLETE, na=False)
+            | df["remark"].str.contains(REMARK_DOWNLOAD_INCOMPLETE, na=False)
         )
         & (df["date"] >= cutoff)
         & (df["date"] <= today)
@@ -265,7 +269,7 @@ def main():
     print(f"\nDates to check ({len(dates_to_check)} total):")
     print(f"  Target date: {today}")
     if historical_dates:
-        print(f"  Historical 'No candidate scene' / 'Tile upload incomplete' within {days_back} days: {historical_dates}")
+        print(f"  Historical 'No candidate scene' / 'Tile upload incomplete' / 'Tile download incomplete' within {days_back} days: {historical_dates}")
 
     # Check each date and accumulate updates in the dataframe
     for date_str in dates_to_check:
