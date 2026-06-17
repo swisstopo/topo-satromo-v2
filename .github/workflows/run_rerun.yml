@@ -1,8 +1,9 @@
 name: Run S2 Processor
 
 on:
-  schedule:
-    - cron: '33 * * * *'
+  #schedule:
+    # Since we ofetn have 2 passes and orbits and both are not yet complete we only do process at 23 UTC onwar to 11 UTC. we solve thsi with cron-job.org since github action is not running every hour
+    #- cron: '17 23,0,1,2,3,4,5,6,7,8,9,10,11 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -40,13 +41,16 @@ jobs:
       - name: Check S2 data availability and update CSV
         id: check
         run: python check_s2_sr.py $(date +%Y-%m-%d) 30
+        #run: python check_s2_sr.py 2026-05-17 30
 
       - name: Push tools files to repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
-          git diff --staged --quiet || git commit -m 'Tools files done' && git push origin main
+          git diff --staged --quiet || git commit -m 'Tools files done'
+          git pull --rebase origin main
+          git push origin main
 
   # ============================================================================
   # STAGE 2a — Start EC2 runner (only when processing is needed)
@@ -81,7 +85,7 @@ jobs:
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -98,8 +102,9 @@ jobs:
           subnet-id: ${{ vars.EC2_SUBNET_ID }}
           security-group-id: ${{ vars.EC2_SECURITY_GROUP_ID }}
 
+
   # ============================================================================
-  # STAGE 2b — Full processing on EC2 (3-hour hard limit for cost protection)
+  # STAGE 2b — Full processing on EC2 (7-hour hard limit for cost protection)
   # Runs rerun.py which picks up all "Tiles ready awaiting GPU system run"
   # entries (and other non-cloudy entries) from the CSV and processes them
   # using the full pipeline with GPU.
@@ -107,7 +112,7 @@ jobs:
   run-processing:
     needs: [check-and-update, start-ec2]
     runs-on: ${{ needs.start-ec2.outputs.label }}
-    timeout-minutes: 180
+    timeout-minutes: 420
 
     steps:
       - name: Checkout repository
@@ -126,13 +131,13 @@ jobs:
           echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
 
       - name: Run rerun processor
-        run: python rerun.py prod_config.py
+        run: python rerun.py prod_config.py 
         env:
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
-          HF_HUB_OFFLINE: "1"
+          #HF_HUB_OFFLINE: "1"
 
       - name: Push tools files to repo
         run: |
@@ -154,7 +159,7 @@ jobs:
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
