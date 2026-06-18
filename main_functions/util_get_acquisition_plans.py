@@ -18,6 +18,7 @@ Author: David Oesch (original), updated 2026-05-21
 import datetime
 import os
 import re
+import sys
 import time
 import urllib.request as ul
 from datetime import timedelta
@@ -298,7 +299,7 @@ def main():
         )
 
     print("\nMerging AOI CSV files ...")
-    merge_ok = merge_aoi_files(STORAGE_PATH, "acquisitionplan.csv")
+    merge_ok = merge_aoi_files(STORAGE_PATH, os.path.join("tools", "acquisitionplan.csv"))
 
     print("\n**********************")
     for sat, ok in results.items():
@@ -307,9 +308,18 @@ def main():
 
     if all(results.values()) and merge_ok:
         print("\nAll Sentinel-2 operations completed successfully.")
+        print("removing intermediate AOI files ...")
+        for filename in os.listdir(STORAGE_PATH):
+            if filename.endswith("_AOI.csv") or filename.endswith("_plan.kml"):
+                os.remove(os.path.join(STORAGE_PATH,  filename))
     else:
         print("\nCompleted with warnings (see above).")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"\nERROR: {exc}")
+        print("Acquisition plan update failed — continuing without updated plan.")
+        sys.exit(0)
