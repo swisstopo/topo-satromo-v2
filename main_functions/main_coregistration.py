@@ -339,7 +339,7 @@ def coregister_S2(
             'out_crea_options': output_options,
             # 'CPUs': num_cpus,
             'CPUs': 32,
-            'progress': True,
+            'progress': False,
             'fmt_out': 'GTIFF',
             'r_b4match': reference_band,
             's_b4match': shift_band,
