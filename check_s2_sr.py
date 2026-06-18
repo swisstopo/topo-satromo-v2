@@ -44,6 +44,7 @@ BASELINE_VERSION = "04.00"
 EXPECTED_TILE_COUNTS = {8: 4, 22: 4, 65: 11, 108: 11}
 
 EMPTY_ASSET_LIST = os.path.join("tools", "step0_empty_assets.csv")
+ACQUISITION_PLAN_FILE = os.path.join("tools", "acquisitionplan.csv")
 COLLECTION_NAME = "ch.swisstopo.swisseo_s2-sr_v200"
 
 REMARK_READY = "Tiles ready awaiting GPU system run"
@@ -109,6 +110,32 @@ def search_copernicus(date_str):
 
 
 # ============================================================================
+# ACQUISITION PLAN HELPERS
+# ============================================================================
+
+def load_acquisition_plan():
+    """Load acquisitionplan.csv; return DataFrame or None on failure."""
+    if not os.path.exists(ACQUISITION_PLAN_FILE):
+        return None
+    try:
+        return pd.read_csv(ACQUISITION_PLAN_FILE)
+    except Exception as e:
+        print(f"  WARNING: could not load {ACQUISITION_PLAN_FILE}: {e}")
+        return None
+
+
+def get_expected_orbit_count(date_str, acq_plan):
+    """
+    Return number of orbits expected for date_str from acquisitionplan.csv,
+    or None if the date is not in the plan (treated as historical).
+    """
+    if acq_plan is None or acq_plan.empty:
+        return None
+    count = (acq_plan["Acquisition Date"].astype(str) == date_str).sum()
+    return count if count > 0 else None
+
+
+# ============================================================================
 # TILE COMPLETENESS
 # ============================================================================
 
@@ -139,13 +166,17 @@ def check_tile_completeness(search_result):
 # CHECK A SINGLE DATE
 # ============================================================================
 
-def check_date(date_str):
+def check_date(date_str, expected_orbit_count=None):
     """
     Determine data availability for one date.
     Returns (remark, non_valid_orbits):
-      - REMARK_READY          if at least one valid orbit has all expected tiles
-      - REMARK_TILE_INCOMPLETE if results exist but no orbit passes the tile check
-      - REMARK_NO_CANDIDATE   if the STAC search returns no results
+      - REMARK_READY           if all expected orbits have complete tiles
+      - REMARK_TILE_INCOMPLETE  if results exist but not all expected orbits are ready
+      - REMARK_NO_CANDIDATE    if the STAC search returns no results
+
+    expected_orbit_count: number of orbits from acquisitionplan.csv for this date.
+      - If None (historical date not in plan): READY as soon as any valid orbit exists.
+      - If set: wait until found valid orbits >= expected_orbit_count.
     """
     search_result = search_copernicus(date_str)
 
@@ -161,7 +192,11 @@ def check_date(date_str):
     if not valid_results:
         return REMARK_TILE_INCOMPLETE, non_valid_orbits
 
-    # At least one orbit is complete; EC2 processing can proceed
+    # If acquisition plan specifies how many orbits to expect, wait for all of them
+    if expected_orbit_count is not None and len(valid_orbits) < expected_orbit_count:
+        print(f"  Orbits with complete tiles: {len(valid_orbits)}/{expected_orbit_count} expected — waiting for remaining")
+        return REMARK_TILE_INCOMPLETE, non_valid_orbits
+
     return REMARK_READY, non_valid_orbits
 
 
@@ -248,6 +283,10 @@ def main():
     df = pd.read_csv(EMPTY_ASSET_LIST)
     print(f"\nLoaded {len(df)} rows from {EMPTY_ASSET_LIST}")
 
+    acq_plan = load_acquisition_plan()
+    if acq_plan is not None:
+        print(f"Loaded acquisition plan ({len(acq_plan)} rows) from {ACQUISITION_PLAN_FILE}")
+
     # Historical entries worth re-checking: "No candidate scene" (exact),
     # any "Tile upload incomplete" variant (e.g. "Tile upload incomplete: [22]"),
     # or "Tile download incomplete" (download failed during processing)
@@ -274,8 +313,13 @@ def main():
     # Check each date and accumulate updates in the dataframe
     for date_str in dates_to_check:
         print(f"\nChecking {date_str} ...")
+        expected_orbit_count = get_expected_orbit_count(date_str, acq_plan)
+        if expected_orbit_count is not None:
+            print(f"  Acquisition plan: {expected_orbit_count} orbit(s) expected for {date_str}")
+        else:
+            print(f"  Acquisition plan: date not found — treated as historical (no orbit count constraint)")
         try:
-            remark, non_valid_orbits = check_date(date_str)
+            remark, non_valid_orbits = check_date(date_str, expected_orbit_count)
             suffix = f" (incomplete orbits: {sorted(non_valid_orbits)})" if non_valid_orbits else ""
             print(f"  STAC result: {remark}{suffix}")
             df, _ = update_csv(df, date_str, remark, non_valid_orbits)
