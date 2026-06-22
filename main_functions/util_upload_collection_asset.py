@@ -15,10 +15,10 @@ As a library function (from step1_processor_s2_sr.py or any other script):
 As a CLI script:
 
     # Upload default asset list (acquisitionplan.csv + step0_empty_assets.csv):
-    python util_upload_collection_asset.py [dev_config|prod_config]
+    python util_upload_collection_asset.py [dev_config.py|prod_config.py]
 
     # Upload a specific file:
-    python util_upload_collection_asset.py prod_config \\
+    python util_upload_collection_asset.py prod_config.py \\
         --file path/to/myfile.csv \\
         --collection ch.swisstopo.swisseo_s2-sr_v200 \\
         --title "My Title" \\
@@ -26,15 +26,11 @@ As a CLI script:
 """
 
 import argparse
-import hashlib
 import importlib
 import json
 import os
 import sys
-from base64 import b64encode
-from hashlib import md5
 
-import multihash
 import requests
 
 
@@ -70,23 +66,26 @@ def _load_config(config_name):
     return importlib.import_module(f"configuration.{config_name}")
 
 
-def _get_credentials(config):
-    """Return (user, password) from local secrets file or env vars."""
-    if os.path.exists(config.FSDI_SECRETS):
-        with open(config.FSDI_SECRETS, "r") as fh:
+def _get_fsdi_credentials(cfg):
+    """Return (user, password) for FSDI STAC API.
+
+    Uses main_utils.determine_run_type() to decide whether to read from the
+    local secrets file (run_type 2 = dev) or from environment variables
+    (run_type 1 = prod/GitHub), following the same pattern as initialize_gee().
+    """
+    from main_functions import main_utils
+    main_utils.determine_run_type()
+    if main_utils.run_type == 2:
+        with open(cfg.FSDI_SECRETS, "r") as fh:
             data = json.load(fh)
         user = os.environ.get("STAC_USER", data["FSDI"]["username"])
         password = os.environ.get("STAC_PASSWORD", data["FSDI"]["password"])
-        print(f"  Auth: local secrets ({config.FSDI_SECRETS})")
+        print(f"  Auth: local secrets ({cfg.FSDI_SECRETS})")
     else:
         user = os.environ["FSDI_STAC_USER"]
         password = os.environ["FSDI_STAC_PASSWORD"]
         print("  Auth: environment variables (PROD)")
     return user, password
-
-
-def _b64_md5(data):
-    return b64encode(md5(data).digest()).decode("utf-8")
 
 
 def _register_asset(asset_url, stac_asset_name, asset_title, mime_type, user, password):
@@ -100,78 +99,43 @@ def _register_asset(asset_url, stac_asset_name, asset_title, mime_type, user, pa
     return False
 
 
-def _multipart_upload(uploads_url, local_file, user, password, part_size_mb=250):
-    """Multipart-upload local_file to the given STAC uploads URL."""
-    file_size = os.path.getsize(local_file)
-    part_size = min(part_size_mb * 1024 ** 2, file_size)
+def _multipart_upload(uploads_url, local_file, user, password):
+    """Multipart-upload local_file to the given STAC uploads URL.
 
-    sha256 = hashlib.sha256()
-    md5_parts = []
-    print("  Calculating checksums ...")
-    with open(local_file, "rb") as fh:
-        while True:
-            chunk = fh.read(part_size)
-            if not chunk:
-                break
-            sha256.update(chunk)
-            md5_parts.append({"part_number": len(md5_parts) + 1, "md5": _b64_md5(chunk)})
+    Delegates to StacMultipartUploader from main_multipart_upload_via_api.
+    That class builds an item-level URL internally, so we override
+    uploads_url after construction — all methods use self.uploads_url,
+    so the correct collection-level endpoint is used throughout.
+    """
+    from main_functions import main_multipart_upload_via_api as _mpu
 
-    checksum_multihash = multihash.to_hex_string(
-        multihash.encode(sha256.digest(), "sha2-256")
-    )
-
-    payload = {
-        "number_parts": len(md5_parts),
-        "md5_parts": md5_parts,
-        "checksum:multihash": checksum_multihash,
-        "update_interval": 30,
-    }
-
-    resp = requests.post(uploads_url, json=payload, auth=(user, password))
-
-    if resp.status_code == 409 and "already in progress" in resp.text:
-        print("  Upload in progress — aborting previous ...")
-        in_prog = requests.get(uploads_url, params={"status": "in-progress"}, auth=(user, password))
-        if in_prog.status_code == 200:
-            for u in in_prog.json().get("uploads", []):
-                requests.post(f"{uploads_url}/{u['upload_id']}/abort", auth=(user, password))
-        resp = requests.post(uploads_url, json=payload, auth=(user, password))
-
-    if resp.status_code != 201:
-        print(f"  ERROR starting upload (HTTP {resp.status_code}): {resp.text}")
-        return False
-
-    upload_id = resp.json()["upload_id"]
-    upload_urls = resp.json()["urls"]
-    print(f"  Uploading: {len(upload_urls)} part(s)")
-
-    etags = []
-    with open(local_file, "rb") as fh:
-        for url_entry in upload_urls:
-            chunk = fh.read(part_size)
-            part_num = url_entry["part"]
-            r = requests.put(
-                url_entry["url"],
-                data=chunk,
-                headers={"Content-MD5": md5_parts[part_num - 1]["md5"]},
-            )
-            if r.status_code != 200:
-                print(f"  ERROR part {part_num} (HTTP {r.status_code})")
-                requests.post(f"{uploads_url}/{upload_id}/abort", auth=(user, password))
-                return False
-            etags.append({"etag": r.headers["ETag"], "part_number": part_num})
-            print(f"  Part {part_num}/{len(upload_urls)} done")
-
-    resp = requests.post(
-        f"{uploads_url}/{upload_id}/complete",
-        json={"parts": etags},
-        auth=(user, password),
-    )
-    if resp.status_code == 200 and resp.json().get("status") == "completed":
-        print("  Upload completed.")
+    old_argv = sys.argv
+    # StacMultipartUploader reads its config from sys.argv via get_args().
+    # Use placeholder values for collection/item/asset since we override the URL.
+    sys.argv = [
+        "util_upload_collection_asset.py",
+        "int",          # env (any valid choice; URL is overridden below)
+        "placeholder",  # collection
+        "placeholder",  # item
+        "placeholder",  # asset
+        local_file,
+        "--username", user,
+        "--password", password,
+        "--force",
+    ]
+    try:
+        uploader = _mpu.StacMultipartUploader()
+        uploader.uploads_url = uploads_url   # override with collection-level URL
+        uploader.credentials = (user, password)
+        uploader.upload_file()
         return True
-    print(f"  ERROR completing (HTTP {resp.status_code}): {resp.text}")
-    return False
+    except SystemExit:
+        return False
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return False
+    finally:
+        sys.argv = old_argv
 
 
 def _mime_for(local_file):
@@ -215,7 +179,7 @@ def publish_collection_asset(local_file, collection, asset_title, stac_asset_nam
         print(f"  ERROR: file not found: {local_file}")
         return False
 
-    user, password = _get_credentials(config)
+    user, password = _get_fsdi_credentials(config)
 
     stac_base = f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}{config.STAC_FSDI_API}"
     asset_url = f"{stac_base}collections/{collection}/assets/{stac_asset_name}"
@@ -242,8 +206,8 @@ def _cli():
     parser.add_argument(
         "config",
         nargs="?",
-        default="dev_config",
-        help="Config module name: dev_config (default) or prod_config",
+        default="dev_config.py",
+        help="Config module name: dev_config.py (default) or prod_config.py",
     )
     parser.add_argument("--file", help="Local file to upload (overrides default list)")
     parser.add_argument("--collection", help="STAC collection ID (required with --file)")
@@ -261,7 +225,7 @@ def _cli():
     print(f"Config    : {args.config}")
     print(f"STAC base : {stac_base}")
 
-    user, password = _get_credentials(cfg)
+    user, password = _get_fsdi_credentials(cfg)
 
     if args.file:
         # Single-file mode
