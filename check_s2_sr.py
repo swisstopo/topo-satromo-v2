@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 check_s2_sr.py - Lightweight Sentinel-2 data availability check.
+Testing
 
 Queries the Copernicus STAC API to determine whether new S2 L2A tiles are
 available for Switzerland, then marks qualifying dates as ready for GPU
