@@ -65,6 +65,8 @@ def process_product_vhi(
   
     ##############################
     # CONFIGURATION / PARAMETERS
+    vhi_version = "v200"
+
     # Paths
     stac_swisstopo, s2_sr_collection_id = config.PRODUCT_VHI['step0_collection'].split('#/collections/')
     stac_swisstopo_version = 'api/stac/v0.9/'
@@ -816,6 +818,7 @@ def process_product_vhi(
         'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
         'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
         'collection': collection,
+        'VHI_version': vhi_version,
         'system:time_start': start_date,
         'system:time_end': (end_date - timedelta(seconds=1)), 
         'NDVI_reference_data': config.PRODUCT_VHI['NDVI_reference_data'],
@@ -1008,6 +1011,7 @@ def process_product_vhi(
                     "GEOCATID": geocat_id,
                     "PROCESSING_DATE_UTC": processing_date_utc,
                     "PROCESSING_HOSTNAME": hostname,
+                    "VHI_VERSION": vhi_version,
                     "DOY": attrs.get('doy'),
                     "ALPHA": attrs.get('alpha'),
                     "TEMPORAL_COVERAGE": attrs.get('temporal_coverage'),
@@ -1032,6 +1036,7 @@ def process_product_vhi(
                 "ITEM": item_label,
                 "ASSET": f"{warnregion_filename}{fmt}",
                 "SOURCE": f"{source_tif}.tif",
+                "VHI_VERSION": vhi_version,
                 "format": fmt,
                 "regionId": "RegionID",
                 "vhiMean": "VHI Mean Region",
