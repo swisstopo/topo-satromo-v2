@@ -927,7 +927,7 @@ def process_product_vhi(
     dateISO8601 = f'{current_date_str}T235959Z'
 
     # Create warnregions for forest areas
-    warnregionfilename_forest = f'{filename_forest}_warnregions'
+    warnregionfilename_forest = f'{product_name.replace("ch.swisstopo.", "")}_{timestamp}_forest-warnregions'
     main_extract_warnregions.export(
         f'{filename_forest}.tif',
         warnregions,
@@ -941,7 +941,7 @@ def process_product_vhi(
     print(f'Created warnregions for forest areas')
 
     # Create warnregions for vegetation areas
-    warnregionfilename_vegetation = f'{filename_vegetation}_warnregions'
+    warnregionfilename_vegetation = f'{product_name.replace("ch.swisstopo.", "")}_{timestamp}_vegetation-warnregions'
     main_extract_warnregions.export(
         f'{filename_vegetation}.tif',
         warnregions,
@@ -1183,10 +1183,22 @@ def process_product_vhi(
                                                config.PRODUCT_VHI['geocat_id_vegetation'], asset_title="Thumbnail", current=True)
         os.rename(filename_thumbnail_current, filename_thumbnail)
 
-    # Clean up Thumbnailfile
-    if Path(filename_thumbnail).exists():
-            print(f"Cleaning up: {filename_thumbnail}")
-            Path(filename_thumbnail).unlink()
+    # Clean up all local files created during this run
+    files_to_cleanup = (
+        [filename_thumbnail]
+        + [f'{filename_forest}.tif']
+        + [f'{filename_vegetation}.tif']
+        + [warnregionfilename_forest + fmt for fmt in warnformats]
+        + [warnregionfilename_vegetation + fmt for fmt in warnformats]
+        + [filename_metadata]
+    )
+
+    for filepath in files_to_cleanup:
+        if Path(filepath).exists():
+            print(f"Cleaning up: {filepath}")
+            Path(filepath).unlink()
+        else:
+            print(f"Cleanup skipped (not found): {filepath}")
 
     print(f'********* finished processing {product_name} for {timestamp} *********')
 
