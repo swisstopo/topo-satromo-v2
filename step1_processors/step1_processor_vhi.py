@@ -339,9 +339,9 @@ def process_product_vhi(
     s2_sr_items_sorted = [item for item in s2_sr_items_sorted if item_covers_roi(item, roi)]
 
     if len(s2_sr_items_sorted) == 0:
-        raise ValueError(f'No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.')
+        raise ValueError(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
     else:
-        print(f'Found {len(s2_sr_items_sorted)} items in time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.')
+        print(f"Found {len(s2_sr_items_sorted)} items in time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
         print(f'Starting the VHI calculation for {current_date_str}')
 
     # NDVI calculation and combining them to always take the newest value per pixel
@@ -485,7 +485,7 @@ def process_product_vhi(
     ##############################
     # INPUT DATA: REFERENCE NDVI
     # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
-    s3_path_ndvi_ref = f'{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif'
+    s3_path_ndvi_ref = f"{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif"
 
     with rasterio.open(s3_path_ndvi_ref) as src_ref:
         # Define window from ROI
@@ -576,14 +576,14 @@ def process_product_vhi(
     # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
     # TODO: update elif part to include Feb 2026 after delivery from MCH
     if current_date < datetime(2024, 1, 1):
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
     elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 4, 1):
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
     else:
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc"
 
     ds_sdl = xr.open_dataset(sdl_path, engine='h5netcdf')
     ds_sol = xr.open_dataset(sol_path, engine='h5netcdf')
@@ -758,7 +758,7 @@ def process_product_vhi(
     ##############################
     # INPUT DATA: REFERENCE LST
     # Load or compute long-term LST statistics for climate reference period (1991-2020)
-    s3_path_lst_ref = f'{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
+    s3_path_lst_ref = f"{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc"
     ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
     print('Loaded reference LST statistics for current day of year')
 
