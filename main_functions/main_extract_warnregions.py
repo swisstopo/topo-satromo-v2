@@ -4,6 +4,8 @@ from rasterio.mask import mask
 import shapely
 # from rasterio.plot import show
 import json
+import os
+import subprocess
 import numpy as np
 import pandas as pd
 # import pytz
@@ -164,10 +166,22 @@ def export(raster_url, shape_file, filename, dateISO8601, missing_values, no_dat
     gdf[date_column]= pd.to_datetime(dateISO8601).tz_convert('UTC').floor('s')
     # gdf[date_column] = gdf[date_column].astype()
 
-    # Export the converted GeoDataFrame to a geoparquet file
-    gdf.to_parquet(filename+'.parquet', compression="gzip")
+    # Export the GeoDataFrame to a geoparquet file
+    # (Hilbert sort, ZSTD compression, bbox column, CRS metadata — all applied by default)
+    _gpkg_tmp = filename + '_tmp.gpkg'
+    try:
+        gdf.to_file(_gpkg_tmp, driver='GPKG')
+        subprocess.run(
+            ['gpio', 'convert', _gpkg_tmp, filename + '.parquet'],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+    finally:
+        if os.path.exists(_gpkg_tmp):
+            os.remove(_gpkg_tmp)
 
-    # Remove the "Name" column from the GeoDataFrame
+    # Remove the date column from the GeoDataFrame
     gdf.drop(columns=[date_column], inplace=True)
 
     # Convert the GeoDataFrame to WGS84 (EPSG:4326)

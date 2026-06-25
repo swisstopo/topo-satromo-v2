@@ -115,21 +115,21 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
 
     # For Earth Engine collections
 
-    # Asset cleaning (only for Earth Engine assets with 'properties' and 'date')
-    if 'cleaning_older_than' in config.step0[collection]:
-        cleaning_target_date = target_date + \
-            timedelta(days=-1 * config.step0[collection]['cleaning_older_than'])
+    # # Asset cleaning (only for Earth Engine assets with 'properties' and 'date')
+    # if 'cleaning_older_than' in config.step0[collection]:
+    #     cleaning_target_date = target_date + \
+    #         timedelta(days=-1 * config.step0[collection]['cleaning_older_than'])
 
-        for asset in assets:
-            # Check if asset has the expected structure
-            if 'properties' in asset and 'date' in asset['properties']:
-                date = asset['properties']['date']
-                date_as_datetime = datetime.strptime(date, '%Y-%m-%d')
+    #     for asset in assets:
+    #         # Check if asset has the expected structure
+    #         if 'properties' in asset and 'date' in asset['properties']:
+    #             date = asset['properties']['date']
+    #             date_as_datetime = datetime.strptime(date, '%Y-%m-%d')
 
-                if date_as_datetime.date() < cleaning_target_date:
-                    print(f'Remove asset {date}')
-                    print('XXX Actual asset deletion is not activated. Uncomment the code to do so XXXX')
-                    # ee.data.deleteAsset(assetId=asset['id'])  # TODO: uncomment to actually delete
+    #             if date_as_datetime.date() < cleaning_target_date:
+    #                 print(f'Remove asset {date}')
+    #                 print('XXX Actual asset deletion is not activated. Uncomment the code to do so XXXX')
+    #                 # ee.data.deleteAsset(assetId=asset['id'])  # TODO: uncomment to actually delete
 
     # Check that asset is present for every date of the temporal coverage
     check_date = target_date - timedelta(days=temporal_coverage)
