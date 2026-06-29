@@ -30,19 +30,30 @@ jobs:
       - name: Increase git buffer size
         run: git config --global http.postBuffer 1048576000
 
-      - name: Set up Python 3.9
+      - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install light dependencies
-        run: pip install requests pandas
+        run: pip install requests pandas shapely lxml py-multihash
 
+      - name: Get acquisition plan
+        id: GetAcqui
+        run: python main_functions/util_get_acquisition_plans.py
+            
       - name: Check S2 data availability and update CSV
         id: check
-        run: python check_s2_sr.py $(date +%Y-%m-%d) 30
-        #run: python check_s2_sr.py 2026-05-17 30
+        run: python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py
+        #run: python check_s2_sr.py 2026-03-29 100 dev_config.py
 
+      - name: Publish acquisitionplan.csv and step0_empty_assets.csv
+        id: PublishAcquiEmpty
+        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        env:
+          FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
+          FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
+        
       - name: Push tools files to repo
         run: |
           git config user.name "github-actions[bot]"
@@ -137,7 +148,13 @@ jobs:
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
-          #HF_HUB_OFFLINE: "1"
+
+      - name: Publish acquisitionplan.csv and step0_empty_assets.csv
+        id: PublishAcquiEmpty2b
+        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        env:
+          FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
+          FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
 
       - name: Push tools files to repo
         run: |

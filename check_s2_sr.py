@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 check_s2_sr.py - Lightweight Sentinel-2 data availability check.
-Testing
 
 Queries the Copernicus STAC API to determine whether new S2 L2A tiles are
 available for Switzerland, then marks qualifying dates as ready for GPU
@@ -24,6 +23,7 @@ Usage:
     python check_s2_sr.py 2026-05-20 14          # date=2026-05-20, days_back=14
 """
 
+import importlib
 import os
 import sys
 import json
@@ -134,6 +134,57 @@ def get_expected_orbit_count(date_str, acq_plan):
         return None
     count = (acq_plan["Acquisition Date"].astype(str) == date_str).sum()
     return count if count > 0 else None
+
+
+# ============================================================================
+# FSDI STAC HELPERS
+# ============================================================================
+
+def _load_fsdi_items_url(config_name):
+    """
+    Load the FSDI STAC items URL for the S2-SR collection from the given
+    config module (e.g. 'dev_config.py' or 'prod_config.py').
+    Returns the URL string, or None on failure.
+    """
+    config_basename = config_name.replace(".py", "")
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, repo_root)
+    # configuration/__init__.py parses sys.argv on first import, so temporarily
+    # set argv to just the config filename to avoid it misreading our date/days args.
+    old_argv = sys.argv
+    sys.argv = [sys.argv[0], config_name]
+    try:
+        cfg = importlib.import_module(f"configuration.{config_basename}")
+        step0_url = cfg.PRODUCT_S2_LEVEL_2A["step0_collection"]
+        if "#/collections/" in step0_url:
+            base_domain = step0_url.split("#")[0].rstrip("/")
+            collection_id = step0_url.split("#/collections/")[1].strip("/")
+            api_base = base_domain + cfg.STAC_FSDI_API
+        else:
+            raise ValueError(f"Unexpected step0_collection format: {step0_url}")
+        return f"{api_base.rstrip('/')}/collections/{collection_id}/items"
+    except Exception as e:
+        print(f"  WARNING: could not load FSDI config from {config_name}: {e}")
+        return None
+    finally:
+        sys.argv = old_argv
+
+
+def check_fsdi_published(date_str, fsdi_items_url):
+    """Return True if at least one item already exists in FSDI STAC for date_str."""
+    start = f"{date_str}T00:00:00Z"
+    end = f"{date_str}T23:59:59Z"
+    try:
+        resp = requests.get(
+            fsdi_items_url,
+            params={"datetime": f"{start}/{end}", "limit": 1},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return len(resp.json().get("features", [])) > 0
+    except Exception as e:
+        print(f"  WARNING: FSDI STAC check failed for {date_str}: {e}")
+        return False
 
 
 # ============================================================================
@@ -273,11 +324,20 @@ def set_github_output(key, value):
 def main():
     today = sys.argv[1] if len(sys.argv) > 1 else "2026-06-03"
     days_back = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    config_name = sys.argv[3] if len(sys.argv) > 3 else None
 
     print("=" * 60)
     print("check_s2_sr.py - Sentinel-2 Data Availability Check")
     print(f"Target date: {today}  |  Lookback window: {days_back} days")
     print("=" * 60)
+
+    fsdi_items_url = None
+    if config_name:
+        fsdi_items_url = _load_fsdi_items_url(config_name)
+        if fsdi_items_url:
+            print(f"FSDI STAC check: {fsdi_items_url}")
+        else:
+            print("FSDI STAC check: disabled (config load failed)")
 
     cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
@@ -322,7 +382,21 @@ def main():
         try:
             remark, non_valid_orbits = check_date(date_str, expected_orbit_count)
             suffix = f" (incomplete orbits: {sorted(non_valid_orbits)})" if non_valid_orbits else ""
-            print(f"  STAC result: {remark}{suffix}")
+            print(f"  CSDE STAC result: {remark}{suffix}")
+            if remark == REMARK_READY and fsdi_items_url:
+                if check_fsdi_published(date_str, fsdi_items_url):
+                    print(f"  FSDI STAC check: items already published for {date_str} — skipping")
+                    stale_mask = (
+                        (df["collection"] == COLLECTION_NAME)
+                        & (df["date"] == date_str)
+                        & df["remark"].str.contains(REMARK_READY, na=False)
+                    )
+                    if stale_mask.any():
+                        df = df[~stale_mask]
+                        print(f"    {date_str}: removed stale READY entry from CSV")
+                    continue
+                else:
+                    print(f"  FSDI STAC check: no items yet for {date_str} — will trigger processing")
             df, _ = update_csv(df, date_str, remark, non_valid_orbits)
         except Exception as e:
             print(f"  ERROR: {e}")

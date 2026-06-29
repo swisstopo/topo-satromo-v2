@@ -244,8 +244,7 @@ def merge_aoi_files(directory, output_file):
         df = df[df["Acquisition Date"] >= today - timedelta(days=2)]
         if df.empty:
             continue
-        df["Publish Date"] = df["Acquisition Date"] + timedelta(days=3)
-        df = df[["Acquisition Date", "Publish Date", "OrbitRelative", "Platform"]]
+        df = df[["Acquisition Date", "OrbitRelative", "Platform"]]
         df.rename(columns={"OrbitRelative": "Orbit"}, inplace=True)
         merged.append(df)
 
