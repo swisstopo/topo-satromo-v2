@@ -98,7 +98,7 @@ PRODUCT_VHI = {
     "LST_reference_data": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing

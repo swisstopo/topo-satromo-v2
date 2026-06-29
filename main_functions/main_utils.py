@@ -1,6 +1,4 @@
 import configuration as config
-from pydrive.auth import GoogleAuth
-from oauth2client.service_account import ServiceAccountCredentials
 import boto3
 import requests
 import csv

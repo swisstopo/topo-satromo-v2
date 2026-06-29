@@ -462,8 +462,9 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
             temp_tif = output_file.replace('.jp2', '_merged.tif')
 
+            gdal_merge_cmd = shutil.which("gdal_merge.py") or shutil.which("gdal_merge") or "gdal_merge.py"
             command = [
-                "gdal_merge",
+                gdal_merge_cmd,
                 "-o", temp_tif,
                 "-n", "0",
                 "-a_nodata", "0",
@@ -1149,7 +1150,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     # --- Step 1: Einzelnes SCL-Band oversampeln + clippen (nearest, guenstig) ---
                     print(f"\n--- SCL Step 1: Clipping + oversampling einzelnes SCL-Band auf {intermediate_res}m (near) ---")
                     cmd_os = [
-                        "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
+                        "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                        "-cutline", str(clipfile), "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                         "-co", "COMPRESS=DEFLATE",
@@ -1186,7 +1188,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     # -ot Float32 erforderlich: bilinear erzeugt Bruchwerte 0.0-1.0
                     print(f"\n--- SCL Step 2: Reprojizierung {NUM_CLASSES} Baender nach EPSG:{epsg} @ {intermediate_res}m (bilinear) ---")
                     cmd_rp = [
-                        "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
+                        "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                        "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
                         "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                         "-to", "ALLOW_BALLPARK=NO", "-to", "ONLY_BEST=YES",
@@ -1206,7 +1209,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                     # --- Step 3: Auf finale Aufloesung runtersampeln (bilinear) ---
                     print(f"\n--- SCL Step 3: Downsampling {NUM_CLASSES} Baender auf {resolution}m (bilinear) ---")
                     cmd_ds = [
-                        "gdalwarp", "-of", "GTiff", "-co", "BIGTIFF=YES",
+                        "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                        "-of", "GTiff", "-co", "BIGTIFF=YES",
                         "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                         "-co", "COMPRESS=DEFLATE",
                         "-tr", str(resolution), str(resolution), "-tap",
@@ -1285,7 +1289,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 # Step 1: Clip and oversample with nearest neighbour (keep original projection)
                 cmd_oversample = [
-                    "gdalwarp", "-cutline", str(clipfile), "-of", "GTiff",
+                    "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                    "-cutline", str(clipfile), "-of", "GTiff",
                     "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                     "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-tr", str(intermediate_res), str(intermediate_res),
@@ -1309,7 +1314,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
                 # Step 2: Reproject with bilinear (at oversampled resolution)
                 cmd_reproject = [
-                    "gdalwarp", "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
+                    "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                    "-t_srs", f"EPSG:{epsg}", "-of", "GTiff",
                     "-co", "TILED=YES", "-co", "BIGTIFF=YES",
                     "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-to", "ALLOW_BALLPARK=NO", "-to", "ONLY_BEST=YES",
@@ -1345,7 +1351,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
 
 
                 cmd_downsample = [
-                    "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
+                    "gdalwarp", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+                    "-of", "COG", "-co", "BIGTIFF=YES",
                     "-co", "NUM_THREADS=ALL_CPUS", "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
                     "-tr", str(target_res), str(target_res), "-tap",
                     "-r", "bilinear", "-ot", datatype, "-overwrite"

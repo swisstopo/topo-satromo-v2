@@ -3,6 +3,9 @@ import xarray as xr
 import rioxarray
 from pystac_client import Client
 import os
+import re
+import json
+import socket
 import numpy as np
 import configuration as config
 from datetime import datetime, timedelta
@@ -11,6 +14,7 @@ from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, Resampling, transform_bounds
 from affine import Affine
+from pathlib import Path
 from main_functions import main_utils, main_publish_stac_fsdi, main_extract_warnregions, main_thumbnails
 
 ##############################
@@ -61,11 +65,14 @@ def process_product_vhi(
   
     ##############################
     # CONFIGURATION / PARAMETERS
+    vhi_version = "v200"
+
     # Paths
     stac_swisstopo, s2_sr_collection_id = config.PRODUCT_VHI['step0_collection'].split('#/collections/')
     stac_swisstopo_version = 'api/stac/v0.9/'
     lst_aggregation = '11am' # options: 'mean', 'max', '11am'
     lst_ref_file = f'_MSG_ch02_2004-2020_7days_{lst_aggregation}' # MSG (2004-2020) / MFG (1991-2003)
+    warnregions = 'assets/warnregionen_vhi_2056.shp'
 
     # Constants
     s2_nodata = 0 # NoData value in swissEO S2-SR products
@@ -80,6 +87,9 @@ def process_product_vhi(
 
     # Environments
     os.environ['AWS_NO_SIGN_REQUEST'] = 'YES' # to access public S3 buckets without credentials
+
+    # ROI (if not provided)
+    bbox_ch = (2480400, 1059000, 2839000, 1302500) # bounding box for Switzerland with a ~5km buffer
 
     ##############################
     # TIME
@@ -329,9 +339,9 @@ def process_product_vhi(
     s2_sr_items_sorted = [item for item in s2_sr_items_sorted if item_covers_roi(item, roi)]
 
     if len(s2_sr_items_sorted) == 0:
-        raise ValueError(f'No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.')
+        raise ValueError(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
     else:
-        print(f'Found {len(s2_sr_items_sorted)} items in time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.')
+        print(f"Found {len(s2_sr_items_sorted)} items in time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
         print(f'Starting the VHI calculation for {current_date_str}')
 
     # NDVI calculation and combining them to always take the newest value per pixel
@@ -342,9 +352,7 @@ def process_product_vhi(
     first_red_path = first_item_path + '_b04_10m.tif'
 
     if roi is None:
-        with rasterio.open(first_red_path) as src:
-            b = src.bounds
-            roi = (b.left, b.bottom, b.right, b.top)
+        roi = bbox_ch
 
     with rasterio.open(first_red_path) as src:
         window_10m = from_bounds(*roi, src.transform)
@@ -477,7 +485,7 @@ def process_product_vhi(
     ##############################
     # INPUT DATA: REFERENCE NDVI
     # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
-    s3_path_ndvi_ref = f'{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif'
+    s3_path_ndvi_ref = f"{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif"
 
     with rasterio.open(s3_path_ndvi_ref) as src_ref:
         # Define window from ROI
@@ -568,14 +576,14 @@ def process_product_vhi(
     # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
     # TODO: update elif part to include Feb 2026 after delivery from MCH
     if current_date < datetime(2024, 1, 1):
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
     elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 4, 1):
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
     else:
-        sdl_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc'
-        sol_path = f'{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc'
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc"
 
     ds_sdl = xr.open_dataset(sdl_path, engine='h5netcdf')
     ds_sol = xr.open_dataset(sol_path, engine='h5netcdf')
@@ -750,7 +758,7 @@ def process_product_vhi(
     ##############################
     # INPUT DATA: REFERENCE LST
     # Load or compute long-term LST statistics for climate reference period (1991-2020)
-    s3_path_lst_ref = f'{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc'
+    s3_path_lst_ref = f"{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc"
     ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
     print('Loaded reference LST statistics for current day of year')
 
@@ -810,6 +818,7 @@ def process_product_vhi(
         'SWISSTOPO_PROCESSOR': processor_version['GithubLink'],
         'SWISSTOPO_RELEASE_VERSION': processor_version['ReleaseVersion'],
         'collection': collection,
+        'VHI_version': vhi_version,
         'system:time_start': start_date,
         'system:time_end': (end_date - timedelta(seconds=1)), 
         'NDVI_reference_data': config.PRODUCT_VHI['NDVI_reference_data'],
@@ -914,43 +923,167 @@ def process_product_vhi(
 
     ##############################
     # WARNREGIONS
-    def check_substrings_presence(file, substring_to_check, additional_substrings):
-        """
-        Check if the main substring and at least one of the additional substrings are present in the file_merged string.
-        Args:
-        - file (str): The string to check.
-        - substring_to_check (str): The main substring to check for.
-        - additional_substrings (list of str): List of additional substrings to check for.
-        Returns:
-        - bool: True if the main substring and at least one of the additional substrings are present, False otherwise.
-        """
-        # Check if the main substring is present in the string
-        if substring_to_check in file:
-            # Check if any of the additional substrings are also present
-            additional_substring_found = any(
-                substring in file for substring in additional_substrings)
-            return additional_substring_found
-        else:
-            return False
+    warnformats = ['.csv', '.geojson', '.parquet']
+    dateISO8601 = f'{current_date_str}T235959Z'
 
     # Create warnregions for forest areas
-    #TODO
+    warnregionfilename_forest = f'{product_name.replace("ch.swisstopo.", "")}_{timestamp}_forest-warnregions'
+    main_extract_warnregions.export(
+        f'{filename_forest}.tif',
+        warnregions,
+        warnregionfilename_forest,
+        dateISO8601,
+        config.PRODUCT_VHI['missing_data'],
+        config.PRODUCT_VHI['no_data'],
+        config.PRODUCT_VHI['scaling_factor'],
+        'forest'
+    )
+    print(f'Created warnregions for forest areas')
 
     # Create warnregions for vegetation areas
-    #TODO
+    warnregionfilename_vegetation = f'{product_name.replace("ch.swisstopo.", "")}_{timestamp}_vegetation-warnregions'
+    main_extract_warnregions.export(
+        f'{filename_vegetation}.tif',
+        warnregions,
+        warnregionfilename_vegetation,
+        dateISO8601,
+        config.PRODUCT_VHI['missing_data'],
+        config.PRODUCT_VHI['no_data'],
+        config.PRODUCT_VHI['scaling_factor'],
+        'vegetation'
+    )
+    print(f'Created warnregions for vegetation areas')
+
 
     ##############################
     # METADATA FILE AND THUMBNAIL
-    #TODO
-
     # Create thumbnail
-    filename_thumbnail = main_thumbnails.create_thumbnail(f'{filename_forest}.tif', config.PRODUCT_VHI['product_name'])
+    filename_thumbnail = main_thumbnails.create_thumbnail(f'{filename_vegetation}.tif', config.PRODUCT_VHI['product_name'])
+    
+    # Create metadata file
+    def create_vhi_metadata_json(
+        vhi,
+        filename_forest,
+        filename_vegetation,
+        warnregionfilename_forest,
+        warnregionfilename_vegetation,
+        warnformats,
+        timestamp,
+        current_date_str,
+        processor_version,
+        config,
+    ):
+        """
+        Build and write a JSON metadata file for VHI v200, mirroring the v100 structure.
+        Returns the filename of the written file.
+        """
+        attrs = vhi.attrs
+        item_label = timestamp.upper()
+        processing_date_utc = f"{current_date_str}T235959Z"
+        hostname = socket.gethostname()
+
+        def raster_band_info(tif_filename):
+            try:
+                with rasterio.open(f"{tif_filename}.tif") as src:
+                    return [{
+                        "id": "vhi",
+                        "data_type": {"type": "PixelType", "precision": "int", "min": 0, "max": 255},
+                        "dimensions": [src.width, src.height],
+                        "crs": str(src.crs),
+                        "crs_transform": [
+                            src.transform.a, src.transform.b, src.transform.c,
+                            src.transform.d, src.transform.e, src.transform.f,
+                        ],
+                    }]
+            except Exception:
+                return []
+
+        def raster_entry(asset_filename, geocat_id):
+            return {
+                "BANDS": raster_band_info(asset_filename),
+                "PROPERTIES": {
+                    "PRODUCT": config.PRODUCT_VHI['product_name'],
+                    "ITEM": item_label,
+                    "ASSET": asset_filename,
+                    "DATEITEMGENERATION": current_date_str,
+                    "PROCESSORHASHLINK": processor_version['GithubLink'],
+                    "PROCESSORRELEASEVERSION": processor_version['ReleaseVersion'],
+                    "GEOCATID": geocat_id,
+                    "PROCESSING_DATE_UTC": processing_date_utc,
+                    "PROCESSING_HOSTNAME": hostname,
+                    "VHI_VERSION": vhi_version,
+                    "DOY": attrs.get('doy'),
+                    "ALPHA": attrs.get('alpha'),
+                    "TEMPORAL_COVERAGE": attrs.get('temporal_coverage'),
+                    "NDVI_REFERENCE_DATA": attrs.get('NDVI_reference_data'),
+                    "NDVI_INDEX_LIST": attrs.get('NDVI_index_list'),
+                    "NDVI_SCENE_COUNT": attrs.get('NDVI_scene_count'),
+                    "LST_REFERENCE_DATA": attrs.get('LST_reference_data'),
+                    "LST_INDEX_LIST": attrs.get('LST_index_list'),
+                    "LST_SCENE_COUNT": attrs.get('LST_scene_count'),
+                    "VCI_AND_TCI_CALCULATED_WITH": attrs.get('VCI_and_TCI_calculated_with'),
+                    "NO_DATA": attrs.get('no_data'),
+                    "MISSING_DATA": attrs.get('missing_data'),
+                    "PIXEL_SIZE_METER": attrs.get('pixel_size_meter'),
+                    "SYSTEM_TIME_START": str(attrs.get('system:time_start')),
+                    "SYSTEM_TIME_END": str(attrs.get('system:time_end')),
+                },
+            } 
+
+        def warnregion_entry(warnregion_filename, source_tif, fmt):
+            return {
+                "PRODUCT": config.PRODUCT_VHI['product_name'],
+                "ITEM": item_label,
+                "ASSET": f"{warnregion_filename}{fmt}",
+                "SOURCE": f"{source_tif}.tif",
+                "VHI_VERSION": vhi_version,
+                "format": fmt,
+                "regionId": "RegionID",
+                "vhiMean": "VHI Mean Region",
+                "availabilityPercentage": "percentage of available pixels with information within region",
+            }
+
+        metadata = {}
+
+        metadata["FOREST-10M"] = raster_entry(filename_forest, config.PRODUCT_VHI['geocat_id_forest'])
+        for fmt in warnformats:
+            key = f"FOREST-WARNREGIONS{fmt.replace('.', '-').upper()}"
+            metadata[key] = warnregion_entry(warnregionfilename_forest, filename_forest, fmt)
+
+        metadata["VEGETATION-10M"] = raster_entry(filename_vegetation, config.PRODUCT_VHI['geocat_id_vegetation'])
+        for fmt in warnformats:
+            key = f"VEGETATION-WARNREGIONS{fmt.replace('.', '-').upper()}"
+            metadata[key] = warnregion_entry(warnregionfilename_vegetation, filename_vegetation, fmt)
+
+        filename_metadata = (
+            f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}"
+            f"_mosaic_{timestamp}_metadata.json"
+        )
+        with open(filename_metadata, "w") as f:
+            json.dump(metadata, f, indent=2, default=str)
+
+        print(f"Created metadata JSON: {filename_metadata}")
+        return filename_metadata
+    
+    filename_metadata = create_vhi_metadata_json(
+        vhi=vhi,
+        filename_forest=filename_forest,
+        filename_vegetation=filename_vegetation,
+        warnregionfilename_forest=warnregionfilename_forest,
+        warnregionfilename_vegetation=warnregionfilename_vegetation,
+        warnformats=warnformats,
+        timestamp=timestamp,
+        current_date_str=current_date_str,
+        processor_version=processor_version,
+        config=config,
+    )
 
     ##############################
     # EXPORT VHI
 
-    # Create file list for export
+    # Create forest file list for export
     file_list_forest = []
+
     # Add forest-masked VHI to file list
     file_list_forest.append({
         'timestamp': timestamp,
@@ -960,10 +1093,17 @@ def process_product_vhi(
     })
 
     # Add warnregions for forest areas to file list
-    #TODO
+    for fmt in warnformats:
+        file_list_forest.append({
+            'timestamp': timestamp,
+            'band': f'FOREST-WARNREGIONS{fmt.replace(".", "-").upper()}',
+            'resolution': None,
+            'filename': warnregionfilename_forest + fmt,
+        })
 
-    # Create file list for export
+    # Create vegetationfile list for export
     file_list_vegetation = []
+
     # Add vegetation-masked VHI to file list
     file_list_vegetation.append({
         'timestamp': timestamp,
@@ -971,9 +1111,20 @@ def process_product_vhi(
         'resolution': '10m',
         'filename': f'{filename_vegetation}.tif',
     })
+    
     # Add warnregions for vegetation areas to file list
-    #TODO
+    for fmt in warnformats:
+        file_list_vegetation.append({
+            'timestamp': timestamp,
+            'band': f'VEGETATION-WARNREGIONS{fmt.replace(".", "-").upper()}',
+            'resolution': None,
+            'filename': warnregionfilename_vegetation + fmt
+        })
 
+    # Check if current, if yes then run upload below twice a day
+    is_current = main_utils.extract_and_compare_datetime_from_url(f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}{config.STAC_FSDI_API}collections/{collection.split('/')[-1]}/items/{collection.split('/')[-1].replace('swisstopo.', '').replace('ch.', '')}",timestamp)
+
+    # Export VHI and warnregions for forest areas
     for file_info in file_list_forest:
         band = file_info['band']
         filename = file_info['filename']
@@ -981,45 +1132,76 @@ def process_product_vhi(
         # STAC Upload
         main_publish_stac_fsdi.publish_to_stac(filename, timestamp, config.PRODUCT_VHI['product_name'], 
                                                config.PRODUCT_VHI['geocat_id_forest'], None, asset_title=band)
-        # if is_current == True:
-        #     print("Newest dataset detected: updating CURRENT")
-        #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
-        #     # Rename the file
-        #     os.rename(filename, filename_current)
-        #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id_forest'],asset_title=band, current=True)
-        #     os.rename(filename_current, filename)
+        if is_current == True:
+            print("Newest dataset detected: updating CURRENT")
+            filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+            # Rename the file
+            os.rename(filename, filename_current)
+            main_publish_stac_fsdi.publish_to_stac(filename_current, timestamp, config.PRODUCT_VHI['product_name'],
+                                                   config.PRODUCT_VHI['geocat_id_forest'], asset_title=band, current=True)
+            os.rename(filename_current, filename)
+
+    # Export VHI and warnregions for vegetation areas
+    for file_info in file_list_vegetation:
+        band = file_info['band']
+        filename = file_info['filename']
+
+        # STAC Upload
+        main_publish_stac_fsdi.publish_to_stac(filename, timestamp, config.PRODUCT_VHI['product_name'], 
+                                               config.PRODUCT_VHI['geocat_id_vegetation'], None, asset_title=band)
+        if is_current == True:
+            print("Newest dataset detected: updating CURRENT")
+            filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
+            # Rename the file
+            os.rename(filename, filename_current)
+            main_publish_stac_fsdi.publish_to_stac(filename_current, timestamp, config.PRODUCT_VHI['product_name'],
+                                                   config.PRODUCT_VHI['geocat_id_vegetation'], asset_title=band, current=True)
+            os.rename(filename_current, filename)
 
     # Upload metadata file
-    # filename=f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
-    # main_publish_stac_fsdi.publish_to_stac(filename,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],None,asset_title="Metadata")
-    # if is_current == True:
-    #     print("Newest dataset detected: updating CURRENT")
-    #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
-    #     # Rename the file
-    #     os.rename(filename, filename_current)
-    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],asset_title="Metadata", current=True)
-    #     os.rename(filename_current, filename)
+    filename_metadata = f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json"
+    main_publish_stac_fsdi.publish_to_stac(filename_metadata, timestamp, config.PRODUCT_VHI['product_name'],
+                                           config.PRODUCT_VHI['geocat_id_vegetation'], None, asset_title="Metadata")
+    if is_current == True:
+        print("Newest dataset detected: updating CURRENT")
+        filename_metadata_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename_metadata)
+        # Rename the file
+        os.rename(filename_metadata, filename_metadata_current)
+        main_publish_stac_fsdi.publish_to_stac(filename_metadata_current, timestamp, config.PRODUCT_VHI['product_name'],
+                                               config.PRODUCT_VHI['geocat_id_vegetation'], asset_title="Metadata", current=True)
+        os.rename(filename_metadata_current, filename_metadata)
 
     # Upload Thumbnail
     main_publish_stac_fsdi.publish_to_stac(filename_thumbnail, timestamp, config.PRODUCT_VHI['product_name'], 
-                                           config.PRODUCT_VHI['geocat_id_forest'], None, asset_title="Thumbnail")
-    # if is_current == True:
-    #     print("Newest dataset detected: updating CURRENT")
-    #     filename_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename)
-    #     # Rename the file
-    #     os.rename(filename, filename_current)
-    #     main_publish_stac_fsdi.publish_to_stac(filename_current,timestamp,config.PRODUCT_VHI['product_name'],config.PRODUCT_VHI['geocat_id'],asset_title="Thumbnail", current=True)
-    #     os.rename(filename_current, filename)
+                                           config.PRODUCT_VHI['geocat_id_vegetation'], None, asset_title="Thumbnail")
+    if is_current == True:
+        print("Newest dataset detected: updating CURRENT")
+        filename_thumbnail_current = re.sub(r'\d{4}-\d{2}-\d{2}t\d{6}', 'current', filename_thumbnail)
+        # Rename the file
+        os.rename(filename_thumbnail, filename_thumbnail_current)
+        main_publish_stac_fsdi.publish_to_stac(filename_thumbnail_current, timestamp, config.PRODUCT_VHI['product_name'],
+                                               config.PRODUCT_VHI['geocat_id_vegetation'], asset_title="Thumbnail", current=True)
+        os.rename(filename_thumbnail_current, filename_thumbnail)
 
-    # # Clean up Thumbnailfile
-    # if Path(filename).exists():
-    #         print(f"Cleaning up: {filename}")
-    #         Path(filename).unlink()
+    # Clean up all local files created during this run
+    files_to_cleanup = (
+        [filename_thumbnail]
+        + [f'{filename_forest}.tif']
+        + [f'{filename_vegetation}.tif']
+        + [warnregionfilename_forest + fmt for fmt in warnformats]
+        + [warnregionfilename_vegetation + fmt for fmt in warnformats]
+        + [filename_metadata]
+    )
 
-    # print(f'********* finished processing {product_name} *********')
+    for filepath in files_to_cleanup:
+        if Path(filepath).exists():
+            print(f"Cleaning up: {filepath}")
+            Path(filepath).unlink()
+        else:
+            print(f"Cleanup skipped (not found): {filepath}")
 
+    print(f'********* finished processing {product_name} for {timestamp} *********')
 
-    
 
     ##############################
     # PLOTS
@@ -1048,5 +1230,3 @@ def process_product_vhi(
     # plt.imshow(vhi_vegetation, cmap=vhi_cmap, norm=vhi_norm, interpolation='nearest') #, vmin=0, vmax=100
     # plt.colorbar()
     # plt.show()
-
-    # return f"VHI: Successfully processed {day_to_process}."

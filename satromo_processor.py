@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     # Check for debug override (second priority)
     if debug_mode:
-        current_date_str = "2026-02-02"
+        current_date_str = "2024-05-01"
         force_reprocess = True  # <-- toggle this manually during debug
         print("*****************************")
         print("Using manually set date:", current_date_str)
@@ -104,7 +104,8 @@ if __name__ == "__main__":
                 # roi = (2596300, 1166700, 2674400, 1222700) # Emmental
                 # roi = (2573000, 1199600, 2583100, 1208400) # Kerzersmoos
                 # roi = (2534500, 1194100, 2550700, 1203300) # Val de Travers
-                roi = (2602200, 1163300, 2630100, 1181100) # Niesen/Thun
+                # roi = (2602200, 1163300, 2630100, 1181100) # Niesen/Thun
+                # roi = (2549000, 1159000, 2643000, 1213000) # Mittelland BE/FR ca. 5'000 km2
 
                 # Does the OUTPUT (VHI) already exist? If yes, we can skip processing (unless force_reprocess is enabled)
                 api_path = getattr(config, 'STAC_FSDI_API')

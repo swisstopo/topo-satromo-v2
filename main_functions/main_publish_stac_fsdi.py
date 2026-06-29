@@ -81,7 +81,8 @@ def determine_run_type():
 
     else:
         run_type = 1
-        # print("\nType 1 run PUBLISHER: We are on FSDI INT")
+        # print("\nType 1 run PUBLISHER: We are on PROD")
+        
 
 
 def initialize_fsdi():
