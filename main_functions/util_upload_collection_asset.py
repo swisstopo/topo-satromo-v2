@@ -69,13 +69,10 @@ def _load_config(config_name):
 def _get_fsdi_credentials(cfg):
     """Return (user, password) for FSDI STAC API.
 
-    Uses main_utils.determine_run_type() to decide whether to read from the
-    local secrets file (run_type 2 = dev) or from environment variables
-    (run_type 1 = prod/GitHub), following the same pattern as initialize_gee().
+    Reads from the local secrets file when it exists (dev), otherwise falls
+    back to environment variables (prod/GitHub Actions).
     """
-    from main_functions import main_utils
-    main_utils.determine_run_type()
-    if main_utils.run_type == 2:
+    if os.path.isfile(cfg.FSDI_SECRETS):
         with open(cfg.FSDI_SECRETS, "r") as fh:
             data = json.load(fh)
         user = os.environ.get("STAC_USER", data["FSDI"]["username"])
