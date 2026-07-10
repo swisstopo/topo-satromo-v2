@@ -1,11 +1,10 @@
-import rasterio
-import xarray as xr
-import rioxarray
-from pystac_client import Client
 import os
+os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR" # to avoid unnecessary directory listing on S3 (needs to be before rasterio import)
 import re
 import json
 import socket
+import xarray as xr
+from pystac_client import Client
 import numpy as np
 import configuration as config
 from datetime import datetime, timedelta
@@ -574,7 +573,6 @@ def process_product_vhi(
     ############################################################
     # INPUT DATA: TEMPERATURE
     # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
-    # TODO: update elif part to include Feb 2026 after delivery from MCH
     if current_date < datetime(2024, 1, 1):
         sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
         sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
@@ -584,9 +582,6 @@ def process_product_vhi(
     else:
         sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc"
         sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc"
-
-    ds_sdl = xr.open_dataset(sdl_path, engine='h5netcdf')
-    ds_sol = xr.open_dataset(sol_path, engine='h5netcdf')
 
     ##############################
     # CALCULATE LST
@@ -665,112 +660,116 @@ def process_product_vhi(
         
         return ds_output
 
-    ds_11am = calc_LST_for_date(ds_sol, ds_sdl, current_date_str, aggregation='hour', hour=11)
+    
+    with xr.open_dataset(sdl_path, engine='h5netcdf') as ds_sdl, \
+         xr.open_dataset(sol_path, engine='h5netcdf') as ds_sol:
 
-    LST_index_list = f'MSG_METEOSWISS_ALLSKY_mosaic_{current_date_str}T11000000_bands-1721m'
-    LST_scene_count = 1
+        ds_11am = calc_LST_for_date(ds_sol, ds_sdl, current_date_str, aggregation='hour', hour=11)
 
-    # Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
-    def resample_lst_to_s2_grid(ds_lst, var_name, target_transform, target_shape, target_crs='EPSG:2056'):
-        """
-        Resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056.
-        
-        Parameters:
-        -----------
-        ds_lst : xarray.Dataset
-            LST dataset with lat/lon coordinates
-        var_name : str
-            Name of the LST variable to resample (e.g., 'LST_mean', 'LST_max', 'LST_hour11')
-        target_transform : affine.Affine
-            Target transform from Sentinel-2 10m grid
-        target_shape : tuple
-            Target shape (height, width) from Sentinel-2 10m grid
-        target_crs : str
-            Target CRS (default: 'EPSG:2056')
-        
-        Returns:
-        --------
-        numpy.ndarray
-            Resampled LST array on 10m grid
-        """
-        # Extract LST data
-        lst_data = ds_lst[var_name].values
-        
-        # Get lat/lon coordinates
-        lats = ds_lst.lat.values
-        lons = ds_lst.lon.values
-        
-        # Determine if coordinates are ascending or descending
-        lat_ascending = lats[1] > lats[0] if len(lats) > 1 else False
-        lon_ascending = lons[1] > lons[0] if len(lons) > 1 else False
-        
-        # Calculate pixel resolution (always positive)
-        lat_res = abs(lats[1] - lats[0]) if len(lats) > 1 else abs(lats[-1] - lats[-2])
-        lon_res = abs(lons[1] - lons[0]) if len(lons) > 1 else abs(lons[-1] - lons[-2])
-        
-        # Get the top-left corner coordinates
-        # For latitude: if descending (typical), use first value; if ascending, use last value
-        # For longitude: if ascending (typical), use first value; if descending, use last value
-        top_lat = lats[0] if not lat_ascending else lats[-1]
-        left_lon = lons[0] if lon_ascending else lons[-1]
-        
-        # Create affine transform for source (LST in lat/lon)
-        # The transform should point to the top-left corner and use negative lat_res
-        src_transform = Affine.translation(left_lon - lon_res/2, top_lat + lat_res/2) * Affine.scale(lon_res, -lat_res)
-        
-        # Flip data if needed to match standard rasterio orientation (top-to-bottom, left-to-right)
-        if not lat_ascending:
-            # Data is already top-to-bottom, just ensure it's correct
-            lst_data_oriented = lst_data
-        else:
-            # Flip vertically to go from bottom-to-top to top-to-bottom
-            lst_data_oriented = np.flipud(lst_data)
-        
-        if not lon_ascending:
-            # Flip horizontally to go from right-to-left to left-to-right
-            lst_data_oriented = np.fliplr(lst_data_oriented)
-        
-        # Prepare output array
-        lst_resampled = np.empty(target_shape, dtype=np.float32)
-        
-        # Reproject from EPSG:4326 (lat/lon) to EPSG:2056 (Swiss grid)
-        reproject(
-            source=lst_data_oriented.astype(np.float32),
-            destination=lst_resampled,
-            src_transform=src_transform,
-            src_crs='EPSG:4326',
-            dst_transform=target_transform,
-            dst_crs=target_crs,
-            resampling=Resampling.nearest,
-            src_nodata=np.nan,
-            dst_nodata=np.nan
-        )
-        
-        return lst_resampled
+        LST_index_list = f'MSG_METEOSWISS_ALLSKY_mosaic_{current_date_str}T11000000_bands-1721m'
+        LST_scene_count = 1
 
-    # Use it after calculating LST
-    lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', target_transform, target_shape)
+        # Function to resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056
+        def resample_lst_to_s2_grid(ds_lst, var_name, target_transform, target_shape, target_crs='EPSG:2056'):
+            """
+            Resample LST data from lat/lon grid to match Sentinel-2 10m grid in EPSG:2056.
+            
+            Parameters:
+            -----------
+            ds_lst : xarray.Dataset
+                LST dataset with lat/lon coordinates
+            var_name : str
+                Name of the LST variable to resample (e.g., 'LST_mean', 'LST_max', 'LST_hour11')
+            target_transform : affine.Affine
+                Target transform from Sentinel-2 10m grid
+            target_shape : tuple
+                Target shape (height, width) from Sentinel-2 10m grid
+            target_crs : str
+                Target CRS (default: 'EPSG:2056')
+            
+            Returns:
+            --------
+            numpy.ndarray
+                Resampled LST array on 10m grid
+            """
+            # Extract LST data
+            lst_data = ds_lst[var_name].values
+            
+            # Get lat/lon coordinates
+            lats = ds_lst.lat.values
+            lons = ds_lst.lon.values
+            
+            # Determine if coordinates are ascending or descending
+            lat_ascending = lats[1] > lats[0] if len(lats) > 1 else False
+            lon_ascending = lons[1] > lons[0] if len(lons) > 1 else False
+            
+            # Calculate pixel resolution (always positive)
+            lat_res = abs(lats[1] - lats[0]) if len(lats) > 1 else abs(lats[-1] - lats[-2])
+            lon_res = abs(lons[1] - lons[0]) if len(lons) > 1 else abs(lons[-1] - lons[-2])
+            
+            # Get the top-left corner coordinates
+            # For latitude: if descending (typical), use first value; if ascending, use last value
+            # For longitude: if ascending (typical), use first value; if descending, use last value
+            top_lat = lats[0] if not lat_ascending else lats[-1]
+            left_lon = lons[0] if lon_ascending else lons[-1]
+            
+            # Create affine transform for source (LST in lat/lon)
+            # The transform should point to the top-left corner and use negative lat_res
+            src_transform = Affine.translation(left_lon - lon_res/2, top_lat + lat_res/2) * Affine.scale(lon_res, -lat_res)
+            
+            # Flip data if needed to match standard rasterio orientation (top-to-bottom, left-to-right)
+            if not lat_ascending:
+                # Data is already top-to-bottom, just ensure it's correct
+                lst_data_oriented = lst_data
+            else:
+                # Flip vertically to go from bottom-to-top to top-to-bottom
+                lst_data_oriented = np.flipud(lst_data)
+            
+            if not lon_ascending:
+                # Flip horizontally to go from right-to-left to left-to-right
+                lst_data_oriented = np.fliplr(lst_data_oriented)
+            
+            # Prepare output array
+            lst_resampled = np.empty(target_shape, dtype=np.float32)
+            
+            # Reproject from EPSG:4326 (lat/lon) to EPSG:2056 (Swiss grid)
+            reproject(
+                source=lst_data_oriented.astype(np.float32),
+                destination=lst_resampled,
+                src_transform=src_transform,
+                src_crs='EPSG:4326',
+                dst_transform=target_transform,
+                dst_crs=target_crs,
+                resampling=Resampling.nearest,
+                src_nodata=np.nan,
+                dst_nodata=np.nan
+            )
+            
+            return lst_resampled
 
-    # Extract the data arrays and convert from Kelvin to Celsius
-    lst_11am = lst_11am_10m - 273.15
-    print(f'Calculated LST (using the aggregation method "{lst_aggregation}")')
+        # Use it after calculating LST
+        lst_11am_10m = resample_lst_to_s2_grid(ds_11am, 'LST_hour11', target_transform, target_shape)
+
+        # Extract the data arrays and convert from Kelvin to Celsius
+        lst_11am = lst_11am_10m - 273.15
+        print(f'Calculated LST (using the aggregation method "{lst_aggregation}")')
 
     ##############################
     # INPUT DATA: REFERENCE LST
     # Load or compute long-term LST statistics for climate reference period (1991-2020)
     s3_path_lst_ref = f"{config.PRODUCT_VHI['LST_reference_data']}LST_statistics_DOY{doy_str}{lst_ref_file}.nc"
-    ds_lst_ref = xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True})
-    print('Loaded reference LST statistics for current day of year')
+    with xr.open_dataset(s3_path_lst_ref, engine='h5netcdf', storage_options={'anon': True}) as ds_lst_ref:
+        print('Loaded reference LST statistics for current day of year')
 
-    # Read relevant bands based on the chosen method
-    if workWithPercentiles is True:
-        lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', target_transform, target_shape)  # 5th percentile
-        lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', target_transform, target_shape)  # 95th percentile
-        print('- Using percentiles for TCI calculation')
-    else:
-        lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_min', target_transform, target_shape)  # minimum
-        lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_max', target_transform, target_shape)  # maximum
-        print('- Using min and max for TCI calculation')
+        # Read relevant bands based on the chosen method
+        if workWithPercentiles is True:
+            lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p05', target_transform, target_shape)  # 5th percentile
+            lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_p95', target_transform, target_shape)  # 95th percentile
+            print('- Using percentiles for TCI calculation')
+        else:
+            lst_ref_10m_min = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_min', target_transform, target_shape)  # minimum
+            lst_ref_10m_max = resample_lst_to_s2_grid(ds_lst_ref, f'LST_{lst_aggregation}_max', target_transform, target_shape)  # maximum
+            print('- Using min and max for TCI calculation')
 
     ##############################
     # CALCULATE TCI
@@ -936,7 +935,7 @@ def process_product_vhi(
         config.PRODUCT_VHI['missing_data'],
         config.PRODUCT_VHI['no_data'],
         config.PRODUCT_VHI['scaling_factor'],
-        'forest'
+        'vhi'
     )
     print(f'Created warnregions for forest areas')
 
@@ -950,7 +949,7 @@ def process_product_vhi(
         config.PRODUCT_VHI['missing_data'],
         config.PRODUCT_VHI['no_data'],
         config.PRODUCT_VHI['scaling_factor'],
-        'vegetation'
+        'vhi'
     )
     print(f'Created warnregions for vegetation areas')
 
