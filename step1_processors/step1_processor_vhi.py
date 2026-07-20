@@ -171,7 +171,7 @@ def process_product_vhi(
             window, src_transform = get_window_and_transform(src, roi)
             if src_transform is None:  # no overlap
                 return np.full(target_shape, fill_value=np.nan, dtype=np.float32)
-            data = src.read(1, window=window, out_dtype=np.float32)
+            data = src.read(1, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
             src_crs = src.crs 
         
         # Reproject onto the fixed 10m reference grid
@@ -232,7 +232,7 @@ def process_product_vhi(
             window, src_transform = get_window_and_transform(src, roi)
             if src_transform is None:
                 return np.full(target_shape, fill_value=np.nan, dtype=np.float32)
-            data_20m = src.read(1, window=window, out_dtype=np.float32)
+            data_20m = src.read(1, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
             src_crs = src.crs  
         
         # Resample to 10m grid (start with nan filled array to guarantee matching output shape and nodata handling)
@@ -344,28 +344,21 @@ def process_product_vhi(
         print(f'Starting the VHI calculation for {current_date_str}')
 
     # NDVI calculation and combining them to always take the newest value per pixel
-
-    # Resolve ROI and establish 10m grid ONCE before the loop
-    first_item = s2_sr_items_sorted[0]
-    first_item_path = stac_swisstopo + s2_sr_collection_id + '/' + first_item.id + '/swisseo_s2-sr_v200_mosaic_' + first_item.id
-    first_red_path = first_item_path + '_b04_10m.tif'
-
-    if roi is None:
-        roi = bbox_ch
-
-    with rasterio.open(first_red_path) as src:
-        window_10m = from_bounds(*roi, src.transform)
-        target_transform = src.window_transform(window_10m)
-        target_shape = (int(window_10m.height), int(window_10m.width))
-
     ndvi_combined = None
-
     NDVI_index_list = []
+
     for item in s2_sr_items_sorted:
     # Get file paths for required bands
         item_path = stac_swisstopo + s2_sr_collection_id + '/' + item.id + '/swisseo_s2-sr_v200_mosaic_' + item.id
         red_path = item_path + '_b04_10m.tif'
         nir_path = item_path + '_b08_10m.tif'
+        if roi is None:
+            roi = bbox_ch
+
+        with rasterio.open(red_path) as src:
+            window_10m = from_bounds(*roi, src.transform)
+            target_transform = src.window_transform(window_10m)
+            target_shape = (int(window_10m.height), int(window_10m.width))
 
         # Load 10 m bands and apply offset and scale factor to reflectance bands
         red = load_and_scale_band(red_path, roi, target_transform, target_shape)
@@ -386,7 +379,7 @@ def process_product_vhi(
             if src_transform is None:
                 cloud_mask = np.full(target_shape, dtype=np.uint8)  # treat as cloud-free if no overlap
             else:
-                data = src_cloud.read(1, window=window)
+                data = src_cloud.read(1, window=window, boundless=True, fill_value=0)
                 src_crs = src_cloud.crs
                 cloud_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
                 reproject(
@@ -409,7 +402,7 @@ def process_product_vhi(
             if src_transform is None:
                 illumination_mask = np.full(target_shape, dtype=np.uint8)  # treat as no shadow if no overlap
             else:
-                data = src_illumination.read(1, window=window)
+                data = src_illumination.read(1, window=window, boundless=True, fill_value=0)
                 src_crs = src_illumination.crs
                 illumination_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
                 reproject(
@@ -518,7 +511,7 @@ def process_product_vhi(
         
         with rasterio.open(filepath) as src:
             window = from_bounds(*roi, src.transform)
-            data = src.read(band_num, window=window, out_dtype=np.float32)
+            data = src.read(band_num, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
             src_transform = src.window_transform(window)
             src_crs = src.crs
         
@@ -848,7 +841,7 @@ def process_product_vhi(
     # Forest mask
     with rasterio.open(s3_path_forest_mask) as src_veg:
         window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window)
+        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
         src_transform_veg = src_veg.window_transform(window)
         src_crs_veg = src_veg.crs
 
@@ -870,7 +863,7 @@ def process_product_vhi(
     # Vegetation mask
     with rasterio.open(s3_path_vegetation_mask) as src_veg:
         window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window)
+        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
         src_transform_veg = src_veg.window_transform(window)
         src_crs_veg = src_veg.crs
 
