@@ -133,20 +133,43 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             "limit": 100
         }
 
-        try:
-            response = requests.post(search_url, json=query_body)
-            response.raise_for_status()
+        max_retries = 3
+        retry_wait_seconds = 15
 
-            result = response.json()
-            items = result.get('features', [])
-        except requests.exceptions.HTTPError as e:
-            print(f"HTTP Error: {e}")
-            print(f"Response status: {response.status_code}")
-            print(f"Response text: {response.text}")
-            raise
-        except Exception as e:
-            print(f"Error: {e}")
-            raise
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(search_url, json=query_body, timeout=60)
+                response.raise_for_status()
+
+                result = response.json()
+                items = result.get('features', [])
+                break
+            except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as e:
+                status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+                # Only retry on transient upstream problems: 5xx or connection-level errors.
+                # 4xx (bad request, auth, etc.) will not succeed on retry.
+                is_transient = status_code is None or status_code >= 500
+
+                if not is_transient:
+                    print(f"HTTP Error: {e}")
+                    print(f"Response status: {status_code}")
+                    print(f"Response text: {response.text}")
+                    raise
+
+                print(f"Transient error on STAC search attempt {attempt + 1}/{max_retries}: {e}")
+                if status_code is not None:
+                    print(f"Response status: {status_code}")
+
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {retry_wait_seconds} seconds...")
+                    time.sleep(retry_wait_seconds)
+                else:
+                    print(f"STAC search failed after {max_retries} attempts")
+                    raise
+            except Exception as e:
+                print(f"Error: {e}")
+                raise
 
         # Filter for processing level / baseline version
         search_result = [
