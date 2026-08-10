@@ -60,8 +60,23 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
           git diff --staged --quiet || git commit -m 'Tools files done'
-          git pull --rebase origin main
-          git push origin main
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if ! git merge --no-edit origin/main; then
+              echo "::error::Merge conflict pulling in tools/ changes from origin/main; aborting merge, manual reconciliation needed."
+              git merge --abort
+              exit 1
+            fi
+            if git push origin main; then
+              echo "Pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "Push rejected (race with another writer), retrying ($attempt/3)..."
+          done
+
+          echo "::error::Failed to push tools/ changes after 3 attempts"
+          exit 1
 
   # ============================================================================
   # STAGE 2a — Start EC2 runner (only when processing is needed)
@@ -162,8 +177,23 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
           git diff --staged --quiet || git commit -m 'Tools files done'
-          git pull --rebase origin main
-          git push origin main
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if ! git merge --no-edit origin/main; then
+              echo "::error::Merge conflict pulling in tools/ changes from origin/main; aborting merge, manual reconciliation needed."
+              git merge --abort
+              exit 1
+            fi
+            if git push origin main; then
+              echo "Pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "Push rejected (race with another writer), retrying ($attempt/3)..."
+          done
+
+          echo "::error::Failed to push tools/ changes after 3 attempts"
+          exit 1
 
   # ============================================================================
   # STAGE 2c — Stop EC2 runner (always runs if EC2 was started)

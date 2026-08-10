@@ -175,8 +175,12 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         # Rebuild the CSV: keep everything except dates confirmed successfully processed.
         # Failed / not-yet-attempted dates from df_to_process stay in the file so they
         # are retried automatically on the next run.
+        # sort_index() restores the original row order (df_outside_scope/df_cloudy/df_unresolved
+        # are all index-subsets of the same original df) so an unrelated concurrent edit to the
+        # CSV doesn't turn into a full-file reorder diff, which is what causes most git merge
+        # conflicts on this file.
         df_unresolved = df_to_process[~df_to_process['date'].isin(processed_dates)]
-        df_final = pd.concat([df_outside_scope, df_cloudy, df_unresolved])
+        df_final = pd.concat([df_outside_scope, df_cloudy, df_unresolved]).sort_index()
         df_final.to_csv(config.EMPTY_ASSET_LIST, index=False)
 
         # Summary

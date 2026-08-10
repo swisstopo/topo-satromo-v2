@@ -1,0 +1,6 @@
+# tools/step0_empty_assets.csv is a line-based, append/remove data file with no
+# meaningful row order. When CI and a manual edit touch it concurrently, a plain
+# 3-way merge can hit overlapping hunks; union merge keeps all lines from both
+# sides instead of leaving conflict markers, so the automated push step never
+# gets stuck needing manual conflict resolution.
+tools/step0_empty_assets.csv merge=union
