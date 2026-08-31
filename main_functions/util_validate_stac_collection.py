@@ -8,6 +8,10 @@ Two independent checks (run one or both):
           then look up each missing date in tools/step0_empty_assets.csv
           and print a summary.
 
+  Step C  --list-missing
+          Plain item-level diff: list the v100 items that have no v200
+          item on the same date. No CSV cross-check.
+
   Step B  --check-assets
           For every v200 item in the time range, verify the asset count
           (expected: 17 .tif + 1 .png + 1 .json) and check with a HEAD
@@ -18,6 +22,7 @@ stac_validation_report.csv) with one row per problem:
   date (YYYY-MM-DD), step (A/B), issue, item_id, detail
 Step A rows  = dates missing in v200 and NOT explained by step0_empty_assets.csv
 Step B rows  = items with wrong asset count OR a missing asset file
+Step C rows  = v100 items with no v200 item on the same date
 
 Design goal: minimal data transfer.
   - STAC item listing is paginated with limit=100 and a datetime filter so
@@ -130,6 +135,36 @@ def load_csv_remarks():
             if "v200" in (row.get("collection") or ""):
                 remarks[row.get("date", "").strip()] = (row.get("remark") or "").strip()
     return remarks
+
+
+def run_list_missing(datetime_interval):
+    """Plain item-level diff: which v100 items have no v200 item on the same date."""
+    print("=" * 70)
+    print("STEP C - plain list: items in v100 but NOT in v200 (by date)")
+    print("=" * 70)
+
+    v100 = fetch_items(COLLECTION_V100, datetime_interval)
+    v200 = fetch_items(COLLECTION_V200, datetime_interval)
+    dates_v200 = {it["date"] for it in v200 if it["date"]}
+
+    missing_items = sorted(
+        (it for it in v100 if it["date"] and it["date"] not in dates_v200),
+        key=lambda it: it["date"],
+    )
+
+    print(f"v100 items: {len(v100)}   v200 items: {len(v200)}")
+    print(f"v100 items with no v200 counterpart: {len(missing_items)}\n")
+    print(f"{'date':<12} v100 item id")
+    print("-" * 70)
+    for it in missing_items:
+        print(f"{it['date']:<12} {it['id']}")
+    print()
+
+    return [
+        {"date": it["date"], "step": "C", "issue": "in v100 but not in v200",
+         "item_id": it["id"], "detail": ""}
+        for it in missing_items
+    ]
 
 
 def run_compare(datetime_interval):
@@ -313,13 +348,15 @@ def main():
                         help="Step A: list v100 dates missing in v200, cross-check CSV")
     parser.add_argument("--check-assets", action="store_true",
                         help="Step B: verify v200 asset counts and file existence")
+    parser.add_argument("--list-missing", action="store_true",
+                        help="Step C: plain list of items in v100 but not in v200 (no CSV cross-check)")
     parser.add_argument("--report", default="stac_validation_report.csv",
                         help="path of the CSV problem report to write "
                              "(default: stac_validation_report.csv)")
     args = parser.parse_args()
 
-    if not args.compare and not args.check_assets:
-        parser.error("choose at least one of --compare / --check-assets")
+    if not (args.compare or args.check_assets or args.list_missing):
+        parser.error("choose at least one of --compare / --check-assets / --list-missing")
 
     try:
         interval = month_range_to_datetime(args.start, args.end)
@@ -329,6 +366,8 @@ def main():
     print(f"Time range: {interval}\n")
 
     report_rows = []
+    if args.list_missing:
+        report_rows += run_list_missing(interval)
     if args.compare:
         report_rows += run_compare(interval)
     if args.check_assets:
