@@ -3,12 +3,12 @@
 
 **Erdbeobachtungs-SAtellitendaten fürs TRockenheitsMOnitoring (SATROMO) — Version 2**
 
-An operational Python ETL pipeline for generating and publishing Analysis-Ready Data (ARD) and vegetation/drought indices from Sentinel-2 satellite imagery, using Google Earth Engine, AWS S3, STAC catalogs, and GitHub Actions.
+An operational Python ETL pipeline for generating and publishing Analysis-Ready Data (ARD) and vegetation/drought indices from Sentinel-2 satellite imagery, using CSDE, AWS S3, STAC catalogs, and GitHub Actions.
 
 |                  | swissEO S2-SR | swissEO VHI |
 |------------------|---------------|-------------|
 | Data description | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-s2-sr) | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-vhi) |
-| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_vhi_v200) |
+| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | *not yet operational* |
 
 > **Note:** This project is currently in the commissioning phase and is not yet fully operational.
 
@@ -24,24 +24,34 @@ SATROMO v2 is a serverless satellite data processing chain for Switzerland that:
 
 Two deployment environments are supported:
 - **DEV** — local machine with Python
-- **PROD** — GitHub Actions (scheduled CRON jobs)
+- **PROD** — GitHub Actions, triggered hourly by an external scheduler, with GPU
+  processing on a temporary AWS EC2 runner (see [Production Runtime](#production-runtime-github-actions--ec2))
 
 ---
 
 ## Architecture
 
 ```
-satromo_processor.py
+satromo_processor.py              # Daily orchestration (step0 → step1)
     │
-    ├── step0_functions.py        # Check STAC / S3 
-    │       └── step0_processors/ # Per-collection asset generation
+    ├── step0_functions.py        # Check STAC / S3, decide what is ready
+    │       └── step0_processors/ # Shared step0 helpers (step0_utils.py)
     │
     ├── step1_processors/         # Product generation (S2-SR, VHI, ...)
     │
     ├── main_functions/           #  STAC utils, S3 helpers
     │
     └── configuration/            # dev_config.py, prod_config.py, ...
+
+check_s2_sr.py                    # Lightweight availability check (CI stage 1)
+rerun.py                          # Batch reprocessing driver (CI stage 2, GPU EC2)
+tools/step0_empty_assets.csv      # Live per-date/tile status, committed by CI
 ```
+
+The `step0_function` registered per collection in the config is the callable that
+produces the data for a date. For S2-SR this is the step1 processor itself
+(`step1_processor_s2_sr.process_product_s2_sr`); `step0_processors/` holds only
+shared helper code, not per-collection generators.
 
 Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https://deepwiki.com/swisstopo/topo-satromo-v2)
 
@@ -51,6 +61,9 @@ Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https:
 
 ### Prerequisites
 
+- Ubuntu Linux 24.04 — the reference and production platform (GitHub runners and
+  the EC2 GPU instance both run 24.04). Windows and macOS are experimental.
+- GDAL 3.11 (command-line tools; the pipeline calls GDAL via `subprocess`)
 - Python 3.11 or 3.12 (64-bit)
 - `pip`
 - Virtual environment (strongly recommended)
@@ -312,12 +325,16 @@ pip install -r requirements.txt
 
 Create a `secrets/` folder in the project root containing (make sure you add this folder to .gitignore):
 
-| File | Purpose |
-|------|---------|
-| `stac_fsdi_int.json` | FSDI STAC API credentials  |
-| `s3_int.json` | AWS S3 credentials |
-| `copernicus_int.json` | Copernicus Open EO credentials |
-| `gdal-X.X.X-cpXXX-win_amd64.whl` | *(Windows only)* Pre-compiled GDAL wheel |
+The exact filenames are defined in the config you run — see `FSDI_SECRETS`,
+`S3_SECRETS` and `COPERNICUS_SECRETS` at the top of `configuration/dev_config.py`
+and `configuration/prod_config.py`:
+
+| Purpose | `dev_config.py` | `prod_config.py` |
+|---------|-----------------|------------------|
+| FSDI STAC API credentials | `stac_fsdi-int.json` | `stac_fsdi-prod.json` |
+| AWS S3 credentials | `s3_int.json` | `s3_prod.json` |
+| Copernicus Open EO credentials | `copernicus_oed.json` | `copernicus_reprocess.json` |
+| *(Windows only)* Pre-compiled GDAL wheel | `gdal-X.X.X-cpXXX-win_amd64.whl` | — |
 
 
 
@@ -326,11 +343,23 @@ Create a `secrets/` folder in the project root containing (make sure you add thi
 
 | Secret name | Content |
 |-------------|---------|
-| `COPERNICUS_SECRET` | Contents of  Copernicus Open EO credentials |
-| `FSDI_STAC_PASSWORD` | Contents of FSDI STAC API credentials |
-| `FSDI_STAC_USER` | Contents of FSDI STAC API credentials |
-| `AWS_ACCESS_KEY_ID` | Contents of AWS S3 credentials |
-| `AWS_SECRET_ACCESS_KEY` | Contents of AWS S3 credentials |
+| `FSDI_STAC_USER` | FSDI STAC API user |
+| `FSDI_STAC_PASSWORD` | FSDI STAC API password |
+| `S3_SECRETS` | Contents of the AWS S3 credentials JSON |
+| `COPERNICUS_S3_SECRETS` | Contents of the Copernicus S3 credentials JSON |
+| `AWS_ACCESS_KEY_ID` | AWS credentials used to start/stop the EC2 runner |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials used to start/stop the EC2 runner |
+| `GH_PAT` | Personal access token for the `machulav/ec2-github-runner` action |
+
+**GitHub Actions variables** (for PROD, repository *Variables*, not secrets):
+
+| Variable name | Content |
+|---------------|---------|
+| `AWS_REGION` | e.g. `eu-central-1` |
+| `EC2_AMI_ID` | Pre-configured AMI with GDAL, the venv and `local_assets/` |
+| `EC2_INSTANCE_TYPE` | e.g. `g4dn.xlarge` (GPU instance) |
+| `EC2_SUBNET_ID` | VPC subnet for the runner |
+| `EC2_SECURITY_GROUP_ID` | Security group allowing GitHub Actions traffic |
 
 ---
 
@@ -362,12 +391,13 @@ PRODUCT_MY_NEW = {
 }
 ```
 
-2. Register it in `step0`:
+2. Register it in `step0`. The `step0_function` is the callable that generates the
+   data for a single date; for S2-SR this is the step1 processor itself:
 
 ```python
 step0 = {
     "https://.../my_collection": {
-        "step0_function": "step0_processors.my_processor.generate_for_date"
+        "step0_function": "step1_processor_my_new.process_product_my_new"
     }
 }
 ```
@@ -413,7 +443,7 @@ When no date argument is supplied, the script enters debug mode and uses a hardc
 
 ```python
 if debug_mode:
-    current_date_str = "2025-06-09"
+    current_date_str = "2016-04-28"
     force_reprocess = True   # <-- toggle manually
 ```
 
@@ -434,6 +464,61 @@ python satromo_processor.py prod_config.py 2024-06-12
 Before reprocessing, also:
 - Delete affected GEE assets from the `step0_collection`
 - Remove the date entry from `tools/step0_empty_assets.csv` if present
+
+---
+
+## Production Runtime (GitHub Actions + EC2)
+
+Production runs from a single workflow, `.github/workflows/run_rerun.yml`
+("Run S2 Processor"). It is deliberately split into a cheap availability check on
+a GitHub-hosted runner and an expensive GPU stage on a temporary AWS EC2 runner
+that is started only when there is something to process and always stopped
+afterwards.
+
+### Trigger: external hourly scheduler (cron-job.org)
+
+The workflow exposes only `workflow_dispatch`; the `schedule:` block in the YAML is
+intentionally commented out. GitHub Actions cron does not fire reliably on the
+hour, so the hourly trigger comes from an **external scheduler at
+[https://cron-job.org/](https://cron-job.org/)**, which calls the GitHub API to
+dispatch the workflow once per hour.
+
+Background: Sentinel-2 often delivers two passes/orbits per day and both are
+usually incomplete on first arrival, so the pipeline polls hourly rather than once
+per day. The relevant processing window is roughly 23 UTC through 11 UTC.
+
+A `concurrency` group (`repo-actions`) ensures runs do not overlap — a new trigger
+queues behind the running one instead of cancelling it, because every stage
+commits `tools/` back to `main`.
+
+### Stages
+
+| Stage | Job | Runner | What it does |
+|-------|-----|--------|--------------|
+| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `main_functions/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets and pushes `tools/` back to `main`. Sets the output `needs-processing`. |
+| 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. |
+| 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, runs `python rerun.py prod_config.py`, republishes the CSVs and pushes `tools/`. Hard timeout **420 minutes** for cost protection. |
+| 2c | `stop-ec2` | `ubuntu-24.04` (hosted) | `if: always()` — terminates the EC2 runner even when stage 2b failed or timed out. |
+
+### The two production scripts
+
+- **`check_s2_sr.py`** — lightweight Copernicus STAC availability check. It queries
+  the Copernicus STAC API for Switzerland and updates `tools/step0_empty_assets.csv`,
+  marking dates as `Tiles ready awaiting GPU system run`. Besides the target date it
+  re-checks historical CSV entries within the lookback window whose remark is
+  `No candidate scene`, `Tile upload incomplete: [...]` or `Tile download incomplete`.
+  Usage: `python check_s2_sr.py [YYYY-MM-DD] [days_back] [config.py]` (defaults:
+  today, 30 days, `dev_config.py`).
+
+- **`rerun.py`** — batch reprocessing driver for the GPU stage. It picks up all
+  queued entries from `tools/step0_empty_assets.csv` (30 days back) and runs the
+  full pipeline per date. Usage: `python rerun.py [config.py]` (default
+  `dev_config.py`). It backs the CSV up to `.bak` and restores it on a fatal error,
+  and exits non-zero only when its circuit breaker trips after consecutive upstream
+  failures — individual failed dates simply stay queued for the next run.
+
+`tools/step0_empty_assets.csv` is the live state file that couples the two stages;
+CI commits it to `main` after every run, so avoid editing it by hand.
 
 ---
 
@@ -462,7 +547,7 @@ Sentinel-2 band groups:
 - [x] Co-registration via AROSICS
 - [x] `--force` CLI flag for reprocessing
 - [x] S3 + FSDI STAC publishing
-- [ ] Vegetation Health Index (VHI)
+- [x] Vegetation Health Index (VHI) — implemented, not yet operational
 - [ ] NDVI anomalies (N1, N2)
 - [ ] NDMI anomalies (M1)
 - [ ] NBR natural disturbance index (B2)

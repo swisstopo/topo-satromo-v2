@@ -241,12 +241,27 @@ def check_if_asset_prepared(collection, assets, check_date):
 
 
     # 2. if not in asset list check if in empty_asset_list
+    # The remark decides what a row means. check_s2_sr.py uses this same file as the
+    # GPU work queue, so some rows mean "process this date" rather than "no data here".
+    # Only the rows that really mean "no source data" may stop processing.
     df = pd.read_csv(config.EMPTY_ASSET_LIST)
     df_selection = df[(df.collection == collection_basename)
                       & (df.date == check_date_str)]
     if len(df_selection) > 0:
-        print('Date found in empty_asset_list, skipping date (no source data available)')
-        return 'empty'  # Return 'empty' status - date is accounted for but has no data
+        remark = str(df_selection.iloc[0]['remark'])
+        queue_markers = ['Tiles ready awaiting GPU system run',
+                         'Tile upload incomplete',
+                         'Tile download incomplete']
+        is_queued = False
+        for marker in queue_markers:
+            if marker in remark:
+                is_queued = True
+
+        if is_queued:
+            print('Date is queued for processing ({}), continuing'.format(remark))
+        else:
+            print('Date found in empty_asset_list, skipping date (no source data available)')
+            return 'empty'  # Return 'empty' status - date is accounted for but has no data
 
     # 3. Start asset generation if not found and not for STAC collections
     # # (STAC collections are read-only, we don't generate assets for them)
