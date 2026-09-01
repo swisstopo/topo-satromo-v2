@@ -45,7 +45,7 @@ jobs:
       - name: Check S2 data availability and update CSV
         id: check
         run: python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py
-        #run: python check_s2_sr.py 2026-03-29 100 dev_config.py
+        #run: python check_s2_sr.py 2026-08-05 30 prod_config.py
 
       - name: Publish acquisitionplan.csv and step0_empty_assets.csv
         id: PublishAcquiEmpty
@@ -60,23 +60,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
           git diff --staged --quiet || git commit -m 'Tools files done'
-
-          for attempt in 1 2 3; do
-            git fetch origin main
-            if ! git merge --no-edit origin/main; then
-              echo "::error::Merge conflict pulling in tools/ changes from origin/main; aborting merge, manual reconciliation needed."
-              git merge --abort
-              exit 1
-            fi
-            if git push origin main; then
-              echo "Pushed on attempt $attempt"
-              exit 0
-            fi
-            echo "Push rejected (race with another writer), retrying ($attempt/3)..."
-          done
-
-          echo "::error::Failed to push tools/ changes after 3 attempts"
-          exit 1
+          git pull --rebase origin main
+          git push origin main
 
   # ============================================================================
   # STAGE 2a — Start EC2 runner (only when processing is needed)
@@ -177,23 +162,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --force tools/
           git diff --staged --quiet || git commit -m 'Tools files done'
-
-          for attempt in 1 2 3; do
-            git fetch origin main
-            if ! git merge --no-edit origin/main; then
-              echo "::error::Merge conflict pulling in tools/ changes from origin/main; aborting merge, manual reconciliation needed."
-              git merge --abort
-              exit 1
-            fi
-            if git push origin main; then
-              echo "Pushed on attempt $attempt"
-              exit 0
-            fi
-            echo "Push rejected (race with another writer), retrying ($attempt/3)..."
-          done
-
-          echo "::error::Failed to push tools/ changes after 3 attempts"
-          exit 1
+          git pull --rebase origin main
+          git push origin main
 
   # ============================================================================
   # STAGE 2c — Stop EC2 runner (always runs if EC2 was started)

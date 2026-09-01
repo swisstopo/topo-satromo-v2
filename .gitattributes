@@ -1,6 +1,12 @@
-# tools/step0_empty_assets.csv is a line-based, append/remove data file with no
-# meaningful row order. When CI and a manual edit touch it concurrently, a plain
-# 3-way merge can hit overlapping hunks; union merge keeps all lines from both
-# sides instead of leaving conflict markers, so the automated push step never
-# gets stuck needing manual conflict resolution.
-tools/step0_empty_assets.csv merge=union
+# Do NOT set merge=union on tools/step0_empty_assets.csv.
+#
+# In that file a row's PRESENCE is a state flag, so a union merge is wrong twice
+# over: it resurrects a row that one side deliberately deleted (a date rerun.py
+# just finished processing gets re-queued forever), and it silently keeps two
+# rows for the same date when both sides wrote a different remark.
+#
+# Union merge was originally added to stop the CI push step hitting conflicts on
+# this file. That is no longer needed: the real cause was rerun.py reordering
+# every row on each run, which sort_index() in process_empty_asset_list() fixed.
+# Genuine conflicts are now rare and the push retry loop in run_rerun.yml reports
+# them instead of resolving them wrongly.

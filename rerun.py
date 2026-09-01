@@ -96,6 +96,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         # Batch processing of dates
         success_count = 0
         failure_count = 0
+        skipped_count = 0
         consecutive_failures = 0
         max_consecutive_failures = 2
         processed_dates = set()  # dates confirmed successful -> safe to drop from CSV
@@ -136,16 +137,29 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                         universal_newlines=True
                     )
 
+                    # The processor exits 0 both when it produced a product and when it
+                    # decided there was nothing to do. Watch its output for the "nothing
+                    # to do" marker so a skipped date is never recorded as processed and
+                    # dropped from the CSV.
+                    skipped_as_empty = False
+
                     while True:
                         line = process.stdout.readline()
                         if not line and process.poll() is not None:
                             break
                         if line:
                             print(line, end='', flush=True)
+                            if 'Date found in empty_asset_list' in line:
+                                skipped_as_empty = True
 
                     return_code = process.poll()
 
-                    if return_code == 0:
+                    if return_code == 0 and skipped_as_empty:
+                        print(f"! {check_date_str} was skipped by the processor "
+                              f"(still listed as having no source data). Nothing was "
+                              f"produced, so the entry is kept in the CSV for the next run.")
+                        skipped_count += 1
+                    elif return_code == 0:
                         print(f"✓ Successfully processed {check_date_str}")
                         success_count += 1
                         processed_dates.add(check_date_str)
@@ -190,6 +204,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         print(f"Total dates queued: {len(reprocess_list)}")
         print(f"Successful: {success_count}")
         print(f"Failed: {failure_count}")
+        print(f"Skipped (nothing produced, kept in CSV): {skipped_count}")
         if aborted_early:
             print(f"Aborted early due to consecutive upstream failures")
         print(f"{'='*60}\n")
