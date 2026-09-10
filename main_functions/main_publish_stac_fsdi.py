@@ -479,7 +479,13 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None,ass
         asset_title (str, optional): The custom title to use for the asset. If not set, `asset_create_title` is used.
 
     Returns:
-        None
+        bool: True if the asset was created and its data uploaded successfully.
+
+    Raises:
+        RuntimeError: If the asset creation or the data upload keeps failing
+            after all retry attempts. Callers that ignored the old (None)
+            return value now get a loud failure instead of a silent one, so a
+            date is never marked "processed" when an asset never reached STAC.
     """
     # Test if we are on Local DEV Run or if we are on PROD
     determine_run_type()
@@ -590,20 +596,48 @@ def publish_to_stac(raw_asset, raw_item, collection, geocat_id, current=None,ass
     # create asset payload
     payload = asset_create_json_payload(asset, asset_type, current,asset_title=asset_title)
 
-    # Create Asset
-    if not create_asset(stac_path+asset_path, payload):
-        print(f"ASSET object {asset}: creation FAILED")
-
     # Define environment
     env = "int" if ".int." in config.STAC_FSDI_HOSTNAME else "prod"
 
-    # Upload ASSET
-    if not main_multipart_upload_via_api.multipart_upload(env, collection, item, asset, asset, user, password, force=True,verbose=False):
-        print(f"ASSET object {asset}: upload FAILED")
+    # Create the asset entry and upload its data. Both steps return False on
+    # failure (multipart_upload() catches its own exceptions internally). A
+    # transient API/network hiccup mostly hits the larger geometry files
+    # (geojson, parquet), so retry the whole create+upload pair a few times
+    # before giving up.
+    max_attempts = 3
+    retry_delay = 30
+    success = False
 
+    for attempt in range(1, max_attempts + 1):
+        asset_created = create_asset(stac_path+asset_path, payload)
+        if not asset_created:
+            print(f"ASSET object {asset}: creation FAILED (attempt {attempt}/{max_attempts})")
 
-    print("FSDI update done: " +
-          f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}/{collection}/{item}/{asset}")
+        uploaded = False
+        if asset_created:
+            uploaded = main_multipart_upload_via_api.multipart_upload(
+                env, collection, item, asset, asset, user, password, force=True, verbose=False)
+            if not uploaded:
+                print(f"ASSET object {asset}: upload FAILED (attempt {attempt}/{max_attempts})")
+
+        if asset_created and uploaded:
+            success = True
+            break
+
+        if attempt < max_attempts:
+            print(f"ASSET object {asset}: retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+
+    if success:
+        print("FSDI update done: " +
+              f"{config.STAC_FSDI_SCHEME}://{config.STAC_FSDI_HOSTNAME}/{collection}/{item}/{asset}")
 
     # rename it back to the orginal name for further processing
     os.rename(asset, raw_asset)
+
+    if not success:
+        raise RuntimeError(
+            f"publish_to_stac: failed to publish asset '{raw_asset}' to "
+            f"{collection}/{item} after {max_attempts} attempts")
+
+    return True
