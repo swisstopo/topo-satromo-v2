@@ -758,6 +758,17 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
     acquisition_date = main_utils.parse_date(day_to_process).strftime('%Y%m%d')
     orbit_nrs = [int(orbit) for orbit in grouped_results.keys()]
 
+    # A date can have more than one orbit (e.g. R065 and R022 both crossing
+    # Switzerland the same day). Each orbit is an independent Sentinel-2 acquisition
+    # published as its own STAC item, so one orbit failing here (usually because it
+    # is too cloudy for reliable tie points) must not stop the other orbits from
+    # being tried. We only give up on the whole date if every orbit fails.
+    # pickle_paths remembers each orbit's own registration file for later (the
+    # per-orbit metadata step further below needs the matching one, not just the
+    # last orbit's).
+    pickle_paths = {}
+    failed_orbits = set()
+
     for i in range(len(orbit_nrs)):
 
         orbit_nr = orbit_nrs[i]
@@ -785,25 +796,29 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 fmt_out='GTIFF',
                 CPUs=os.cpu_count() #use all cpus
             )
-        # Else, log the failure and continue to the next day
+            pickle_paths[orbit_nr] = pickle_path
+        # Else, skip only this orbit -- the other orbits for the same date are
+        # independent acquisitions and may still coregister fine.
         else:
-            write_asset_as_empty(collection, day_to_process, f'cloudy')
-            pattern = f"*{day_to_process}*.*"
-            # Clean up Files
-            for file in Path(".").glob(pattern):
-                print(f"Cleaning up: {file}")
-                file.unlink()
-            # Clean up Download folder
-            if Path(copernicus_collection).exists():
-                print(f"Cleaning up: {copernicus_collection}")
-                shutil.rmtree(copernicus_collection)
-            return
+            print(f"Coregistration failed for orbit {orbit_nr}, skipping this orbit (other orbits still processed).")
+            failed_orbits.add(orbit_nr)
+            continue
 
     ##############################
     # Clean up Download folder
     if Path(copernicus_collection).exists():
         print(f"Cleaning up: {copernicus_collection}")
         shutil.rmtree(copernicus_collection)
+
+    # If every orbit failed coregistration, there is nothing left to process for this date
+    if len(failed_orbits) == len(orbit_nrs):
+        write_asset_as_empty(collection, day_to_process, 'cloudy')
+        pattern = f"*{day_to_process}*.*"
+        # Clean up Files
+        for file in Path(".").glob(pattern):
+            print(f"Cleaning up: {file}")
+            file.unlink()
+        return
 
     ##############################
     # Loop over all orbits and process final steps
@@ -883,9 +898,18 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
                 'statistics': None
             }
 
+    # Set once no orbit has published anything yet; if it is still empty after the
+    # loop below, every orbit for this date was cloudy (or failed coregistration
+    # above) and the date as a whole needs to be marked empty.
+    published_any_orbit = False
+
     for orbit_num, timestamp in orbit_timestamp.items():
         print(f"Processing orbit {orbit_num} of {timestamp} ...")
 
+        orbit_num_int = int(orbit_num)
+        if orbit_num_int in failed_orbits:
+            print(f"Orbit {orbit_num} failed coregistration earlier, skipping (other orbits still processed).")
+            continue
 
         ##############################
         # Calculate Cloud Percentage:
@@ -897,18 +921,19 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
         cloudcover = main_cloudpercentage.cloudpercentage(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_cloudmask_10m.tif",orbit_clipfile)
         print(f"Cloud percentage for orbit {orbit_num} at {timestamp}: {cloudcover:.2f}%")
 
-        # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we write to empty asset and stop processing .
-        orbit_num_int = int(orbit_num)
+        # Check if we dont have to much cloudy data: if orbit_num is 8 or 22 and cloudcover >85%  or orbit_num is 108 or 65 and cloudcover >95% we skip only this orbit.
         if (orbit_num_int in [8, 22] and cloudcover > 85.0) or (orbit_num_int in [108, 65] and cloudcover > 95.0):
-            print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping further processing.")
-            write_asset_as_empty(collection, day_to_process, 'cloudy')
-            return
+            print(f"Orbit {orbit_num} at {timestamp} is too cloudy ({cloudcover:.2f}%), skipping this orbit (other orbits still processed).")
+            failed_orbits.add(orbit_num_int)
+            continue
+
+        published_any_orbit = True
 
         #METADATA add cloudcover
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","CLOUDPERCENTAGE",f"{cloudcover:.2f}")
 
         #METADATA add GCP
-        coreg_info=main_coregistration.coreg_info_from_pickle(pickle_path)
+        coreg_info=main_coregistration.coreg_info_from_pickle(pickle_paths[orbit_num_int])
         main_utils.metadata_add_entry(f"{config.PRODUCT_S2_LEVEL_2A['product_name'].replace('ch.swisstopo.', '')}_mosaic_{timestamp}_metadata.json","PROPERTIES","GCP_COUNT",f"{len(coreg_info['GCPList'])}")
 
         #METADATA add COREG RMSE
@@ -1670,8 +1695,16 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             print(f"Cleaning up: {file}")
             file.unlink()
 
-
-
+    if not published_any_orbit:
+        # Every orbit for this date was too cloudy to publish (orbits that failed
+        # coregistration earlier are also covered, since they never reach this loop
+        # at all); nothing was produced, so mark the whole date empty for the next run.
+        print(f"All orbits for {day_to_process} were too cloudy, nothing published.")
+        write_asset_as_empty(collection, day_to_process, 'cloudy')
+        pattern = f"*{day_to_process}*.*"
+        for file in Path(".").glob(pattern):
+            print(f"Cleaning up: {file}")
+            file.unlink()
 
 
 
