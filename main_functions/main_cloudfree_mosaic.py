@@ -27,7 +27,7 @@ Usage (CLI):
                          Asset title of the cloud-mask COGtif. Default: "Cloud mask - 10m"
       --aoi PATH         GeoPackage with area-of-interest polygon. Default: assets/swissboundary_buffer_5000m.gpkg
                          Pass '' or 'none' to disable.
-      --edge-margin-px N       Width in px of scene-edge band checked for dark-border artifact. Default: 20. 0 disables.
+      --edge-margin-px N       Width in px of scene-edge band checked for dark-border artifact. Default: 200. 0 disables.
       --edge-brightness V      Mean RGB below which an edge-band pixel is dark-border. Default: 40.
 
     Examples:
@@ -210,7 +210,7 @@ def create_cloudfree_mosaic(
     collection_id: str = COLLECTION_ID,
     cloud_mask_title: str = CLOUD_MASK_TITLE,
     aoi_gpkg: Optional[Union[str, Path]] = AOI_GPKG,
-    edge_margin_px: int = 20,
+    edge_margin_px: int = 200,
     edge_brightness_threshold: float = 40,
 ) -> Optional[Path]:
     """
