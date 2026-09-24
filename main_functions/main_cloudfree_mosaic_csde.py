@@ -19,20 +19,36 @@ as no-data.
 The STAC catalogue is publicly accessible -- no authentication required.
 
 Algorithm (run independently per pixel and per band B02/B03/B04/B08):
-    1. Take the time-range stack of Sentinel-2 L2A observations. Convert
-       B02-B08 digital numbers to reflectance.
+    1. Take the time-range stack of Sentinel-2 L2A observations.
     2. Mark an observation invalid if "Cloud mask - 10m" is 1 (thick
-       cloud), 2 (thin cloud) or 3 (cloud shadow).
+       cloud), 2 (thin cloud) or 3 (cloud shadow), or if the band itself is
+       no-data (0) because the scene does not cover that pixel.
     3. Discard invalid observations. The remaining count is written to the
-       observations output band (positive integer, 0 = no data).
+       "Observation - 10m" output (positive integer, 0 = no data).
     4. Sort the valid observations of each band separately.
-    5. Take the first-quartile (Q1) value and multiply by 10000 to obtain
-       the output digital number.
-    6. If there are no valid observations, output -32768 (no-data) for
-       every band, and 0 (no-data) for the observations band.
+    5. Take the first-quartile (Q1) value as the output digital number.
+    6. If there are no valid observations, output 0 (no-data) for every
+       band and for the observations count.
+
+Outputs -- one file per band, following step1_processor_s2_sr.py's naming
+convention (<stem>_<band>_10m.tif):
+    <stem>_b04_10m.tif   "Red (band 4) - 10m"
+    <stem>_b03_10m.tif   "Green (band 3) - 10m"
+    <stem>_b02_10m.tif   "Blue (band 2) - 10m"
+    <stem>_b08_10m.tif   "NIR 1 (band 8) - 10m"
+    <stem>_observation_10m.tif  "Observation - 10m"  (valid-observation count)
+    <stem>_tci_10m.tif   "True color image - 10m"
+
+The band mosaics keep the same encoding as the swissEO S2-SR scene assets
+they are built from -- uint16, no-data 0, reflectance = dn * 0.0001 - 0.1 --
+so they are directly interchangeable with the step1 band outputs. The scale
+and offset are also recorded on the band itself. Because the encoding is
+preserved, the percentile is taken on raw digital numbers: an affine,
+strictly increasing transform commutes with percentile selection, so
+converting to reflectance and back would cancel out exactly.
 
 A true-color image (TCI) is then rendered from the resulting B04/B03/B02
-mosaic bands using the same enhancement as main_create_rgb.py.
+band files using the same enhancement as main_create_rgb.py.
 
 Usage (CLI):
     python main_functions/main_cloudfree_mosaic_csde.py [options]
@@ -41,11 +57,14 @@ Usage (CLI):
       --start-date DATE   Start of the search window (YYYY-MM-DD). Default: 2025-06-01
       --end-date DATE     End of the search window (YYYY-MM-DD). Default: 2025-07-01
       --quartile Q        Percentile per band. Default: 25 (first quartile). Use 50 for a median mosaic.
-      --output PATH       Digital-number mosaic path (auto-generated from params if omitted).
-                           The observations count and TCI are written next to it.
+      --output PATH       Output base path (auto-generated from params if omitted). The
+                           per-band, observation and TCI files are derived from its stem.
       --block-rows N      Row block height used for time-series compositing (memory/speed
                            trade-off -- a full-country stack of all scenes never fits in
-                           memory at once). Default: 256. Why --block-rows 2000: the default (256) is tuned to be safe on a modest machine, and processes the full 35841×24343 px grid in ~96 row-blocks. With 63 scenes, peak memory per block is roughly n_scenes × block_rows × width × 6 bytes ≈ 27 GB at block_rows=2000 — comfortable within your 125 GB, and cuts the number of blocks (and therefore the number of separate HTTP range-reads against the STAC assets) down to ~13, which should noticeably speed things up. You have enough RAM to go higher (e.g. 4000 → ~54 GB peak) if you want it faster; I'd stay under ~6000 to leave headroom for GDAL/OS buffers.
+                           memory at once). Default: 256.
+      --workers N         Scenes read in parallel per band/block via a thread pool
+                           (each scene read is a separate STAC HTTP request -- this is
+                           what actually uses a many-core machine). Default: 16.
       --skip-tci          Do not render the TCI from the resulting mosaic.
       --stac-url URL      STAC catalogue base URL. Default: data.geo.admin.ch
       --collection ID     STAC collection ID. Default: ch.swisstopo.swisseo_s2-sr_v200
@@ -58,6 +77,7 @@ Usage (CLI):
         python main_functions/main_cloudfree_mosaic_csde.py
         python main_functions/main_cloudfree_mosaic_csde.py --start-date 2025-06-01 --end-date 2025-08-31
         python main_functions/main_cloudfree_mosaic_csde.py --start-date 2025-01-01 --end-date 2025-03-31 --quartile 50
+        python3 main_functions/main_cloudfree_mosaic_csde.py   --start-date 2025-07-01 --end-date 2025-08-31   --block-rows 2500 --workers 16   --output temp/
 
 Programmatic:
     from main_functions.main_cloudfree_mosaic_csde import create_cloudfree_mosaic_csde
@@ -65,9 +85,13 @@ Programmatic:
 """
 
 import argparse
+import contextlib
+import os
 import subprocess
 import sys
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from math import ceil, floor
 from pathlib import Path
 from typing import Optional, Union
@@ -95,7 +119,8 @@ COLLECTION_ID    = "ch.swisstopo.swisseo_s2-sr_v200"
 CLOUD_MASK_TITLE = "Cloud mask - 10m"
 AOI_GPKG         = Path(__file__).resolve().parent.parent / "assets" / "swissboundary_buffer_5000m.gpkg"
 
-# Sentinel-2 band -> swisstopo STAC asset title (10 m bands only), in output order (R, G, B, NIR)
+# Sentinel-2 band -> swisstopo STAC asset title (10 m bands only), in output order (R, G, B, NIR).
+# The same titles are used for the mosaic's own per-band output assets.
 BAND_ASSET_TITLES = {
     "B04": "Red (band 4) - 10m",
     "B03": "Green (band 3) - 10m",
@@ -104,21 +129,30 @@ BAND_ASSET_TITLES = {
 }
 BAND_ORDER = ["B04", "B03", "B02", "B08"]
 
-# Raw scene digital-number <-> reflectance convention (Sentinel-2 processing
-# baseline >= 04.00, +1000 DN offset): reflectance = raw_dn * SCALE + OFFSET.
-# Used only to convert the STAC scene assets before compositing.
-RAW_DN_SCALE  = 0.0001
-RAW_DN_OFFSET = -0.1
+# Filename suffixes, matching step1_processor_s2_sr.py's convention
+# (<stem>_mosaic_<timestamp>_<band>_<resolution>m.tif -> one file per band).
+BAND_FILE_SUFFIX = {band: band.lower() for band in BAND_ORDER}
+OBSERVATION_SUFFIX = "observation"
+OBSERVATION_TITLE  = "Observation - 10m"
+TCI_SUFFIX = "tci"
+TCI_TITLE  = "True color image - 10m"
 
-# The mosaic's OWN output digital number is plain reflectance * 10000 (no
-# baseline offset -- see algorithm step 5), so it decodes with offset 0.
-MOSAIC_DN_SCALE  = 0.0001
-MOSAIC_DN_OFFSET = 0.0
+# Reflectance convention of the swissEO S2-SR band assets, both the scene
+# assets read from STAC and the mosaic bands written here (verified against
+# the catalogue: uint16, nodata 0): reflectance = dn * SCALE + OFFSET.
+# Because the mosaic keeps this same encoding, the percentile can be taken on
+# raw digital numbers directly -- an affine, strictly increasing transform
+# commutes with percentile selection and linear interpolation, so converting
+# to reflectance and back would be an exact no-op costing two full passes
+# over a multi-GB stack.
+DN_SCALE  = 0.0001
+DN_OFFSET = -0.1
 
 CLOUD_MASK_INVALID_VALUES = (1, 2, 3)  # thick cloud, thin cloud, cloud shadow
 
-NODATA_DN  = -32768  # int16 no-data for the band digital numbers
-NODATA_OBS = 0        # uint16 no-data for the observations count band
+NODATA_DN  = 0  # uint16 no-data for the band digital numbers (matches the source assets)
+NODATA_OBS = 0  # uint16 no-data for the observations count band
+MAX_DN     = 65535
 
 
 # ---------------------------------------------------------------------------
@@ -134,21 +168,52 @@ def _find_asset_by_title(item, title: str):
 
 
 def _write_cog(tmp_path: str, out_path: Path, extra_args: Optional[list] = None) -> bool:
-    """Convert a temp GeoTIFF to a Cloud-Optimized GeoTIFF via gdalwarp."""
+    """
+    Convert a temp GeoTIFF to a Cloud-Optimized GeoTIFF.
+
+    gdal_translate rather than gdalwarp: the temp file is already on the
+    target grid, so this is a pure format conversion, and translate carries
+    the band's scale/offset and nodata through unchanged.
+    """
     gdal_cmd = [
-        "gdalwarp",
+        "gdal_translate",
         "-of", "COG",
         "-co", "BIGTIFF=YES",
         "-co", "NUM_THREADS=ALL_CPUS",
+        "-co", "COMPRESS=DEFLATE",
+        "-co", "PREDICTOR=2",
         "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-        "-overwrite",
     ] + (extra_args or []) + [tmp_path, str(out_path)]
 
     result = subprocess.run(gdal_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"    [error] gdalwarp failed:\n{result.stderr}")
+        print(f"    [error] gdal_translate failed:\n{result.stderr}")
         return False
     return True
+
+
+def _nanpercentile_along_axis0(stack: np.ndarray, quartile: float, valid_count: np.ndarray) -> np.ndarray:
+    """
+    Percentile along axis 0 of `stack`, ignoring NaNs, at country-grid scale.
+
+    np.nanpercentile's per-pixel-variable-count handling makes it 30-60x
+    slower than a plain sort/gather here (its cost scales with the number
+    of *output* pixels, not the stack size -- measured ~70s for a block a
+    fraction of the real width, vs ~2s below, identical results). NaN
+    already sorts to the end ascending, so a plain in-place sort plus a
+    take_along_axis gather reproduces numpy's default linear-interpolation
+    percentile exactly, using `valid_count` (already computed by the
+    caller) instead of re-deriving it from NaNs.
+    """
+    stack.sort(axis=0)  # in-place; NaNs move to the end
+    idx = (quartile / 100.0) * (valid_count - 1)
+    idx = np.clip(idx, 0, stack.shape[0] - 1)  # valid_count==0 rows are overwritten by the caller
+    lo = np.floor(idx).astype(np.intp)
+    hi = np.ceil(idx).astype(np.intp)
+    frac = (idx - lo).astype(stack.dtype)
+    lo_val = np.take_along_axis(stack, lo[None, :, :], axis=0)[0]
+    hi_val = np.take_along_axis(stack, hi[None, :, :], axis=0)[0]
+    return lo_val * (1 - frac) + hi_val * frac
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +226,7 @@ def create_cloudfree_mosaic_csde(
     quartile: float = 25.0,
     output_name: Optional[str] = None,
     block_rows: int = 256,
+    max_workers: int = 16,
     create_tci: bool = True,
     stac_url: str = STAC_BASE_URL,
     collection_id: str = COLLECTION_ID,
@@ -181,15 +247,21 @@ def create_cloudfree_mosaic_csde(
         distribution. 25 = first quartile (default, per the CDSE
         algorithm). Use 50 for a median mosaic.
     output_name : str or None
-        Path of the digital-number mosaic GeoTIFF. Auto-generated from
-        parameters if None. The observations count and TCI files are
-        written next to it.
+        Output base path; its stem drives the per-band, observation and TCI
+        filenames (see the module docstring). Auto-generated from the
+        parameters if None.
     block_rows : int
         Row block height used while compositing the time series. The full
         country extent never fits all scenes in memory at once, so the
         grid is processed in horizontal strips of this height. Lower it
         if the process runs out of memory; raise it (fewer, bigger
         blocks) for speed if memory allows.
+    max_workers : int
+        Number of scenes read in parallel per band/block via a thread
+        pool. Each scene read is a separate HTTP request against the STAC
+        assets, so this is what actually keeps a many-core machine busy
+        (the numpy math itself is single-threaded). Raise it on a fast
+        connection; lower it if the STAC server starts throttling.
     create_tci : bool
         Render a true-color image from the resulting B04/B03/B02 mosaic
         bands via main_create_rgb.create_enhanced_rgb.
@@ -207,6 +279,8 @@ def create_cloudfree_mosaic_csde(
     print(f"  Date range    : {start_date} → {end_date}")
     print(f"  Bands         : {BAND_ORDER}")
     print(f"  Percentile    : {quartile}")
+    print(f"  Block rows    : {block_rows}")
+    print(f"  Max workers   : {max_workers}")
     print(f"  STAC          : {stac_url}")
     print("=" * 60)
 
@@ -285,46 +359,39 @@ def create_cloudfree_mosaic_csde(
         print("  AOI           : none (full bounding box)")
 
     # ------------------------------------------------------------------
-    # Open every scene's band + cloud-mask asset as a WarpedVRT aligned to
-    # the reference grid. Opening is lazy (no data is fetched yet), so
-    # keeping all scenes open for the whole run is cheap.
+    # Collect each scene's band + cloud-mask asset URLs. Each parallel
+    # worker opens its own rasterio dataset + WarpedVRT per read (see
+    # _read_scenes_into below) rather than reusing one shared across
+    # threads -- GDAL datasets opened in one thread and read from another
+    # are not a supported pattern and caused the compositing loop to
+    # effectively hang under a thread pool.
     # ------------------------------------------------------------------
     warp_kwargs = dict(crs=ref_crs, transform=ref_transform, width=width, height=height, resampling=Resampling.nearest)
 
-    print("\nOpening scene rasters ...")
-    scene_handles = []
-    raw_datasets = []
-    for item, assets, cloud_asset in valid_items:
-        try:
-            raw_cloud = rasterio.open(cloud_asset.href)
-            entry = {"cloud": WarpedVRT(raw_cloud, **warp_kwargs)}
-            raw_datasets.append(raw_cloud)
-            for band, asset in assets.items():
-                raw_band = rasterio.open(asset.href)
-                entry[band] = WarpedVRT(raw_band, **warp_kwargs)
-                raw_datasets.append(raw_band)
-        except Exception as exc:
-            print(f"  [warn] Could not open {item.id}: {exc} — skipping.")
-            continue
-        scene_handles.append(entry)
-
-    if not scene_handles:
-        print("No scenes could be opened.")
-        return None
-
-    n_scenes = len(scene_handles)
+    scene_hrefs = [
+        {"cloud": cloud_asset.href, **{band: asset.href for band, asset in assets.items()}}
+        for _, assets, cloud_asset in valid_items
+    ]
+    n_scenes = len(scene_hrefs)
     print(f"{n_scenes} scenes ready for compositing.\n")
 
     # ------------------------------------------------------------------
-    # Build output path(s)
+    # Build output paths -- one file per band, following
+    # step1_processor_s2_sr.py's <stem>_<band>_<resolution>m.tif convention.
     # ------------------------------------------------------------------
     if output_name:
-        dn_path = Path(output_name)
+        base_path = Path(output_name)
     else:
-        dn_path = Path(f"mosaic_csde_{start_date}_{end_date}_q{int(quartile)}.tif")
-    dn_path.parent.mkdir(parents=True, exist_ok=True)
-    obs_path = dn_path.with_name(dn_path.stem + "_observations.tif")
-    tci_path = dn_path.with_name(dn_path.stem + "_tci.tif")
+        base_path = Path(f"mosaic_csde_{start_date}_{end_date}_q{int(quartile)}.tif")
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    stem = base_path.with_suffix("")
+
+    band_paths = {
+        band: stem.with_name(f"{stem.name}_{BAND_FILE_SUFFIX[band]}_10m.tif")
+        for band in BAND_ORDER
+    }
+    obs_path = stem.with_name(f"{stem.name}_{OBSERVATION_SUFFIX}_10m.tif")
+    tci_path = stem.with_name(f"{stem.name}_{TCI_SUFFIX}_10m.tif")
 
     # ------------------------------------------------------------------
     # Composite the time series block by block (a full-country stack of
@@ -332,21 +399,65 @@ def create_cloudfree_mosaic_csde(
     # temp GeoTIFFs that get converted to COGs at the end.
     # ------------------------------------------------------------------
     dn_profile = dict(
-        driver="GTiff", width=width, height=height, count=len(BAND_ORDER), dtype="int16",
+        driver="GTiff", width=width, height=height, count=1, dtype="uint16",
         crs=ref_crs, transform=ref_transform, nodata=NODATA_DN,
         tiled=True, blockxsize=512, blockysize=512,
         compress="deflate", predictor=2, bigtiff="YES",
     )
-    obs_profile = dict(dn_profile, count=1, dtype="uint16", nodata=NODATA_OBS)
+    obs_profile = dict(dn_profile, nodata=NODATA_OBS)
 
-    with tempfile.NamedTemporaryFile(suffix="_dn_tmp.tif", delete=False) as fh:
-        dn_tmp_path = fh.name
+    band_tmp_paths = {}
+    for band in BAND_ORDER:
+        with tempfile.NamedTemporaryFile(suffix=f"_{band}_tmp.tif", delete=False) as fh:
+            band_tmp_paths[band] = fh.name
     with tempfile.NamedTemporaryFile(suffix="_obs_tmp.tif", delete=False) as fh:
         obs_tmp_path = fh.name
 
+    band_dst = {}
     try:
-        with rasterio.open(dn_tmp_path, "w", **dn_profile) as dn_dst, \
-             rasterio.open(obs_tmp_path, "w", **obs_profile) as obs_dst:
+        with contextlib.ExitStack() as stack, \
+             rasterio.open(obs_tmp_path, "w", **obs_profile) as obs_dst, \
+             ThreadPoolExecutor(max_workers=max_workers) as pool:
+
+            for band in BAND_ORDER:
+                dst = stack.enter_context(rasterio.open(band_tmp_paths[band], "w", **dn_profile))
+                # Record the reflectance convention on the band itself, so the
+                # output is self-describing: reflectance = dn * scale + offset.
+                dst.scales = (DN_SCALE,)
+                dst.offsets = (DN_OFFSET,)
+                dst.update_tags(1, data_ignore_value=str(NODATA_DN))
+                band_dst[band] = dst
+
+            def _read_scenes_into(dest: np.ndarray, key: str, window: Window) -> None:
+                """Read `window` from every scene's `key` asset into dest[i], in
+                parallel -- each scene is its own HTTP request against the STAC
+                asset, so this is the actual place a many-core machine helps.
+                Each task opens its own dataset + WarpedVRT rather than sharing
+                one across threads (GDAL datasets are not safe to open in one
+                thread and read from another)."""
+                def _read_one(i_href):
+                    i, href = i_href
+                    # Cloud-optimized reads over HTTP: skip GDAL's default
+                    # sidecar-file probing (.aux.xml/.ovr/directory listing) and
+                    # existence-check HEAD request -- each fresh open otherwise
+                    # costs 2-3 extra round trips before any data is fetched,
+                    # which dominates wall time once opens are this frequent.
+                    # GDAL_CACHEMAX capped low: with a fresh dataset opened per
+                    # read (thousands over a full run), an unbounded/default
+                    # (RAM-percentage-scaled) block cache accumulates across all
+                    # of them and competes with our own multi-GB numpy arrays --
+                    # a plausible cause of block-over-block slowdown from memory
+                    # pressure. We read each window once and never revisit it,
+                    # so caching buys nothing here anyway.
+                    with rasterio.Env(
+                        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+                        CPL_VSIL_CURL_USE_HEAD="NO",
+                        GDAL_HTTP_MULTIPLEX="YES",
+                        GDAL_CACHEMAX=128,
+                        VSI_CACHE="FALSE",
+                    ), rasterio.open(href) as raw, WarpedVRT(raw, **warp_kwargs) as vrt:
+                        dest[i] = vrt.read(1, window=window)
+                list(pool.map(_read_one, enumerate(entry[key] for entry in scene_hrefs)))
 
             n_blocks = ceil(height / block_rows)
             for block_idx in range(n_blocks):
@@ -355,37 +466,50 @@ def create_cloudfree_mosaic_csde(
                 block_h = row1 - row0
                 window = Window(0, row0, width, block_h)
 
+                block_t0 = time.time()
                 print(f"  Block {block_idx + 1:3d}/{n_blocks}  rows {row0}-{row1}")
 
                 # Cloud-mask validity (shared by every band)
-                cloud_valid_stack = np.empty((n_scenes, block_h, width), dtype=bool)
-                for i, handles in enumerate(scene_handles):
-                    cloud_block = handles["cloud"].read(1, window=window)
-                    cloud_valid_stack[i] = ~np.isin(cloud_block, CLOUD_MASK_INVALID_VALUES)
+                t0 = time.time()
+                cloud_blocks = np.empty((n_scenes, block_h, width), dtype=np.uint8)
+                _read_scenes_into(cloud_blocks, "cloud", window)
+                print(f"    cloud read   : {time.time() - t0:6.1f}s")
+                cloud_valid_stack = ~np.isin(cloud_blocks, CLOUD_MASK_INVALID_VALUES)
+                del cloud_blocks
 
                 # A scene only really "observes" a pixel where at least one band
                 # has data there (a digital number of 0 marks no-data outside a
                 # scene's own footprint) -- accumulated while reading each band.
                 footprint_stack = np.zeros((n_scenes, block_h, width), dtype=bool)
 
-                # Per band: reflectance, quartile across valid observations
+                # Per band: quartile across valid observations. The percentile
+                # runs on raw digital numbers -- the mosaic keeps the source
+                # encoding, so converting to reflectance and back would cancel
+                # out exactly (see DN_SCALE/DN_OFFSET).
                 band_dn = {}
-                for band_idx, band in enumerate(BAND_ORDER, start=1):
+                for band in BAND_ORDER:
                     band_stack = np.empty((n_scenes, block_h, width), dtype=np.float32)
-                    for i, handles in enumerate(scene_handles):
-                        band_stack[i] = handles[band].read(1, window=window).astype(np.float32)
+                    t0 = time.time()
+                    _read_scenes_into(band_stack, band, window)
+                    print(f"    {band} read     : {time.time() - t0:6.1f}s")
 
-                    has_data = band_stack > 0
+                    t0 = time.time()
+                    has_data = band_stack > NODATA_DN
                     footprint_stack |= has_data
                     band_valid = cloud_valid_stack & has_data
-                    reflectance = band_stack * RAW_DN_SCALE + RAW_DN_OFFSET
-                    reflectance[~band_valid] = np.nan
+                    band_stack[~band_valid] = np.nan
+                    band_valid_count = band_valid.sum(axis=0)
+                    print(f"    {band} prep     : {time.time() - t0:6.1f}s")
 
+                    t0 = time.time()
                     with np.errstate(all="ignore"):
-                        q1 = np.nanpercentile(reflectance, quartile, axis=0)
+                        q1 = _nanpercentile_along_axis0(band_stack, quartile, band_valid_count)
+                    print(f"    {band} percentile: {time.time() - t0:6.1f}s")
 
-                    dn = np.where(np.isnan(q1), NODATA_DN, np.round(q1 * 10000))
-                    band_dn[band_idx] = np.clip(dn, -32767, 32767).astype("int16")
+                    # uint16 with 0 as no-data, so a valid pixel never rounds to 0.
+                    dn = np.clip(np.round(q1), 1, MAX_DN)
+                    dn = np.where(band_valid_count == 0, NODATA_DN, dn)
+                    band_dn[band] = dn.astype("uint16")
 
                 # A pixel counts as observed only where a scene both cleared the
                 # cloud mask AND actually covered it (see footprint_stack above).
@@ -394,85 +518,61 @@ def create_cloudfree_mosaic_csde(
                     observations[~aoi_mask_full[row0:row1, :]] = NODATA_OBS
                 obs_dst.write(observations, window=window, indexes=1)
 
-                for band_idx, dn in band_dn.items():
+                for band, dn in band_dn.items():
                     dn[observations == NODATA_OBS] = NODATA_DN
                     if aoi_mask_full is not None:
                         dn[~aoi_mask_full[row0:row1, :]] = NODATA_DN
-                    dn_dst.write(dn, window=window, indexes=band_idx)
+                    band_dst[band].write(dn, window=window, indexes=1)
 
-        print("\nWriting COGs via gdalwarp ...")
-        dn_ok = _write_cog(
-            dn_tmp_path, dn_path,
-            extra_args=["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2"],
-        )
-        obs_ok = _write_cog(
-            obs_tmp_path, obs_path,
-            extra_args=["-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2"],
-        )
+                print(f"    block total  : {time.time() - block_t0:6.1f}s")
+
+        print("\nWriting COGs ...")
+        written = {}
+        for band in BAND_ORDER:
+            if _write_cog(band_tmp_paths[band], band_paths[band]):
+                written[band] = band_paths[band]
+        obs_ok = _write_cog(obs_tmp_path, obs_path)
     finally:
-        for entry in scene_handles:
-            for handle in entry.values():
-                handle.close()
-        for raw in raw_datasets:
-            raw.close()
-        Path(dn_tmp_path).unlink(missing_ok=True)
+        for tmp in band_tmp_paths.values():
+            Path(tmp).unlink(missing_ok=True)
         Path(obs_tmp_path).unlink(missing_ok=True)
 
-    if not dn_ok:
-        print("Done. Digital-number mosaic failed to write.")
+    if len(written) != len(BAND_ORDER):
+        print("Done. Not all band mosaics were written.")
         return None
 
-    print(f"\n  Mosaic written      : {dn_path}")
+    for band in BAND_ORDER:
+        print(f"  {BAND_ASSET_TITLES[band]:<24}: {band_paths[band]}")
     if obs_ok:
-        print(f"  Observations written: {obs_path}")
+        print(f"  {OBSERVATION_TITLE:<24}: {obs_path}")
 
     # ------------------------------------------------------------------
     # TCI: reuse main_create_rgb's enhancement, fed with the mosaic's own
-    # B04/B03/B02 bands.
+    # B04/B03/B02 band files (same encoding as the scene assets it normally
+    # consumes, so the standard scale/offset apply unchanged).
     # ------------------------------------------------------------------
     if create_tci:
-        print("\nRendering TCI from mosaic bands ...")
-        tmp_dir = Path(tempfile.mkdtemp(prefix="mosaic_csde_tci_"))
-        try:
-            band_files = {}
-            for band_idx, band in enumerate(("B04", "B03", "B02"), start=1):
-                band_tmp = tmp_dir / f"{band}.tif"
-                extract_cmd = [
-                    "gdal_translate", "-b", str(band_idx),
-                    "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-                    str(dn_path), str(band_tmp),
-                ]
-                result = subprocess.run(extract_cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"    [error] gdal_translate failed for {band}:\n{result.stderr}")
-                    band_files = None
-                    break
-                band_files[band] = band_tmp
-
-            if band_files and aoi_gpkg is not None and Path(aoi_gpkg).exists():
-                main_create_rgb.create_enhanced_rgb(
-                    b04_path=band_files["B04"],
-                    b03_path=band_files["B03"],
-                    b02_path=band_files["B02"],
-                    clip_orbit=aoi_gpkg,
-                    output_path=tci_path,
-                    scale=MOSAIC_DN_SCALE,
-                    offset=MOSAIC_DN_OFFSET,
-                    create_cog=True,
-                )
-                print(f"  TCI written         : {tci_path}")
-            elif band_files:
-                print("    [warn] No AOI GeoPackage available — skipping TCI (create_enhanced_rgb needs one).")
-        finally:
-            for f in tmp_dir.glob("*"):
-                f.unlink(missing_ok=True)
-            tmp_dir.rmdir()
+        if aoi_gpkg is not None and Path(aoi_gpkg).exists():
+            print("\nRendering TCI from mosaic bands ...")
+            main_create_rgb.create_enhanced_rgb(
+                b04_path=band_paths["B04"],
+                b03_path=band_paths["B03"],
+                b02_path=band_paths["B02"],
+                clip_orbit=aoi_gpkg,
+                output_path=tci_path,
+                scale=DN_SCALE,
+                offset=DN_OFFSET,
+                create_cog=True,
+            )
+            print(f"  {TCI_TITLE:<24}: {tci_path}")
+        else:
+            print("\n[warn] No AOI GeoPackage available — skipping TCI (create_enhanced_rgb needs one).")
 
     print("\n" + "=" * 60)
     print("Done.")
     print("=" * 60)
 
-    return dn_path
+    return band_paths["B04"]
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +598,10 @@ def _parse_args() -> argparse.Namespace:
         "--block-rows", type=int, default=256, metavar="N",
         help="Row block height used for time-series compositing (memory/speed trade-off).",
     )
+    parser.add_argument(
+        "--workers", type=int, default=16, metavar="N",
+        help="Scenes read in parallel per band/block (each is a separate STAC HTTP request).",
+    )
     parser.add_argument("--skip-tci", action="store_true", help="Do not render the TCI from the resulting mosaic.")
     parser.add_argument("--stac-url", default=STAC_BASE_URL, help="STAC catalogue base URL.")
     parser.add_argument("--collection", default=COLLECTION_ID, help="STAC collection ID.")
@@ -519,6 +623,7 @@ def main() -> None:
         quartile=args.quartile,
         output_name=args.output,
         block_rows=args.block_rows,
+        max_workers=args.workers,
         create_tci=not args.skip_tci,
         stac_url=args.stac_url,
         collection_id=args.collection,
