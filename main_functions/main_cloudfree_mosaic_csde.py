@@ -157,8 +157,9 @@ READ_MAX_ATTEMPTS  = 4
 READ_RETRY_DELAY_S = 2
 
 NODATA_DN  = 0  # uint16 no-data for the band digital numbers (matches the source assets)
-NODATA_OBS = 0  # uint16 no-data for the observations count band
+NODATA_OBS = 0  # uint8 no-data for the observations count band
 MAX_DN     = 65535
+MAX_OBS    = 255  # observations are uint8; a two-month window yields well under 100
 
 
 # ---------------------------------------------------------------------------
@@ -173,27 +174,25 @@ def _find_asset_by_title(item, title: str):
     return None
 
 
-def _write_cog(tmp_path: str, out_path: Path, extra_args: Optional[list] = None) -> bool:
+def _write_cog(tmp_path: str, out_path: Path, nodata_value: Optional[int] = None) -> bool:
     """
-    Convert a temp GeoTIFF to a Cloud-Optimized GeoTIFF.
-
-    gdal_translate rather than gdalwarp: the temp file is already on the
-    target grid, so this is a pure format conversion, and translate carries
-    the band's scale/offset and nodata through unchanged.
+    Convert a temp GeoTIFF to a Cloud-Optimized GeoTIFF via gdalwarp,
+    matching the final COG conversion in step1_processor_s2_sr.py.
     """
-    gdal_cmd = [
-        "gdal_translate",
-        "-of", "COG",
-        "-co", "BIGTIFF=YES",
-        "-co", "NUM_THREADS=ALL_CPUS",
+    cmd_cog = [
+        "gdalwarp", "-of", "COG", "-co", "BIGTIFF=YES",
         "-co", "COMPRESS=DEFLATE",
-        "-co", "PREDICTOR=2",
+        "-co", "PREDICTOR=2", "-co", "NUM_THREADS=ALL_CPUS",
         "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-    ] + (extra_args or []) + [tmp_path, str(out_path)]
+    ]
+    if nodata_value is not None:
+        cmd_cog.extend(["-srcnodata", str(nodata_value), "-dstnodata", str(nodata_value)])
 
-    result = subprocess.run(gdal_cmd, capture_output=True, text=True)
+    cmd_cog.extend([str(tmp_path), str(out_path), "-overwrite"])
+
+    result = subprocess.run(cmd_cog, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"    [error] gdal_translate failed:\n{result.stderr}")
+        print(f"    [error] gdalwarp failed:\n{result.stderr}")
         return False
     return True
 
@@ -410,7 +409,7 @@ def create_cloudfree_mosaic_csde(
         tiled=True, blockxsize=512, blockysize=512,
         compress="deflate", predictor=2, bigtiff="YES",
     )
-    obs_profile = dict(dn_profile, nodata=NODATA_OBS)
+    obs_profile = dict(dn_profile, dtype="uint8", nodata=NODATA_OBS)
 
     band_tmp_paths = {}
     for band in BAND_ORDER:
@@ -541,7 +540,12 @@ def create_cloudfree_mosaic_csde(
 
                 # A pixel counts as observed only where a scene both cleared the
                 # cloud mask AND actually covered it (see footprint_stack above).
-                observations = (cloud_valid_stack & footprint_stack).sum(axis=0).astype("uint16")
+                obs_count = (cloud_valid_stack & footprint_stack).sum(axis=0)
+                if obs_count.max() > MAX_OBS:
+                    # uint8 would wrap silently; a window this long is outside
+                    # what the observations band can represent.
+                    print(f"    [warn] up to {int(obs_count.max())} observations — capped at {MAX_OBS}")
+                observations = np.clip(obs_count, 0, MAX_OBS).astype("uint8")
                 if aoi_mask_full is not None:
                     observations[~aoi_mask_full[row0:row1, :]] = NODATA_OBS
                 obs_dst.write(observations, window=window, indexes=1)
@@ -557,9 +561,9 @@ def create_cloudfree_mosaic_csde(
         print("\nWriting COGs ...")
         written = {}
         for band in BAND_ORDER:
-            if _write_cog(band_tmp_paths[band], band_paths[band]):
+            if _write_cog(band_tmp_paths[band], band_paths[band], nodata_value=NODATA_DN):
                 written[band] = band_paths[band]
-        obs_ok = _write_cog(obs_tmp_path, obs_path)
+        obs_ok = _write_cog(obs_tmp_path, obs_path, nodata_value=NODATA_OBS)
     finally:
         for tmp in band_tmp_paths.values():
             Path(tmp).unlink(missing_ok=True)
