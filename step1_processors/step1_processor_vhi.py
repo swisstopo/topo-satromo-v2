@@ -110,6 +110,18 @@ def process_product_vhi(
     start_date = current_date - timedelta(days=d)
     end_date = current_date + timedelta(days=1) # add one day to include the current date in the window
 
+    ##############################
+    # VEGETATION MASKS
+    if current_date < datetime(2024, 7, 12):
+        forest_mask_name = f"forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-0_2022_CLCplus_2021.tif"
+    elif current_date >= datetime(2024, 7, 12) and current_date < datetime(2025, 12, 11):
+        forest_mask_name = f"forest_mask_2056_habitatv1-1_2024_CLCplus_2023.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-1_2024_CLCplus_2023.tif"
+    else:
+        forest_mask_name = f"forest_mask_2056_habitatv1-2_2025_CLCplus_2023.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-2_2025_CLCplus_2023.tif"
+
     ############################################################
     # INPUT DATA: REFLECTANCE, NDVI CALCULATION AND MASKS
     client = Client.open(stac_swisstopo + stac_swisstopo_version) # connect to STAC API
@@ -821,66 +833,43 @@ def process_product_vhi(
         'LST_scene_count': LST_scene_count,
         'VCI_and_TCI_calculated_with': CI_method,
         'pixel_size_meter': config.PRODUCT_VHI['spatial_scale_export'],
+        'mask_forest': forest_mask_name,
+        'mask_vegetation': vegetation_mask_name
     })
 
     ##############################
     # APPLY VEGETATION MASK
-    s3_path_forest_mask = f's3://s3-topo-satromo-prod/data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
-    s3_path_vegetation_mask = f's3://s3-topo-satromo-prod/data/MASKS/Vegetation/trans_mask_2056.tif'
 
-    # --- quick fix to handle different resolutions and extents of vegetation mask ---
-    # 
-    # TODO check if resampling is necessary with the new vegetation masks
-    #
-    # This should run with the new vegetation masks, that matches the S2 grid:
-    # with rasterio.open(s3_path_vegetation_mask) as src_veg:
-    #     window = from_bounds(*roi, src_veg.transform)
-    #     vegetation_mask = src_veg.read(1, window=window)
-    #
-    # This is the quick fix:
-    # Forest mask
-    with rasterio.open(s3_path_forest_mask) as src_veg:
-        window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
-        src_transform_veg = src_veg.window_transform(window)
-        src_crs_veg = src_veg.crs
+    # TODO switch, if they exist as local asset take that path, otherwise use the S3 path
+    path_forest_mask = f"{config.PRODUCT_VHI['vegetation_masks']}{forest_mask_name}"
+    path_vegetation_mask = f"{config.PRODUCT_VHI['vegetation_masks']}{vegetation_mask_name}"
 
-    # Resample to match target grid (same as all other layers)
-    forest_mask = np.empty(target_shape, dtype=np.float32)
-    reproject(
-        source=data_veg.astype(np.float32),
-        destination=forest_mask,
-        src_transform=src_transform_veg,
-        src_crs=src_crs_veg,
-        dst_transform=target_transform,
-        dst_crs=src_crs_veg,
-        resampling=Resampling.nearest,
-        src_nodata=0,
-        dst_nodata=0
-    )
-    forest_mask = forest_mask.astype(np.uint8)
-    # ---
-    # Vegetation mask
-    with rasterio.open(s3_path_vegetation_mask) as src_veg:
-        window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
-        src_transform_veg = src_veg.window_transform(window)
-        src_crs_veg = src_veg.crs
+    def load_mask_on_target_grid(mask_path, roi, target_transform, target_shape):
+        """Read a vegetation mask that is already on the swissEO S2-SR EPSG:2056 10 m grid (no resampling)."""
+        with rasterio.open(mask_path) as src:
+            # Sanity checks: grid must be identical to the target grid
+            if src.crs != rasterio.crs.CRS.from_epsg(2056):
+                raise ValueError(f"{mask_path}: unexpected CRS {src.crs}")
+            if (abs(src.transform.a) != abs(target_transform.a)
+                    or abs(src.transform.e) != abs(target_transform.e)):
+                raise ValueError(f"{mask_path}: pixel size {src.res} != target {(target_transform.a, -target_transform.e)}")
 
-    # Resample to match target grid (same as all other layers)
-    vegetation_mask = np.empty(target_shape, dtype=np.float32)
-    reproject(
-        source=data_veg.astype(np.float32),
-        destination=vegetation_mask,
-        src_transform=src_transform_veg,
-        src_crs=src_crs_veg,
-        dst_transform=target_transform,
-        dst_crs=src_crs_veg,
-        resampling=Resampling.nearest,
-        src_nodata=0,
-        dst_nodata=0
-    )
-    vegetation_mask = vegetation_mask.astype(np.uint8)
+            window = from_bounds(*roi, src.transform)
+            win_transform = src.window_transform(window)
+
+            # Origin must fall on the same pixel edges as the target grid
+            if (abs(win_transform.c - target_transform.c) > 1e-6
+                    or abs(win_transform.f - target_transform.f) > 1e-6):
+                raise ValueError(f"{mask_path}: grid offset vs. target "
+                                f"({win_transform.c - target_transform.c}, {win_transform.f - target_transform.f})")
+
+            mask = src.read(1, window=window, boundless=True, fill_value=0,
+                            out_shape=target_shape)   # no resampling if sizes agree
+
+        return mask.astype(np.uint8, copy=False)
+
+    forest_mask = load_mask_on_target_grid(path_forest_mask, roi, target_transform, target_shape)
+    vegetation_mask = load_mask_on_target_grid(path_vegetation_mask, roi, target_transform, target_shape)
 
     # Apply vegetation mask to VHI
     vhi_forest = vhi.where(forest_mask != 0, other=config.PRODUCT_VHI['no_data'])
@@ -990,7 +979,7 @@ def process_product_vhi(
             except Exception:
                 return []
 
-        def raster_entry(asset_filename, geocat_id):
+        def raster_entry(asset_filename, geocat_id, mask_name):
             return {
                 "BANDS": raster_band_info(asset_filename),
                 "PROPERTIES": {
@@ -1019,10 +1008,11 @@ def process_product_vhi(
                     "PIXEL_SIZE_METER": attrs.get('pixel_size_meter'),
                     "SYSTEM_TIME_START": str(attrs.get('system:time_start')),
                     "SYSTEM_TIME_END": str(attrs.get('system:time_end')),
+                    "VEGETATION_MASK": mask_name,
                 },
             } 
 
-        def warnregion_entry(warnregion_filename, source_tif, fmt):
+        def warnregion_entry(warnregion_filename, source_tif, fmt, mask_name):
             return {
                 "PRODUCT": config.PRODUCT_VHI['product_name'],
                 "ITEM": item_label,
@@ -1033,19 +1023,20 @@ def process_product_vhi(
                 "regionId": "RegionID",
                 "vhiMean": "VHI Mean Region",
                 "availabilityPercentage": "percentage of available pixels with information within region",
+                "VEGETATION_MASK": mask_name,
             }
 
         metadata = {}
 
-        metadata["FOREST-10M"] = raster_entry(filename_forest, config.PRODUCT_VHI['geocat_id_forest'])
+        metadata["FOREST-10M"] = raster_entry(filename_forest, config.PRODUCT_VHI['geocat_id_forest'], attrs.get('mask_forest'))
         for fmt in warnformats:
             key = f"FOREST-WARNREGIONS{fmt.replace('.', '-').upper()}"
-            metadata[key] = warnregion_entry(warnregionfilename_forest, filename_forest, fmt)
+            metadata[key] = warnregion_entry(warnregionfilename_forest, filename_forest, fmt, attrs.get('mask_forest'))
 
-        metadata["VEGETATION-10M"] = raster_entry(filename_vegetation, config.PRODUCT_VHI['geocat_id_vegetation'])
+        metadata["VEGETATION-10M"] = raster_entry(filename_vegetation, config.PRODUCT_VHI['geocat_id_vegetation'], attrs.get('mask_vegetation'))
         for fmt in warnformats:
             key = f"VEGETATION-WARNREGIONS{fmt.replace('.', '-').upper()}"
-            metadata[key] = warnregion_entry(warnregionfilename_vegetation, filename_vegetation, fmt)
+            metadata[key] = warnregion_entry(warnregionfilename_vegetation, filename_vegetation, fmt, attrs.get('mask_vegetation'))
 
         filename_metadata = (
             f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}"
