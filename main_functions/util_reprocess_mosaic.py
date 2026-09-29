@@ -24,7 +24,7 @@ START_MONTH = 1
 END_YEAR    = 2026
 END_MONTH   = 8
 
-DAYS           = 31
+DAYS           = 62
 SORT_METHOD    = "valid_data"
 MOSAIC_METHOD  = "first"
 EDGE_MARGIN_PX = 200
