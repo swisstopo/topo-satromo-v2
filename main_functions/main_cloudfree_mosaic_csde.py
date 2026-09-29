@@ -4,8 +4,8 @@ main_cloudfree_mosaic_csde.py -- Statistical (first-quartile) cloud-free mosaic.
 Queries the swisstopo STAC catalogue (ch.swisstopo.swisseo_s2-sr_v200) for a
 given start/end date window and builds a temporal composite from the four
 10 m bands (Red B04, Green B03, Blue B02, NIR B08) using the per-scene
-"Cloud mask - 10m" asset, following the Sentinel-2 quarterly mosaic
-algorithm used by the Copernicus Data Space Ecosystem:
+"Cloud mask - 10m" and "Terrain mask - 10m" assets, following the Sentinel-2
+quarterly mosaic algorithm used by the Copernicus Data Space Ecosystem:
 https://documentation.dataspace.copernicus.eu/Data/SentinelMissions/Sentinel2.html#sentinel-2-level-3-quarterly-mosaics
 
 Unlike main_cloudfree_mosaic.py (which stitches the first cloud-free scene
@@ -18,13 +18,36 @@ as no-data.
 
 The STAC catalogue is publicly accessible -- no authentication required.
 
+Masking -- the reflectance bands and the TCI deliberately use different
+masks, so they are composited from different observation sets:
+
+    reflectance bands   cloud mask + scene footprint + terrain shadow
+    TCI                 cloud mask + scene footprint          (no terrain)
+
+Terrain shadow is excluded from the bands because shadowed pixels carry
+unusable reflectance, but kept for the TCI so the true-color image retains
+its natural terrain shading instead of developing holes in alpine valleys.
+Consequence: where every observation of a pixel was terrain-shadowed, the
+bands and the observation count are no-data (0) while the TCI still shows a
+value. In an alpine September window that affects on the order of 15% of
+pixels; country-wide in July it is well under 1%.
+
+Because the two mask sets differ only on pixels that were shadowed in at
+least one observation, the TCI equals the band result everywhere else. Only
+those pixels get a second percentile (see the sparse path in the block
+loop), which keeps the extra cost proportional to the shadowed fraction
+rather than doubling the work.
+
 Algorithm (run independently per pixel and per band B02/B03/B04/B08):
     1. Take the time-range stack of Sentinel-2 L2A observations.
     2. Mark an observation invalid if "Cloud mask - 10m" is 1 (thick
        cloud), 2 (thin cloud) or 3 (cloud shadow), or if the band itself is
-       no-data (0) because the scene does not cover that pixel.
+       no-data (0) because the scene does not cover that pixel. For the
+       reflectance bands additionally mark it invalid where
+       "Terrain mask - 10m" is 200 (terrain shadow).
     3. Discard invalid observations. The remaining count is written to the
-       "Observation - 10m" output (positive integer, 0 = no data).
+       "Observation - 10m" output (positive integer, 0 = no data), counted
+       with terrain shadow excluded so it matches the bands.
     4. Sort the valid observations of each band separately.
     5. Take the first-quartile (Q1) value as the output digital number.
     6. If there are no valid observations, output 0 (no-data) for every
@@ -47,8 +70,9 @@ preserved, the percentile is taken on raw digital numbers: an affine,
 strictly increasing transform commutes with percentile selection, so
 converting to reflectance and back would cancel out exactly.
 
-A true-color image (TCI) is then rendered from the resulting B04/B03/B02
-band files using the same enhancement as main_create_rgb.py.
+The TCI is rendered with the same enhancement as main_create_rgb.py, but
+from its own B04/B03/B02 composite (terrain shadow kept, see Masking above)
+rather than from the published band files.
 
 Usage (CLI):
     python main_functions/main_cloudfree_mosaic_csde.py [options]
@@ -128,6 +152,7 @@ BAND_ASSET_TITLES = {
     "B08": "NIR 1 (band 8) - 10m",
 }
 BAND_ORDER = ["B04", "B03", "B02", "B08"]
+TCI_BANDS  = ["B04", "B03", "B02"]  # bands the true-color image is built from
 
 # Filename suffixes, matching step1_processor_s2_sr.py's convention
 # (<stem>_mosaic_<timestamp>_<band>_<resolution>m.tif -> one file per band).
@@ -149,6 +174,14 @@ DN_SCALE  = 0.0001
 DN_OFFSET = -0.1
 
 CLOUD_MASK_INVALID_VALUES = (1, 2, 3)  # thick cloud, thin cloud, cloud shadow
+
+# "Terrain mask - 10m": solar incidence angle 0-180 deg, plus value 200 for
+# pixels in terrain shadow (from swissSURFACE3D at acquisition time) and 255
+# outside the scene. Shadowed observations are excluded from the reflectance
+# bands, but deliberately kept for the TCI so the true-color image keeps its
+# natural terrain shading instead of developing holes in alpine valleys.
+TERRAIN_MASK_TITLE   = "Terrain mask - 10m"
+TERRAIN_SHADOW_VALUE = 200
 
 # A long run issues millions of HTTP range requests, so the occasional
 # truncated response is normal. Retry the whole open+read from scratch
@@ -241,7 +274,9 @@ def create_cloudfree_mosaic_csde(
     """
     Build a first-quartile cloud-free mosaic from swisstopo STAC Sentinel-2 assets.
 
-    See the module docstring for the full algorithm description.
+    The reflectance bands are masked by cloud + scene footprint + terrain
+    shadow; the TCI keeps terrain-shadowed observations so it stays visually
+    complete. See the module docstring for the full algorithm description.
 
     Parameters
     ----------
@@ -305,18 +340,21 @@ def create_cloudfree_mosaic_csde(
         print("No items found — aborting.")
         return None
 
-    # Keep only items that carry all four bands and the cloud mask
+    # Keep only items that carry all four bands, the cloud mask and the terrain mask
     valid_items = []
     for item in items:
         assets = {band: _find_asset_by_title(item, title) for band, title in BAND_ASSET_TITLES.items()}
         cloud_asset = _find_asset_by_title(item, cloud_mask_title)
+        terrain_asset = _find_asset_by_title(item, TERRAIN_MASK_TITLE)
         missing = [band for band, asset in assets.items() if asset is None]
         if cloud_asset is None:
             missing.append("cloud mask")
+        if terrain_asset is None:
+            missing.append("terrain mask")
         if missing:
             print(f"  Skip {item.id}: missing {', '.join(missing)}")
             continue
-        valid_items.append((item, assets, cloud_asset))
+        valid_items.append((item, assets, cloud_asset, terrain_asset))
 
     if not valid_items:
         print("No usable items in the date range.")
@@ -374,8 +412,12 @@ def create_cloudfree_mosaic_csde(
     warp_kwargs = dict(crs=ref_crs, transform=ref_transform, width=width, height=height, resampling=Resampling.nearest)
 
     scene_hrefs = [
-        {"cloud": cloud_asset.href, **{band: asset.href for band, asset in assets.items()}}
-        for _, assets, cloud_asset in valid_items
+        {
+            "cloud": cloud_asset.href,
+            "terrain": terrain_asset.href,
+            **{band: asset.href for band, asset in assets.items()},
+        }
+        for _, assets, cloud_asset, terrain_asset in valid_items
     ]
     n_scenes = len(scene_hrefs)
     print(f"{n_scenes} scenes ready for compositing.\n")
@@ -418,7 +460,16 @@ def create_cloudfree_mosaic_csde(
     with tempfile.NamedTemporaryFile(suffix="_obs_tmp.tif", delete=False) as fh:
         obs_tmp_path = fh.name
 
+    # The TCI keeps terrain-shadowed observations, so its RGB differs from the
+    # published bands. These are scratch rasters, deleted after the render.
+    tci_tmp_paths = {}
+    if create_tci:
+        for band in TCI_BANDS:
+            with tempfile.NamedTemporaryFile(suffix=f"_{band}_tci_tmp.tif", delete=False) as fh:
+                tci_tmp_paths[band] = fh.name
+
     band_dst = {}
+    tci_dst = {}
     try:
         with contextlib.ExitStack() as stack, \
              rasterio.open(obs_tmp_path, "w", **obs_profile) as obs_dst, \
@@ -432,6 +483,11 @@ def create_cloudfree_mosaic_csde(
                 dst.offsets = (DN_OFFSET,)
                 dst.update_tags(1, data_ignore_value=str(NODATA_DN))
                 band_dst[band] = dst
+
+            for band in tci_tmp_paths:
+                tci_dst[band] = stack.enter_context(
+                    rasterio.open(tci_tmp_paths[band], "w", **dn_profile)
+                )
 
             def _read_scenes_into(dest: np.ndarray, key: str, window: Window) -> None:
                 """Read `window` from every scene's `key` asset into dest[i], in
@@ -504,6 +560,15 @@ def create_cloudfree_mosaic_csde(
                 cloud_valid_stack = ~np.isin(cloud_blocks, CLOUD_MASK_INVALID_VALUES)
                 del cloud_blocks
 
+                # Terrain shadow (shared by every band). Kept as "not shadowed"
+                # so the per-band combination below needs no inversion.
+                t0 = time.time()
+                terrain_blocks = np.empty((n_scenes, block_h, width), dtype=np.uint8)
+                _read_scenes_into(terrain_blocks, "terrain", window)
+                print(f"    terrain read : {time.time() - t0:6.1f}s")
+                terrain_ok_stack = terrain_blocks != TERRAIN_SHADOW_VALUE
+                del terrain_blocks
+
                 # A scene only really "observes" a pixel where at least one band
                 # has data there (a digital number of 0 marks no-data outside a
                 # scene's own footprint) -- accumulated while reading each band.
@@ -514,6 +579,7 @@ def create_cloudfree_mosaic_csde(
                 # encoding, so converting to reflectance and back would cancel
                 # out exactly (see DN_SCALE/DN_OFFSET).
                 band_dn = {}
+                tci_dn = {}
                 for band in BAND_ORDER:
                     band_stack = np.empty((n_scenes, block_h, width), dtype=np.float32)
                     t0 = time.time()
@@ -523,9 +589,30 @@ def create_cloudfree_mosaic_csde(
                     t0 = time.time()
                     has_data = band_stack > NODATA_DN
                     footprint_stack |= has_data
-                    band_valid = cloud_valid_stack & has_data
-                    band_stack[~band_valid] = np.nan
+                    cloud_ok = cloud_valid_stack & has_data      # TCI: shadow kept
+                    del has_data
+                    band_valid = cloud_ok & terrain_ok_stack     # bands: shadow excluded
                     band_valid_count = band_valid.sum(axis=0)
+
+                    # The two percentiles can only differ where at least one
+                    # observation was shadowed, so the TCI only needs its own
+                    # computation on those pixels. Extract them before the sort
+                    # below destroys the stack.
+                    want_tci = band in tci_dst
+                    if want_tci:
+                        tci_valid_count = cloud_ok.sum(axis=0)
+                        differs = tci_valid_count != band_valid_count
+                        diff_idx = np.flatnonzero(differs.ravel())
+                        if diff_idx.size:
+                            sub = band_stack.reshape(n_scenes, -1)[:, diff_idx]
+                            sub_valid = cloud_ok.reshape(n_scenes, -1)[:, diff_idx]
+                            sub[~sub_valid] = np.nan
+                            sub_count = tci_valid_count.ravel()[diff_idx]
+                            del sub_valid
+                    del cloud_ok
+
+                    band_stack[~band_valid] = np.nan
+                    del band_valid
                     print(f"    {band} prep     : {time.time() - t0:6.1f}s")
 
                     t0 = time.time()
@@ -538,23 +625,54 @@ def create_cloudfree_mosaic_csde(
                     dn = np.where(band_valid_count == 0, NODATA_DN, dn)
                     band_dn[band] = dn.astype("uint16")
 
+                    if want_tci:
+                        # Identical to the band result except on `differs`.
+                        tci = band_dn[band].copy()
+                        if diff_idx.size:
+                            with np.errstate(all="ignore"):
+                                q_sub = _nanpercentile_along_axis0(
+                                    sub.reshape(n_scenes, 1, -1), quartile,
+                                    sub_count.reshape(1, -1),
+                                )[0]
+                            dn_sub = np.clip(np.round(q_sub), 1, MAX_DN)
+                            dn_sub = np.where(sub_count == 0, NODATA_DN, dn_sub)
+                            tci.ravel()[diff_idx] = dn_sub.astype("uint16")
+                            del sub, q_sub, dn_sub
+                        tci_dn[band] = tci
+
                 # A pixel counts as observed only where a scene both cleared the
                 # cloud mask AND actually covered it (see footprint_stack above).
-                obs_count = (cloud_valid_stack & footprint_stack).sum(axis=0)
-                if obs_count.max() > MAX_OBS:
+                valid_obs = cloud_valid_stack & footprint_stack
+                obs_count_tci = valid_obs.sum(axis=0)    # shadow kept    -> TCI
+                valid_obs &= terrain_ok_stack
+                obs_count = valid_obs.sum(axis=0)        # shadow excluded -> bands
+                del valid_obs
+
+                if obs_count_tci.max() > MAX_OBS:
                     # uint8 would wrap silently; a window this long is outside
                     # what the observations band can represent.
-                    print(f"    [warn] up to {int(obs_count.max())} observations — capped at {MAX_OBS}")
+                    print(f"    [warn] up to {int(obs_count_tci.max())} observations — capped at {MAX_OBS}")
+                # The published count matches the bands, i.e. terrain-masked.
                 observations = np.clip(obs_count, 0, MAX_OBS).astype("uint8")
                 if aoi_mask_full is not None:
                     observations[~aoi_mask_full[row0:row1, :]] = NODATA_OBS
                 obs_dst.write(observations, window=window, indexes=1)
 
+                outside_aoi = None if aoi_mask_full is None else ~aoi_mask_full[row0:row1, :]
+
                 for band, dn in band_dn.items():
-                    dn[observations == NODATA_OBS] = NODATA_DN
-                    if aoi_mask_full is not None:
-                        dn[~aoi_mask_full[row0:row1, :]] = NODATA_DN
+                    dn[obs_count == 0] = NODATA_DN
+                    if outside_aoi is not None:
+                        dn[outside_aoi] = NODATA_DN
                     band_dst[band].write(dn, window=window, indexes=1)
+
+                # The TCI keeps shadowed observations, so it stays valid where
+                # the bands went no-data for being shadowed in every scene.
+                for band, dn in tci_dn.items():
+                    dn[obs_count_tci == 0] = NODATA_DN
+                    if outside_aoi is not None:
+                        dn[outside_aoi] = NODATA_DN
+                    tci_dst[band].write(dn, window=window, indexes=1)
 
                 print(f"    block total  : {time.time() - block_t0:6.1f}s")
 
@@ -564,8 +682,33 @@ def create_cloudfree_mosaic_csde(
             if _write_cog(band_tmp_paths[band], band_paths[band], nodata_value=NODATA_DN):
                 written[band] = band_paths[band]
         obs_ok = _write_cog(obs_tmp_path, obs_path, nodata_value=NODATA_OBS)
+
+        # ------------------------------------------------------------------
+        # TCI: reuse main_create_rgb's enhancement. It is fed the scratch RGB
+        # that kept terrain-shadowed observations, not the published bands, so
+        # the true-color image keeps its natural shading.
+        # ------------------------------------------------------------------
+        tci_ok = False
+        if create_tci and len(written) == len(BAND_ORDER):
+            if aoi_gpkg is not None and Path(aoi_gpkg).exists():
+                print("\nRendering TCI from mosaic bands (terrain shadow kept) ...")
+                main_create_rgb.create_enhanced_rgb(
+                    b04_path=tci_tmp_paths["B04"],
+                    b03_path=tci_tmp_paths["B03"],
+                    b02_path=tci_tmp_paths["B02"],
+                    clip_orbit=aoi_gpkg,
+                    output_path=tci_path,
+                    scale=DN_SCALE,
+                    offset=DN_OFFSET,
+                    create_cog=True,
+                )
+                tci_ok = True
+            else:
+                print("\n[warn] No AOI GeoPackage available — skipping TCI (create_enhanced_rgb needs one).")
     finally:
         for tmp in band_tmp_paths.values():
+            Path(tmp).unlink(missing_ok=True)
+        for tmp in tci_tmp_paths.values():
             Path(tmp).unlink(missing_ok=True)
         Path(obs_tmp_path).unlink(missing_ok=True)
 
@@ -577,28 +720,8 @@ def create_cloudfree_mosaic_csde(
         print(f"  {BAND_ASSET_TITLES[band]:<24}: {band_paths[band]}")
     if obs_ok:
         print(f"  {OBSERVATION_TITLE:<24}: {obs_path}")
-
-    # ------------------------------------------------------------------
-    # TCI: reuse main_create_rgb's enhancement, fed with the mosaic's own
-    # B04/B03/B02 band files (same encoding as the scene assets it normally
-    # consumes, so the standard scale/offset apply unchanged).
-    # ------------------------------------------------------------------
-    if create_tci:
-        if aoi_gpkg is not None and Path(aoi_gpkg).exists():
-            print("\nRendering TCI from mosaic bands ...")
-            main_create_rgb.create_enhanced_rgb(
-                b04_path=band_paths["B04"],
-                b03_path=band_paths["B03"],
-                b02_path=band_paths["B02"],
-                clip_orbit=aoi_gpkg,
-                output_path=tci_path,
-                scale=DN_SCALE,
-                offset=DN_OFFSET,
-                create_cog=True,
-            )
-            print(f"  {TCI_TITLE:<24}: {tci_path}")
-        else:
-            print("\n[warn] No AOI GeoPackage available — skipping TCI (create_enhanced_rgb needs one).")
+    if tci_ok:
+        print(f"  {TCI_TITLE:<24}: {tci_path}")
 
     print("\n" + "=" * 60)
     print("Done.")
