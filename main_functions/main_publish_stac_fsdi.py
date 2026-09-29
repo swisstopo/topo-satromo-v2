@@ -207,7 +207,8 @@ def item_create_json_payload(id, coordinates, dt_iso8601, title, geocat_id, curr
             },
             {
                 "href": thumbnail_url,
-                "rel": "preview"
+                "rel": "preview",
+                "type": "image/png"
             }
 
             # {
@@ -389,7 +390,6 @@ def asset_create_json_payload(id, asset_type, current, asset_title=None):
         payload = {
             "id": id,
             "title": title,
-            "roles": ["thumbnail"],
             "type": "image/png"
         }
     else:
@@ -397,7 +397,6 @@ def asset_create_json_payload(id, asset_type, current, asset_title=None):
         payload = {
             "id": id,
             "title": title,
-            "roles": ["thumbnail"],
             "type": "image/jpeg"
         }
     return payload
