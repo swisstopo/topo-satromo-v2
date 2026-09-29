@@ -150,6 +150,12 @@ DN_OFFSET = -0.1
 
 CLOUD_MASK_INVALID_VALUES = (1, 2, 3)  # thick cloud, thin cloud, cloud shadow
 
+# A long run issues millions of HTTP range requests, so the occasional
+# truncated response is normal. Retry the whole open+read from scratch
+# rather than letting one blip kill a multi-hour window.
+READ_MAX_ATTEMPTS  = 4
+READ_RETRY_DELAY_S = 2
+
 NODATA_DN  = 0  # uint16 no-data for the band digital numbers (matches the source assets)
 NODATA_OBS = 0  # uint16 no-data for the observations count band
 MAX_DN     = 65535
@@ -449,14 +455,36 @@ def create_cloudfree_mosaic_csde(
                     # a plausible cause of block-over-block slowdown from memory
                     # pressure. We read each window once and never revisit it,
                     # so caching buys nothing here anyway.
-                    with rasterio.Env(
-                        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
-                        CPL_VSIL_CURL_USE_HEAD="NO",
-                        GDAL_HTTP_MULTIPLEX="YES",
-                        GDAL_CACHEMAX=128,
-                        VSI_CACHE="FALSE",
-                    ), rasterio.open(href) as raw, WarpedVRT(raw, **warp_kwargs) as vrt:
-                        dest[i] = vrt.read(1, window=window)
+                    for attempt in range(1, READ_MAX_ATTEMPTS + 1):
+                        try:
+                            with rasterio.Env(
+                                GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+                                CPL_VSIL_CURL_USE_HEAD="NO",
+                                GDAL_HTTP_MULTIPLEX="YES",
+                                GDAL_CACHEMAX=128,
+                                VSI_CACHE="FALSE",
+                                GDAL_HTTP_MAX_RETRY=3,
+                                GDAL_HTTP_RETRY_DELAY=1,
+                            ), rasterio.open(href) as raw, WarpedVRT(raw, **warp_kwargs) as vrt:
+                                dest[i] = vrt.read(1, window=window)
+                            return
+                        except Exception as exc:
+                            # Transient truncated/failed HTTP range reads are
+                            # expected over a long run (e.g. "TIFFFillTile: got
+                            # N bytes, expected M"). Re-open from scratch so the
+                            # retry gets a fresh connection.
+                            if attempt == READ_MAX_ATTEMPTS:
+                                print(
+                                    f"    [error] {Path(href).name}: read failed after "
+                                    f"{READ_MAX_ATTEMPTS} attempts — {exc}"
+                                )
+                                raise
+                            print(
+                                f"    [warn] {Path(href).name}: read attempt {attempt} "
+                                f"failed ({type(exc).__name__}), retrying in "
+                                f"{READ_RETRY_DELAY_S * attempt}s"
+                            )
+                            time.sleep(READ_RETRY_DELAY_S * attempt)
                 list(pool.map(_read_one, enumerate(entry[key] for entry in scene_hrefs)))
 
             n_blocks = ceil(height / block_rows)
