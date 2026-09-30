@@ -52,7 +52,11 @@ WINDOWS = [
     (8, 9),   # August / September
 ]
 
-BLOCK_ROWS = 2500
+# 1500 rather than 2500: the terrain mask adds another per-scene bool stack,
+# which pushes peak memory to roughly 50-55 GB at 2500 rows. Fewer rows per
+# block costs a little extra read overhead and avoids going near swap, which
+# is far more expensive than the extra blocks.
+BLOCK_ROWS = 1500
 WORKERS    = 16
 
 
