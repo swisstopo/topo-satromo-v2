@@ -839,11 +839,22 @@ def process_product_vhi(
 
     ##############################
     # APPLY VEGETATION MASK
+    # Function to resolve the path to a mask file, checking local assets first and falling back to S3 if not found
+    def resolve_mask_path(mask_name):
+        """
+        Return the local_assets path to a mask file if it exists there,
+        otherwise fall back to the S3 path (same filename, different location).
+        """
+        local_path = os.path.join("local_assets", mask_name)
+        if os.path.isfile(local_path):
+            print(f"Using local mask: {local_path}")
+            return local_path
 
-    # TODO switch, if they exist as local asset take that path, otherwise use the S3 path
-    path_forest_mask = f"{config.PRODUCT_VHI['vegetation_masks']}{forest_mask_name}"
-    path_vegetation_mask = f"{config.PRODUCT_VHI['vegetation_masks']}{vegetation_mask_name}"
+        s3_path = f"{config.PRODUCT_VHI['vegetation_masks']}{mask_name}"
+        print(f"Local mask not found, falling back to S3: {s3_path}")
+        return s3_path
 
+    # Function to load a vegetation mask that is already on the swissEO S2-SR EPSG:2056 10 m grid
     def load_mask_on_target_grid(mask_path, roi, target_transform, target_shape):
         """Read a vegetation mask that is already on the swissEO S2-SR EPSG:2056 10 m grid (no resampling)."""
         with rasterio.open(mask_path) as src:
@@ -867,7 +878,12 @@ def process_product_vhi(
                             out_shape=target_shape)   # no resampling if sizes agree
 
         return mask.astype(np.uint8, copy=False)
+    
+    # Generate the paths for the forest and vegetation masks, checking local assets first
+    path_forest_mask = resolve_mask_path(forest_mask_name)
+    path_vegetation_mask = resolve_mask_path(vegetation_mask_name)
 
+    # Load the masks and check if they're on the target grid
     forest_mask = load_mask_on_target_grid(path_forest_mask, roi, target_transform, target_shape)
     vegetation_mask = load_mask_on_target_grid(path_vegetation_mask, roi, target_transform, target_shape)
 
