@@ -338,10 +338,20 @@ def process_product_vhi(
         
         return band
 
+    #fix by dave start
+    # Was: "if roi is None: return True" -- leftover body of the deleted
+    # item_covers_roi() helper. Sitting at function level it made
+    # process_product_vhi() return immediately in operational mode
+    # (satromo_processor.py passes roi=None), so every date printed the
+    # banner, produced no VHI, and still reported success.
+    # roi=None means "whole of Switzerland", so fall back to bbox_ch here --
+    # it has to happen before transform_bounds(), which cannot unpack None.
     if roi is None:
-            return True  # if no ROI is set, all items are considered valid
+        roi = bbox_ch
+
     # Transform ROI to WGS84 to match STAC bbox
     roi_wgs84 = transform_bounds('EPSG:2056', 'EPSG:4326', *roi)
+    #fix by dave end
     
     # Retrieve all S2-SR items in the collection and filter them by the date window
     item_search = client.search(
@@ -372,8 +382,11 @@ def process_product_vhi(
         item_path = stac_swisstopo + s2_sr_collection_id + '/' + item.id + '/swisseo_s2-sr_v200_mosaic_' + item.id
         red_path = item_path + '_b04_10m.tif'
         nir_path = item_path + '_b08_10m.tif'
-        if roi is None:
-            roi = bbox_ch
+        #fix by dave start
+        # Removed "if roi is None: roi = bbox_ch" -- redundant now that the
+        # fallback happens once before the STAC search above, and it can no
+        # longer be None by this point.
+        #fix by dave end
 
         with rasterio.open(red_path) as src:
             window_10m = from_bounds(*roi, src.transform)
