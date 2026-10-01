@@ -338,39 +338,24 @@ def process_product_vhi(
         
         return band
 
+    if roi is None:
+            return True  # if no ROI is set, all items are considered valid
+    # Transform ROI to WGS84 to match STAC bbox
+    roi_wgs84 = transform_bounds('EPSG:2056', 'EPSG:4326', *roi)
+    
     # Retrieve all S2-SR items in the collection and filter them by the date window
-    s2_sr_items = []
-
-    s2_sr_items = sorted(
-        [item for item in s2_sr_collection.get_all_items()
-        if any(date_str in item.id for date_str in date_strings)],
-        key=lambda item: item.id  # sort by ID which starts with date
+    item_search = client.search(
+        collections=[s2_sr_collection_id],
+        bbox=roi_wgs84,
+        datetime=f"{start_date:%Y-%m-%d}/{current_date:%Y-%m-%d}",
     )
 
-    # Sort items newest-first so we can fill forward with the most recent valid value
-    s2_sr_items_sorted = sorted(s2_sr_items, key=lambda item: item.id, reverse=True)
-
-    def item_covers_roi(item, roi, roi_crs='EPSG:2056'):
-        """Check if a STAC item's bbox intersects the ROI."""
-        if roi is None:
-            return True  # if no ROI is set, all items are considered valid
-        
-        # Transform ROI to WGS84 to match STAC bbox
-        roi_wgs84 = transform_bounds(roi_crs, 'EPSG:4326', *roi)
-        # STAC bbox is [west, south, east, north]
-        item_bbox = item.bbox
-        
-        # Check for intersection
-        no_overlap = (
-            roi_wgs84[0] > item_bbox[2] or  # roi west > item east
-            roi_wgs84[2] < item_bbox[0] or  # roi east < item west
-            roi_wgs84[1] > item_bbox[3] or  # roi south > item north
-            roi_wgs84[3] < item_bbox[1]     # roi north < item south
-        )
-        return not no_overlap
-
-    # Filter to only items that cover the ROI
-    s2_sr_items_sorted = [item for item in s2_sr_items_sorted if item_covers_roi(item, roi)]
+    # ID filter kept as a safety net, newest first
+    s2_sr_items_sorted = sorted(
+        (item for item in item_search.items() if any(d in item.id for d in date_strings)),
+        key=lambda item: item.id,
+        reverse=True,
+    )
 
     if len(s2_sr_items_sorted) == 0:
         raise ValueError(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
