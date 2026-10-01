@@ -338,20 +338,12 @@ def process_product_vhi(
         
         return band
 
-    #fix by dave start
-    # Was: "if roi is None: return True" -- leftover body of the deleted
-    # item_covers_roi() helper. Sitting at function level it made
-    # process_product_vhi() return immediately in operational mode
-    # (satromo_processor.py passes roi=None), so every date printed the
-    # banner, produced no VHI, and still reported success.
-    # roi=None means "whole of Switzerland", so fall back to bbox_ch here --
-    # it has to happen before transform_bounds(), which cannot unpack None.
+
     if roi is None:
         roi = bbox_ch
 
     # Transform ROI to WGS84 to match STAC bbox
     roi_wgs84 = transform_bounds('EPSG:2056', 'EPSG:4326', *roi)
-    #fix by dave end
     
     # Retrieve all S2-SR items in the collection and filter them by the date window
     item_search = client.search(
