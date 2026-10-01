@@ -13,6 +13,7 @@ from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, Resampling, transform_bounds
 from affine import Affine
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from main_functions import main_utils, main_publish_stac_fsdi, main_extract_warnregions, main_thumbnails
 
@@ -150,6 +151,14 @@ def process_product_vhi(
         
         return window, src.window_transform(window)
 
+    # Function to check if two rasters have the same grid (origin, pixel size, rotation, and shape)
+    def _same_grid(src_transform, src_shape, dst_transform, dst_shape, atol=1e-6):
+        """True if origin, pixel size (and rotation terms) and shape are identical."""
+        return (
+            tuple(src_shape) == tuple(dst_shape)
+            and np.allclose(tuple(src_transform)[:6], tuple(dst_transform)[:6], rtol=0, atol=atol)
+    )
+
     # Function to load a band and apply offset and scale factors, also preserving nodata values
     def load_and_scale_band(filepath, roi, target_transform, target_shape,
                             nodata=s2_nodata, scale=s2_scale_factor, offset=s2_offset):
@@ -186,22 +195,22 @@ def process_product_vhi(
             data = src.read(1, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
             src_crs = src.crs 
         
-        # Reproject onto the fixed 10m reference grid
-        scaled = np.full(target_shape, fill_value=np.nan, dtype=np.float32)
-        reproject(
-            source=data,
-            destination=scaled,
-            src_transform=src_transform,
-            src_crs=src_crs,
-            dst_transform=target_transform,
-            dst_crs=src_crs,
-            resampling=Resampling.nearest,
-            src_nodata=nodata,
-            dst_nodata=np.nan
-        )
-        del data
+        if _same_grid(src_transform, data.shape, target_transform, target_shape):
+            # Fast path: grids identical, no reprojection needed
+            scaled = data
+            nodata_mask = scaled == nodata        # mask before scaling
+        else:
+            scaled = np.full(target_shape, np.nan, dtype=np.float32)
+            reproject(
+                source=data, destination=scaled,
+                src_transform=src_transform, src_crs=src_crs,
+                dst_transform=target_transform, dst_crs=src_crs,
+                resampling=Resampling.nearest,
+                src_nodata=nodata, dst_nodata=np.nan,
+            )
+            nodata_mask = np.isnan(scaled)        # reproject already wrote NaN
+            del data
 
-        nodata_mask = scaled == nodata # Create nodata mask before modifying data
         # Apply scaling in-place on the full array — no temporary copy
         scaled *= scale
         scaled += offset
@@ -273,6 +282,25 @@ def process_product_vhi(
 
         return data_10m
 
+    # Function to load a categorical mask (e.g., cloud mask, terrain mask) and resample to 10m grid
+    def load_categorical_mask(filepath, roi, target_transform, target_shape):
+        with rasterio.open(filepath) as src:
+            window, src_transform = get_window_and_transform(src, roi)
+            if src_transform is None:
+                return np.zeros(target_shape, dtype=np.uint8)
+            data = src.read(1, window=window, boundless=True, fill_value=0)
+            src_crs = src.crs
+
+        if _same_grid(src_transform, data.shape, target_transform, target_shape):
+            return data.astype(np.uint8, copy=False)
+
+        out = np.zeros(target_shape, dtype=np.float32)
+        reproject(source=data.astype(np.float32), destination=out,
+                src_transform=src_transform, src_crs=src_crs,
+                dst_transform=target_transform, dst_crs=src_crs,
+                resampling=Resampling.nearest, src_nodata=0, dst_nodata=0)
+        return out.astype(np.uint8)
+    
     # Function to apply masks (clouds, snow, terrain shadow) to a specific band
     def apply_masks(band, cloudmask, snowmask, illumination_mask, th_illumination=threshold_illumination):
         """
@@ -296,24 +324,19 @@ def process_product_vhi(
         numpy.ndarray
             Masked band with nodata preserved as np.nan
         """
-        masked_band = band.copy()
-
         # Apply cloud mask
         if cloudmask is not None:
-            cloud_mask_condition = (cloudmask != 0)
-            masked_band[cloud_mask_condition] = np.nan
+            np.putmask(band, cloudmask != 0, np.nan)
 
         # Apply snow mask
         if snowmask is not None:
-            snow_condition = (snowmask != 0)
-            masked_band[snow_condition] = np.nan
+            np.putmask(band, snowmask != 0, np.nan)
             
         # Apply terrain shadow mask
         if illumination_mask is not None:
-            shadow_condition = illumination_mask > th_illumination
-            masked_band[shadow_condition] = np.nan
+            np.putmask(band, illumination_mask >= th_illumination, np.nan)
         
-        return masked_band
+        return band
 
     # Retrieve all S2-SR items in the collection and filter them by the date window
     s2_sr_items = []
@@ -371,108 +394,65 @@ def process_product_vhi(
             window_10m = from_bounds(*roi, src.transform)
             target_transform = src.window_transform(window_10m)
             target_shape = (int(window_10m.height), int(window_10m.width))
+            target_crs = src.crs
 
-        # Load 10 m bands and apply offset and scale factor to reflectance bands
-        red = load_and_scale_band(red_path, roi, target_transform, target_shape)
-        nir = load_and_scale_band(nir_path, roi, target_transform, target_shape)
+        with ThreadPoolExecutor(max_workers=4) as ex: # If memory gets tight, drop to max_workers=3
+            # --- submit all reads at once
+            f_red   = ex.submit(load_and_scale_band, red_path, roi, target_transform, target_shape)
+            f_nir   = ex.submit(load_and_scale_band, nir_path, roi, target_transform, target_shape)
+            f_cloud = ex.submit(load_categorical_mask, item_path + '_cloudmask_10m.tif', roi, target_transform, target_shape)
+            f_illum = ex.submit(load_categorical_mask, item_path + '_terrainmask_10m.tif', roi, target_transform, target_shape)
+            f_green = ex.submit(load_and_scale_band, item_path + '_b03_10m.tif', roi, target_transform, target_shape)
+            f_swir  = ex.submit(load_scale_and_resample_20m_to_10m, item_path + '_b11_20m.tif', roi, target_transform, target_shape)
+            f_scl   = ex.submit(load_scale_and_resample_20m_to_10m, item_path + '_scl_20m.tif', roi, target_transform, target_shape,
+                                nodata=0, scale=1, offset=0)
 
-        # CALCULATE NDVI --> ndvi = (nir - red) / (nir + red)
-        ndvi_den = nir + red
-        ndvi_den[ndvi_den == 0] = np.nan
-        ndvi = (nir - red) / ndvi_den
-        del ndvi_den, red, nir
-        import matplotlib.pyplot as plt
+            # CALCULATE NDVI --> ndvi = (nir - red) / (nir + red)
+            red, nir = f_red.result(), f_nir.result()
+            ndvi_den = nir + red
+            np.subtract(nir, red, out=nir)
+            del red
+            ndvi_den[ndvi_den == 0] = np.nan
+            np.divide(nir, ndvi_den, out=nir)
+            ndvi = nir
+            del ndvi_den, nir
 
-        # LOAD/CALCULATE AND APPLY MASKS
-        # --- CLOUD mask (10m)
-        cloud_mask_path = item_path + '_cloudmask_10m.tif'
-        with rasterio.open(cloud_mask_path) as src_cloud:
-            window, src_transform = get_window_and_transform(src_cloud, roi)
-            if src_transform is None:
-                cloud_mask = np.full(target_shape, dtype=np.uint8)  # treat as cloud-free if no overlap
-            else:
-                data = src_cloud.read(1, window=window, boundless=True, fill_value=0)
-                src_crs = src_cloud.crs
-                cloud_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
-                reproject(
-                    source=data.astype(np.float32),
-                    destination=cloud_mask_f,
-                    src_transform=src_transform,
-                    src_crs=src_crs,
-                    dst_transform=target_transform,
-                    dst_crs=src_crs,
-                    resampling=Resampling.nearest,
-                    src_nodata=0,
-                    dst_nodata=0
-                )
-                cloud_mask = cloud_mask_f.astype(np.uint8)
+            # ---- SNOW mask based on NDSI and SCL (20m, resampled to 10m)
+            green, swir, scl = f_green.result(), f_swir.result(), f_scl.result()
+            # NDSI --> ndsi = (green - swir) / (green + swir)
+            den = green + swir # denominator
+            np.subtract(green, swir, out=green)
+            del swir
+            den[den == 0] = np.nan # avoid division by zero
+            np.divide(green, den, out=green)
+            del den
+            # Create snow mask based on NDSI threshold
+            snow_mask = (green > threshold_ndsi).astype(np.uint8)
+            del green
 
-        # --- TERRAIN SHADOW and low ILLUMINATION mask (10m)
-        illumination_mask_path = item_path + '_terrainmask_10m.tif'
-        with rasterio.open(illumination_mask_path) as src_illumination:
-            window, src_transform = get_window_and_transform(src_illumination, roi)
-            if src_transform is None:
-                illumination_mask = np.full(target_shape, dtype=np.uint8)  # treat as no shadow if no overlap
-            else:
-                data = src_illumination.read(1, window=window, boundless=True, fill_value=0)
-                src_crs = src_illumination.crs
-                illumination_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
-                reproject(
-                    source=data.astype(np.float32),
-                    destination=illumination_mask_f,
-                    src_transform=src_transform,
-                    src_crs=src_crs,
-                    dst_transform=target_transform,
-                    dst_crs=src_crs,
-                    resampling=Resampling.nearest,
-                    src_nodata=0,
-                    dst_nodata=0
-                )
-                illumination_mask = illumination_mask_f.astype(np.uint8)
+            # SCL band for additional snow masking based on SCL classification values:
+            # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
+            # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
+            # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
+            # 11: Snow or ice
+            snow_mask[scl == 11] = 1 # 1 indicates snow
+            del scl
 
-        # ---- SNOW mask based on NDSI and SCL (20m, resampled to 10m)
-        # First, calculate NDSI-based snow mask from green and SWIR bands
-        green_path = item_path + '_b03_10m.tif'
-        swir_path = item_path + '_b11_20m.tif'
-        # Load green and SWIR bands only for snow masking based on NDSI, to save processing time and memory
-        green = load_and_scale_band(green_path, roi, target_transform, target_shape)
-        swir = load_scale_and_resample_20m_to_10m(swir_path, roi, target_transform, target_shape)
-        # NDSI --> ndsi = (green - swir) / (green + swir)
-        ndsi = green - swir # numerator
-        ndsi_den = green + swir # denominator
-        ndsi_den[ndsi_den == 0] = np.nan # avoid division by zero
-        ndsi /= ndsi_den  # divide in-place
-        del green, swir, ndsi_den
-        # Create snow mask based on NDSI
-        snow_mask = np.zeros_like(ndsi, dtype=np.uint8)
-        snow_mask[ndsi > threshold_ndsi] = 1  # 1 indicates snow
-
-        # Load SCL band for additional snow masking based on SCL
-        scl_path = item_path + '_scl_20m.tif'
-        # SCL classification values:
-        # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
-        # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
-        # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
-        # 11: Snow or ice
-        scl = load_scale_and_resample_20m_to_10m(scl_path, roi, target_transform, target_shape,
-                                            nodata=0, scale=1, offset=0) # no scaling for SCL
-        
-        # Add to snow mask based on SCL classification
-        snow_mask[scl == 11] = 1  # 1 indicates snow
-        del scl, ndsi
+            # --- categorical masks
+            cloud_mask = f_cloud.result()
+            illumination_mask = f_illum.result()
 
         # Apply masks to NDVI
-        ndvi_masked = apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
-        del ndvi, cloud_mask, snow_mask, illumination_mask
+        apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
+        del cloud_mask, snow_mask, illumination_mask
 
         # Combine: fill gaps in combined NDVI with values from this (older) item
         if ndvi_combined is None:
-            ndvi_combined = ndvi_masked
+            ndvi_combined = ndvi
         else:
             # Only fill pixels that are still NaN in the combined array
-            fill_mask = np.isnan(ndvi_combined)
-            ndvi_combined[fill_mask] = ndvi_masked[fill_mask]
-        del ndvi_masked
+            np.copyto(ndvi_combined, ndvi, where=np.isnan(ndvi_combined))
+        del ndvi
 
         # Track this item as used
         NDVI_index_list.append(item.id)
@@ -490,10 +470,6 @@ def process_product_vhi(
     # INPUT DATA: REFERENCE NDVI
     # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
     s3_path_ndvi_ref = f"{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif"
-
-    with rasterio.open(s3_path_ndvi_ref) as src_ref:
-        # Define window from ROI
-        window = from_bounds(*roi, src_ref.transform)
 
     # Function to resample 30m reference NDVI to match current NDVI resolution
     def load_scale_and_resample_ndvi_reference(filepath, roi, target_transform, target_shape, band_num,
@@ -519,8 +495,7 @@ def process_product_vhi(
         numpy.ndarray
             Resampled band
         """
-        from rasterio.warp import reproject
-        
+
         with rasterio.open(filepath) as src:
             window = from_bounds(*roi, src.transform)
             data = src.read(band_num, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
@@ -806,7 +781,7 @@ def process_product_vhi(
     xs = np.array([target_transform.c + (col + 0.5) * target_transform.a for col in range(width)])
     ys = np.array([target_transform.f + (row + 0.5) * target_transform.e for row in range(height)])
     vhi = xr.DataArray(vhi, dims=('y', 'x'), coords={'y': ys, 'x': xs})
-    vhi = vhi.rio.write_crs(src_crs)
+    vhi = vhi.rio.write_crs(target_crs)
 
     ##############################
     # SET METADATA
