@@ -1,16 +1,29 @@
 """
-util_reprocess_mosaic_thumbnails.py -- A4 year-overview PNGs from monthly mosaics.
+util_reprocess_mosaic_thumbnails.py -- A4 year-overview PNGs from mosaics.
 
-Scans a directory for mosaic GeoTIFFs named with a YYYY-MM date (as produced
-by util_reprocess_mosaic.py, e.g. mosaic_2018-03.tif) and renders one A4
-portrait PNG per year, laid out as a 3x4 grid of the twelve monthly
-thumbnails.
+Renders one A4 portrait PNG per year, laid out as a 3x4 grid of the twelve
+months. The input directory is inspected and the naming scheme detected
+automatically; both mosaic generations are supported:
 
-No-data pixels within a month's mosaic (clouds, missing coverage) are drawn
-pink so gaps are easy to spot against the true-color imagery.
+  csde    swisseo_s2-sr_v200_mosaic_<YYYY-MM-DD>t235959_tci_10m.tif
+          (util_reprocess_mosaic_csde.py / main_cloudfree_mosaic_csde.py)
+          Only the TCI is used; the per-band and observation files are
+          ignored. These are two-month windows named after their END date,
+          so a June/July composite is placed on the July slot and June
+          shows as no-data.
+
+  legacy  mosaic_<YYYY-MM>.tif
+          (util_reprocess_mosaic.py) -- one file per calendar month.
+
+If any csde TCI is present the directory is treated as csde, otherwise the
+legacy pattern is used.
+
+Pink marks missing data throughout: no-data pixels inside a mosaic (clouds,
+missing coverage) and whole months for which no mosaic exists.
 
 Usage:
     python main_functions/util_reprocess_mosaic_thumbnails.py temp
+    python main_functions/util_reprocess_mosaic_thumbnails.py /mnt/d/temp/mosaic_csde
     python main_functions/util_reprocess_mosaic_thumbnails.py temp --output-dir temp/overview
     python main_functions/util_reprocess_mosaic_thumbnails.py temp --title-suffix "edge-margin-px=200"
 
@@ -38,21 +51,42 @@ MONTH_NAMES = [
     "Juli", "August", "September", "Oktober", "November", "Dezember",
 ]
 
-FILENAME_RE = re.compile(r"(\d{4})-(\d{2})")
+# csde: ..._mosaic_<YYYY-MM-DD>t235959_tci_10m.tif -- anchored on the TCI
+# suffix so the per-band/observation files of the same window are ignored.
+# It also excludes create_enhanced_rgb's "..._tci_10m.temp.tif" leftovers,
+# whose stem ends in ".temp" and therefore does not match.
+CSDE_TCI_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})t\d{6}_tci_10m$")
+
+# legacy: mosaic_<YYYY-MM>.tif -- one file per calendar month
+LEGACY_RE = re.compile(r"(\d{4})-(\d{2})")
 
 THUMB_LONG_SIDE = 800  # px, longer side of the downsampled read
 
 
-def find_year_month_files(input_dir: Path) -> dict:
-    """Map year -> {month: tif_path} from filenames containing YYYY-MM."""
-    years = defaultdict(dict)
-    for tif_path in sorted(input_dir.glob("*.tif")):
-        match = FILENAME_RE.search(tif_path.stem)
-        if not match:
-            continue
-        year, month = int(match.group(1)), int(match.group(2))
-        years[year][month] = tif_path
-    return years
+def find_year_month_files(input_dir: Path) -> tuple:
+    """
+    Map year -> {month: tif_path}, detecting the naming scheme in use.
+
+    Returns (years, scheme). csde wins when both are present, since its
+    band files would otherwise also match the looser legacy pattern.
+    """
+    tifs = sorted(input_dir.glob("*.tif"))
+
+    csde = defaultdict(dict)
+    for tif_path in tifs:
+        match = CSDE_TCI_RE.search(tif_path.stem)
+        if match:
+            # Two-month window named after its end date -> end month slot
+            csde[int(match.group(1))][int(match.group(2))] = tif_path
+    if csde:
+        return csde, "csde"
+
+    legacy = defaultdict(dict)
+    for tif_path in tifs:
+        match = LEGACY_RE.search(tif_path.stem)
+        if match:
+            legacy[int(match.group(1))][int(match.group(2))] = tif_path
+    return legacy, "legacy"
 
 
 def read_thumbnail(tif_path: Path) -> np.ndarray:
@@ -98,7 +132,9 @@ def build_year_page(year: int, month_files: dict, output_path: Path, title_suffi
 
         tif_path = month_files.get(month)
         if tif_path is None:
-            ax.set_facecolor("#f0f0f0")
+            # Pink for a missing month, same as no-data inside a mosaic, so
+            # every gap on the page reads the same way.
+            ax.set_facecolor("pink")
             ax.text(
                 0.5, 0.5, "keine Daten",
                 ha="center", va="center", fontsize=8, color="gray",
@@ -136,7 +172,11 @@ def main() -> None:
     )
     parser.add_argument(
         "input_dir",
-        help="Directory containing mosaic_YYYY-MM.tif files.",
+        help=(
+            "Directory containing the mosaics. Either csde TCIs "
+            "(..._<YYYY-MM-DD>t235959_tci_10m.tif) or legacy "
+            "mosaic_<YYYY-MM>.tif files; the scheme is detected automatically."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -153,11 +193,16 @@ def main() -> None:
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir) if args.output_dir else input_dir
 
-    years = find_year_month_files(input_dir)
+    years, scheme = find_year_month_files(input_dir)
     if not years:
-        print(f"No mosaic_YYYY-MM.tif files found in {input_dir}")
+        print(
+            f"No mosaics found in {input_dir} — expected either csde TCIs "
+            f"(..._<YYYY-MM-DD>t235959_tci_10m.tif) or legacy mosaic_<YYYY-MM>.tif"
+        )
         sys.exit(1)
 
+    n_files = sum(len(m) for m in years.values())
+    print(f"Detected naming scheme: {scheme}  ({n_files} mosaic(s))")
     print(f"Found {len(years)} year(s): {sorted(years)}\n")
 
     for year in sorted(years):
