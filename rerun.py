@@ -10,6 +10,21 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
 
 
+def count_csv_rows_for_date(collection_basename, date_str):
+    """How many rows the empty-asset CSV currently has for this collection+date.
+
+    Used to detect whether the processor subprocess itself appended a fresh row
+    (e.g. "cloudy") for a date while it was running -- something the parent
+    process cannot see any other way, since the subprocess writes straight to
+    the file on disk.
+    """
+    try:
+        df = pd.read_csv(config.EMPTY_ASSET_LIST)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return 0
+    return int(((df['collection'] == collection_basename) & (df['date'] == date_str)).sum())
+
+
 def process_empty_asset_list(collection_basename, days_back, config_file):
     """
     Process and reprocess empty assets for a specific collection.
@@ -70,7 +85,6 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         )
 
         df_candidates = df[mask_in_scope]
-        df_outside_scope = df[~mask_in_scope]
 
         # 2. Filter out "cloudy" entries from the processing list but KEEP them for the CSV
         # na=False ensures we handle rows with empty remarks safely
@@ -88,6 +102,12 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         print(f"Found {len(df_cloudy)} cloudy entries (kept in CSV).")
         print(f"Found {len(reprocess_list)} dates to actually reprocess for {collection_basename}")
 
+        # Each date's remark as it stood before this run, so that afterwards we can
+        # tell the ORIGINAL placeholder row (e.g. "Tiles ready awaiting GPU system
+        # run") apart from any brand-new row a subprocess appends for the same date
+        # while it runs (e.g. "cloudy") -- see the final CSV rebuild below.
+        original_remark = dict(zip(df_to_process['date'], df_to_process['remark']))
+
         if not reprocess_list:
             if os.path.exists(backup_file):
                 os.remove(backup_file)
@@ -100,6 +120,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         consecutive_failures = 0
         max_consecutive_failures = 2
         processed_dates = set()  # dates confirmed successful -> safe to drop from CSV
+        newly_marked_dates = set()  # dates where the subprocess itself appended a fresh empty-asset row this run
         aborted_early = False
 
         for i, check_date_str in enumerate(reprocess_list):
@@ -108,6 +129,12 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
             print(f"{'='*60}")
 
             date_failed = False
+
+            # Row count for this date before running, so we can tell afterwards whether
+            # the subprocess itself appended a fresh row for it (e.g. "cloudy") while it
+            # ran -- the parent process has no other way to see that, since the
+            # subprocess writes straight to the CSV file on disk.
+            rows_before = count_csv_rows_for_date(collection_basename, check_date_str)
 
             try:
                 python_path = sys.executable
@@ -139,8 +166,12 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
 
                     # The processor exits 0 both when it produced a product and when it
                     # decided there was nothing to do. Watch its output for the "nothing
-                    # to do" marker so a skipped date is never recorded as processed and
-                    # dropped from the CSV.
+                    # to do" markers so a skipped date is never recorded as processed and
+                    # dropped from the CSV. 'Date found in empty_asset_list' covers a date
+                    # that was already known-empty before this run started; 'Cutting asset
+                    # create for' is printed by write_asset_as_empty() itself, so it also
+                    # catches a date that only turned out empty *during* this run (too
+                    # cloudy, tile download/upload incomplete, etc).
                     skipped_as_empty = False
 
                     while True:
@@ -149,12 +180,22 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                             break
                         if line:
                             print(line, end='', flush=True)
-                            if 'Date found in empty_asset_list' in line:
+                            if ('Date found in empty_asset_list' in line
+                                    or 'Cutting asset create for' in line):
                                 skipped_as_empty = True
 
                     return_code = process.poll()
 
-                    if return_code == 0 and skipped_as_empty:
+                    # Beyond the stdout marker above, also check whether the subprocess
+                    # appended a brand new CSV row for this date while it ran. This is the
+                    # authoritative signal (the marker text could in principle change or be
+                    # missed), and it is also what the final CSV rebuild below needs to
+                    # replace the old placeholder row with the fresh one instead of losing it.
+                    rows_after = count_csv_rows_for_date(collection_basename, check_date_str)
+                    if rows_after > rows_before:
+                        newly_marked_dates.add(check_date_str)
+
+                    if return_code == 0 and (skipped_as_empty or check_date_str in newly_marked_dates):
                         print(f"! {check_date_str} was skipped by the processor "
                               f"(still listed as having no source data). Nothing was "
                               f"produced, so the entry is kept in the CSV for the next run.")
@@ -186,15 +227,30 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 aborted_early = True
                 break
 
-        # Rebuild the CSV: keep everything except dates confirmed successfully processed.
-        # Failed / not-yet-attempted dates from df_to_process stay in the file so they
-        # are retried automatically on the next run.
-        # sort_index() restores the original row order (df_outside_scope/df_cloudy/df_unresolved
-        # are all index-subsets of the same original df) so an unrelated concurrent edit to the
-        # CSV doesn't turn into a full-file reorder diff, which is what causes most git merge
-        # conflicts on this file.
-        df_unresolved = df_to_process[~df_to_process['date'].isin(processed_dates)]
-        df_final = pd.concat([df_outside_scope, df_cloudy, df_unresolved]).sort_index()
+        # Rebuild the CSV. Dates the loop above never touched (failed / not-yet-attempted,
+        # or outside scope, or already-known-cloudy) must be left completely alone.
+        # For dates this run DID resolve -- either it fully succeeded, or the subprocess
+        # itself appended a fresh row for it (see newly_marked_dates above) -- the
+        # ORIGINAL pre-run placeholder row (e.g. "Tiles ready awaiting GPU system run")
+        # is now stale and must go.
+        #
+        # We re-read the CSV from disk here rather than reusing df/df_candidates/df_to_process
+        # loaded at the top of this function. Subprocesses write straight to the file while
+        # they run (write_asset_as_empty()), so those in-memory copies from before the loop
+        # no longer reflect what's on disk; rebuilding the file from them would silently
+        # discard whatever a subprocess just appended.
+        # Dropping the stale row by its ORIGINAL remark (not just by collection+date) is
+        # what keeps this safe: it removes only the old placeholder and leaves a freshly
+        # appended row (different remark) in place.
+        resolved_dates = processed_dates | newly_marked_dates
+        df_now = pd.read_csv(config.EMPTY_ASSET_LIST)
+        mask_stale = df_now.apply(
+            lambda row: (row['collection'] == collection_basename
+                         and row['date'] in resolved_dates
+                         and row['remark'] == original_remark.get(row['date'])),
+            axis=1
+        )
+        df_final = df_now[~mask_stale]
         df_final.to_csv(config.EMPTY_ASSET_LIST, index=False)
 
         # Summary

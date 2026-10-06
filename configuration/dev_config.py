@@ -96,6 +96,7 @@ PRODUCT_VHI = {
     "scaling_factor": 1,
     "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/",
     "LST_reference_data": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02/",
+    "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
     "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"

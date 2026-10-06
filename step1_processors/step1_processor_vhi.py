@@ -13,6 +13,7 @@ from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, Resampling, transform_bounds
 from affine import Affine
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from main_functions import main_utils, main_publish_stac_fsdi, main_extract_warnregions, main_thumbnails
 
@@ -110,6 +111,18 @@ def process_product_vhi(
     start_date = current_date - timedelta(days=d)
     end_date = current_date + timedelta(days=1) # add one day to include the current date in the window
 
+    ##############################
+    # VEGETATION MASKS
+    if current_date < datetime(2024, 7, 12):
+        forest_mask_name = f"forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-0_2022_CLCplus_2021.tif"
+    elif current_date >= datetime(2024, 7, 12) and current_date < datetime(2025, 12, 11):
+        forest_mask_name = f"forest_mask_2056_habitatv1-1_2024_CLCplus_2023.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-1_2024_CLCplus_2023.tif"
+    else:
+        forest_mask_name = f"forest_mask_2056_habitatv1-2_2025_CLCplus_2023.tif"
+        vegetation_mask_name = f"vegetation_mask_2056_habitatv1-2_2025_CLCplus_2023.tif"
+
     ############################################################
     # INPUT DATA: REFLECTANCE, NDVI CALCULATION AND MASKS
     client = Client.open(stac_swisstopo + stac_swisstopo_version) # connect to STAC API
@@ -137,6 +150,14 @@ def process_product_vhi(
             return None, None  # no overlap — caller should return NaN array
         
         return window, src.window_transform(window)
+
+    # Function to check if two rasters have the same grid (origin, pixel size, rotation, and shape)
+    def _same_grid(src_transform, src_shape, dst_transform, dst_shape, atol=1e-6):
+        """True if origin, pixel size (and rotation terms) and shape are identical."""
+        return (
+            tuple(src_shape) == tuple(dst_shape)
+            and np.allclose(tuple(src_transform)[:6], tuple(dst_transform)[:6], rtol=0, atol=atol)
+    )
 
     # Function to load a band and apply offset and scale factors, also preserving nodata values
     def load_and_scale_band(filepath, roi, target_transform, target_shape,
@@ -174,22 +195,22 @@ def process_product_vhi(
             data = src.read(1, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
             src_crs = src.crs 
         
-        # Reproject onto the fixed 10m reference grid
-        scaled = np.full(target_shape, fill_value=np.nan, dtype=np.float32)
-        reproject(
-            source=data,
-            destination=scaled,
-            src_transform=src_transform,
-            src_crs=src_crs,
-            dst_transform=target_transform,
-            dst_crs=src_crs,
-            resampling=Resampling.nearest,
-            src_nodata=nodata,
-            dst_nodata=np.nan
-        )
-        del data
+        if _same_grid(src_transform, data.shape, target_transform, target_shape):
+            # Fast path: grids identical, no reprojection needed
+            scaled = data
+            nodata_mask = scaled == nodata        # mask before scaling
+        else:
+            scaled = np.full(target_shape, np.nan, dtype=np.float32)
+            reproject(
+                source=data, destination=scaled,
+                src_transform=src_transform, src_crs=src_crs,
+                dst_transform=target_transform, dst_crs=src_crs,
+                resampling=Resampling.nearest,
+                src_nodata=nodata, dst_nodata=np.nan,
+            )
+            nodata_mask = np.isnan(scaled)        # reproject already wrote NaN
+            del data
 
-        nodata_mask = scaled == nodata # Create nodata mask before modifying data
         # Apply scaling in-place on the full array — no temporary copy
         scaled *= scale
         scaled += offset
@@ -261,6 +282,25 @@ def process_product_vhi(
 
         return data_10m
 
+    # Function to load a categorical mask (e.g., cloud mask, terrain mask) and resample to 10m grid
+    def load_categorical_mask(filepath, roi, target_transform, target_shape):
+        with rasterio.open(filepath) as src:
+            window, src_transform = get_window_and_transform(src, roi)
+            if src_transform is None:
+                return np.zeros(target_shape, dtype=np.uint8)
+            data = src.read(1, window=window, boundless=True, fill_value=0)
+            src_crs = src.crs
+
+        if _same_grid(src_transform, data.shape, target_transform, target_shape):
+            return data.astype(np.uint8, copy=False)
+
+        out = np.zeros(target_shape, dtype=np.float32)
+        reproject(source=data.astype(np.float32), destination=out,
+                src_transform=src_transform, src_crs=src_crs,
+                dst_transform=target_transform, dst_crs=src_crs,
+                resampling=Resampling.nearest, src_nodata=0, dst_nodata=0)
+        return out.astype(np.uint8)
+    
     # Function to apply masks (clouds, snow, terrain shadow) to a specific band
     def apply_masks(band, cloudmask, snowmask, illumination_mask, th_illumination=threshold_illumination):
         """
@@ -284,58 +324,40 @@ def process_product_vhi(
         numpy.ndarray
             Masked band with nodata preserved as np.nan
         """
-        masked_band = band.copy()
-
         # Apply cloud mask
         if cloudmask is not None:
-            cloud_mask_condition = (cloudmask != 0)
-            masked_band[cloud_mask_condition] = np.nan
+            np.putmask(band, cloudmask != 0, np.nan)
 
         # Apply snow mask
         if snowmask is not None:
-            snow_condition = (snowmask != 0)
-            masked_band[snow_condition] = np.nan
+            np.putmask(band, snowmask != 0, np.nan)
             
         # Apply terrain shadow mask
         if illumination_mask is not None:
-            shadow_condition = illumination_mask > th_illumination
-            masked_band[shadow_condition] = np.nan
+            np.putmask(band, illumination_mask >= th_illumination, np.nan)
         
-        return masked_band
+        return band
 
+
+    if roi is None:
+        roi = bbox_ch
+
+    # Transform ROI to WGS84 to match STAC bbox
+    roi_wgs84 = transform_bounds('EPSG:2056', 'EPSG:4326', *roi)
+    
     # Retrieve all S2-SR items in the collection and filter them by the date window
-    s2_sr_items = []
-
-    s2_sr_items = sorted(
-        [item for item in s2_sr_collection.get_all_items()
-        if any(date_str in item.id for date_str in date_strings)],
-        key=lambda item: item.id  # sort by ID which starts with date
+    item_search = client.search(
+        collections=[s2_sr_collection_id],
+        bbox=roi_wgs84,
+        datetime=f"{start_date:%Y-%m-%d}/{current_date:%Y-%m-%d}",
     )
 
-    # Sort items newest-first so we can fill forward with the most recent valid value
-    s2_sr_items_sorted = sorted(s2_sr_items, key=lambda item: item.id, reverse=True)
-
-    def item_covers_roi(item, roi, roi_crs='EPSG:2056'):
-        """Check if a STAC item's bbox intersects the ROI."""
-        if roi is None:
-            return True  # if no ROI is set, all items are considered valid
-        
-        # Transform ROI to WGS84 to match STAC bbox
-        roi_wgs84 = transform_bounds(roi_crs, 'EPSG:4326', *roi)
-        # STAC bbox is [west, south, east, north]
-        item_bbox = item.bbox
-        
-        # Check for intersection
-        no_overlap = (
-            roi_wgs84[0] > item_bbox[2] or  # roi west > item east
-            roi_wgs84[2] < item_bbox[0] or  # roi east < item west
-            roi_wgs84[1] > item_bbox[3] or  # roi south > item north
-            roi_wgs84[3] < item_bbox[1]     # roi north < item south
-        )
-        return not no_overlap
-
-    # Filter to only items that cover the ROI
-    s2_sr_items_sorted = [item for item in s2_sr_items_sorted if item_covers_roi(item, roi)]
+    # ID filter kept as a safety net, newest first
+    s2_sr_items_sorted = sorted(
+        (item for item in item_search.items() if any(d in item.id for d in date_strings)),
+        key=lambda item: item.id,
+        reverse=True,
+    )
 
     if len(s2_sr_items_sorted) == 0:
         raise ValueError(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
@@ -352,115 +374,75 @@ def process_product_vhi(
         item_path = stac_swisstopo + s2_sr_collection_id + '/' + item.id + '/swisseo_s2-sr_v200_mosaic_' + item.id
         red_path = item_path + '_b04_10m.tif'
         nir_path = item_path + '_b08_10m.tif'
-        if roi is None:
-            roi = bbox_ch
+        #fix by dave start
+        # Removed "if roi is None: roi = bbox_ch" -- redundant now that the
+        # fallback happens once before the STAC search above, and it can no
+        # longer be None by this point.
+        #fix by dave end
 
         with rasterio.open(red_path) as src:
             window_10m = from_bounds(*roi, src.transform)
             target_transform = src.window_transform(window_10m)
             target_shape = (int(window_10m.height), int(window_10m.width))
+            target_crs = src.crs
 
-        # Load 10 m bands and apply offset and scale factor to reflectance bands
-        red = load_and_scale_band(red_path, roi, target_transform, target_shape)
-        nir = load_and_scale_band(nir_path, roi, target_transform, target_shape)
+        with ThreadPoolExecutor(max_workers=4) as ex: # If memory gets tight, drop to max_workers=3
+            # --- submit all reads at once
+            f_red   = ex.submit(load_and_scale_band, red_path, roi, target_transform, target_shape)
+            f_nir   = ex.submit(load_and_scale_band, nir_path, roi, target_transform, target_shape)
+            f_cloud = ex.submit(load_categorical_mask, item_path + '_cloudmask_10m.tif', roi, target_transform, target_shape)
+            f_illum = ex.submit(load_categorical_mask, item_path + '_terrainmask_10m.tif', roi, target_transform, target_shape)
+            f_green = ex.submit(load_and_scale_band, item_path + '_b03_10m.tif', roi, target_transform, target_shape)
+            f_swir  = ex.submit(load_scale_and_resample_20m_to_10m, item_path + '_b11_20m.tif', roi, target_transform, target_shape)
+            f_scl   = ex.submit(load_scale_and_resample_20m_to_10m, item_path + '_scl_20m.tif', roi, target_transform, target_shape,
+                                nodata=0, scale=1, offset=0)
 
-        # CALCULATE NDVI --> ndvi = (nir - red) / (nir + red)
-        ndvi_den = nir + red
-        ndvi_den[ndvi_den == 0] = np.nan
-        ndvi = (nir - red) / ndvi_den
-        del ndvi_den, red, nir
-        import matplotlib.pyplot as plt
+            # CALCULATE NDVI --> ndvi = (nir - red) / (nir + red)
+            red, nir = f_red.result(), f_nir.result()
+            ndvi_den = nir + red
+            np.subtract(nir, red, out=nir)
+            del red
+            ndvi_den[ndvi_den == 0] = np.nan
+            np.divide(nir, ndvi_den, out=nir)
+            ndvi = nir
+            del ndvi_den, nir
 
-        # LOAD/CALCULATE AND APPLY MASKS
-        # --- CLOUD mask (10m)
-        cloud_mask_path = item_path + '_cloudmask_10m.tif'
-        with rasterio.open(cloud_mask_path) as src_cloud:
-            window, src_transform = get_window_and_transform(src_cloud, roi)
-            if src_transform is None:
-                cloud_mask = np.full(target_shape, dtype=np.uint8)  # treat as cloud-free if no overlap
-            else:
-                data = src_cloud.read(1, window=window, boundless=True, fill_value=0)
-                src_crs = src_cloud.crs
-                cloud_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
-                reproject(
-                    source=data.astype(np.float32),
-                    destination=cloud_mask_f,
-                    src_transform=src_transform,
-                    src_crs=src_crs,
-                    dst_transform=target_transform,
-                    dst_crs=src_crs,
-                    resampling=Resampling.nearest,
-                    src_nodata=0,
-                    dst_nodata=0
-                )
-                cloud_mask = cloud_mask_f.astype(np.uint8)
+            # ---- SNOW mask based on NDSI and SCL (20m, resampled to 10m)
+            green, swir, scl = f_green.result(), f_swir.result(), f_scl.result()
+            # NDSI --> ndsi = (green - swir) / (green + swir)
+            den = green + swir # denominator
+            np.subtract(green, swir, out=green)
+            del swir
+            den[den == 0] = np.nan # avoid division by zero
+            np.divide(green, den, out=green)
+            del den
+            # Create snow mask based on NDSI threshold
+            snow_mask = (green > threshold_ndsi).astype(np.uint8)
+            del green
 
-        # --- TERRAIN SHADOW and low ILLUMINATION mask (10m)
-        illumination_mask_path = item_path + '_terrainmask_10m.tif'
-        with rasterio.open(illumination_mask_path) as src_illumination:
-            window, src_transform = get_window_and_transform(src_illumination, roi)
-            if src_transform is None:
-                illumination_mask = np.full(target_shape, dtype=np.uint8)  # treat as no shadow if no overlap
-            else:
-                data = src_illumination.read(1, window=window, boundless=True, fill_value=0)
-                src_crs = src_illumination.crs
-                illumination_mask_f = np.full(target_shape, fill_value=1, dtype=np.float32)
-                reproject(
-                    source=data.astype(np.float32),
-                    destination=illumination_mask_f,
-                    src_transform=src_transform,
-                    src_crs=src_crs,
-                    dst_transform=target_transform,
-                    dst_crs=src_crs,
-                    resampling=Resampling.nearest,
-                    src_nodata=0,
-                    dst_nodata=0
-                )
-                illumination_mask = illumination_mask_f.astype(np.uint8)
+            # SCL band for additional snow masking based on SCL classification values:
+            # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
+            # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
+            # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
+            # 11: Snow or ice
+            snow_mask[scl == 11] = 1 # 1 indicates snow
+            del scl
 
-        # ---- SNOW mask based on NDSI and SCL (20m, resampled to 10m)
-        # First, calculate NDSI-based snow mask from green and SWIR bands
-        green_path = item_path + '_b03_10m.tif'
-        swir_path = item_path + '_b11_20m.tif'
-        # Load green and SWIR bands only for snow masking based on NDSI, to save processing time and memory
-        green = load_and_scale_band(green_path, roi, target_transform, target_shape)
-        swir = load_scale_and_resample_20m_to_10m(swir_path, roi, target_transform, target_shape)
-        # NDSI --> ndsi = (green - swir) / (green + swir)
-        ndsi = green - swir # numerator
-        ndsi_den = green + swir # denominator
-        ndsi_den[ndsi_den == 0] = np.nan # avoid division by zero
-        ndsi /= ndsi_den  # divide in-place
-        del green, swir, ndsi_den
-        # Create snow mask based on NDSI
-        snow_mask = np.zeros_like(ndsi, dtype=np.uint8)
-        snow_mask[ndsi > threshold_ndsi] = 1  # 1 indicates snow
-
-        # Load SCL band for additional snow masking based on SCL
-        scl_path = item_path + '_scl_20m.tif'
-        # SCL classification values:
-        # 0: No data, 1: Saturated or defective, 2: Dark area pixels, 3: Cloud shadows,
-        # 4: Vegetation, 5: Bare soils, 6: Water, 7: Clouds low probability / unclassified,
-        # 8: Clouds medium probability, 9: Clouds high probability, 10: Thin cirrus,
-        # 11: Snow or ice
-        scl = load_scale_and_resample_20m_to_10m(scl_path, roi, target_transform, target_shape,
-                                            nodata=0, scale=1, offset=0) # no scaling for SCL
-        
-        # Add to snow mask based on SCL classification
-        snow_mask[scl == 11] = 1  # 1 indicates snow
-        del scl, ndsi
+            # --- categorical masks
+            cloud_mask = f_cloud.result()
+            illumination_mask = f_illum.result()
 
         # Apply masks to NDVI
-        ndvi_masked = apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
-        del ndvi, cloud_mask, snow_mask, illumination_mask
+        apply_masks(ndvi, cloud_mask, snow_mask, illumination_mask)
+        del cloud_mask, snow_mask, illumination_mask
 
         # Combine: fill gaps in combined NDVI with values from this (older) item
         if ndvi_combined is None:
-            ndvi_combined = ndvi_masked
+            ndvi_combined = ndvi
         else:
             # Only fill pixels that are still NaN in the combined array
-            fill_mask = np.isnan(ndvi_combined)
-            ndvi_combined[fill_mask] = ndvi_masked[fill_mask]
-        del ndvi_masked
+            np.copyto(ndvi_combined, ndvi, where=np.isnan(ndvi_combined))
+        del ndvi
 
         # Track this item as used
         NDVI_index_list.append(item.id)
@@ -478,10 +460,6 @@ def process_product_vhi(
     # INPUT DATA: REFERENCE NDVI
     # Load or compute long-term NDVI statistics for climate reference period (1991-2020)
     s3_path_ndvi_ref = f"{config.PRODUCT_VHI['NDVI_reference_data']}NDVI_Stats_DOY{doy_str}.tif"
-
-    with rasterio.open(s3_path_ndvi_ref) as src_ref:
-        # Define window from ROI
-        window = from_bounds(*roi, src_ref.transform)
 
     # Function to resample 30m reference NDVI to match current NDVI resolution
     def load_scale_and_resample_ndvi_reference(filepath, roi, target_transform, target_shape, band_num,
@@ -507,8 +485,7 @@ def process_product_vhi(
         numpy.ndarray
             Resampled band
         """
-        from rasterio.warp import reproject
-        
+
         with rasterio.open(filepath) as src:
             window = from_bounds(*roi, src.transform)
             data = src.read(band_num, window=window, out_dtype=np.float32, boundless=True, fill_value=nodata)
@@ -794,7 +771,7 @@ def process_product_vhi(
     xs = np.array([target_transform.c + (col + 0.5) * target_transform.a for col in range(width)])
     ys = np.array([target_transform.f + (row + 0.5) * target_transform.e for row in range(height)])
     vhi = xr.DataArray(vhi, dims=('y', 'x'), coords={'y': ys, 'x': xs})
-    vhi = vhi.rio.write_crs(src_crs)
+    vhi = vhi.rio.write_crs(target_crs)
 
     ##############################
     # SET METADATA
@@ -821,66 +798,59 @@ def process_product_vhi(
         'LST_scene_count': LST_scene_count,
         'VCI_and_TCI_calculated_with': CI_method,
         'pixel_size_meter': config.PRODUCT_VHI['spatial_scale_export'],
+        'mask_forest': forest_mask_name,
+        'mask_vegetation': vegetation_mask_name
     })
 
     ##############################
     # APPLY VEGETATION MASK
-    s3_path_forest_mask = f's3://s3-topo-satromo-prod/data/MASKS/Vegetation/wald_lebensraumkarte20220316_epsg2056.tif'
-    s3_path_vegetation_mask = f's3://s3-topo-satromo-prod/data/MASKS/Vegetation/trans_mask_2056.tif'
+    # Function to resolve the path to a mask file, checking local assets first and falling back to S3 if not found
+    def resolve_mask_path(mask_name):
+        """
+        Return the local_assets path to a mask file if it exists there,
+        otherwise fall back to the S3 path (same filename, different location).
+        """
+        local_path = os.path.join("local_assets", mask_name)
+        if os.path.isfile(local_path):
+            print(f"Using local mask: {local_path}")
+            return local_path
 
-    # --- quick fix to handle different resolutions and extents of vegetation mask ---
-    # 
-    # TODO check if resampling is necessary with the new vegetation masks
-    #
-    # This should run with the new vegetation masks, that matches the S2 grid:
-    # with rasterio.open(s3_path_vegetation_mask) as src_veg:
-    #     window = from_bounds(*roi, src_veg.transform)
-    #     vegetation_mask = src_veg.read(1, window=window)
-    #
-    # This is the quick fix:
-    # Forest mask
-    with rasterio.open(s3_path_forest_mask) as src_veg:
-        window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
-        src_transform_veg = src_veg.window_transform(window)
-        src_crs_veg = src_veg.crs
+        s3_path = f"{config.PRODUCT_VHI['vegetation_masks']}{mask_name}"
+        print(f"Local mask not found, falling back to S3: {s3_path}")
+        return s3_path
 
-    # Resample to match target grid (same as all other layers)
-    forest_mask = np.empty(target_shape, dtype=np.float32)
-    reproject(
-        source=data_veg.astype(np.float32),
-        destination=forest_mask,
-        src_transform=src_transform_veg,
-        src_crs=src_crs_veg,
-        dst_transform=target_transform,
-        dst_crs=src_crs_veg,
-        resampling=Resampling.nearest,
-        src_nodata=0,
-        dst_nodata=0
-    )
-    forest_mask = forest_mask.astype(np.uint8)
-    # ---
-    # Vegetation mask
-    with rasterio.open(s3_path_vegetation_mask) as src_veg:
-        window = from_bounds(*roi, src_veg.transform)
-        data_veg = src_veg.read(1, window=window, boundless=True, fill_value=0)
-        src_transform_veg = src_veg.window_transform(window)
-        src_crs_veg = src_veg.crs
+    # Function to load a vegetation mask that is already on the swissEO S2-SR EPSG:2056 10 m grid
+    def load_mask_on_target_grid(mask_path, roi, target_transform, target_shape):
+        """Read a vegetation mask that is already on the swissEO S2-SR EPSG:2056 10 m grid (no resampling)."""
+        with rasterio.open(mask_path) as src:
+            # Sanity checks: grid must be identical to the target grid
+            if src.crs != rasterio.crs.CRS.from_epsg(2056):
+                raise ValueError(f"{mask_path}: unexpected CRS {src.crs}")
+            if (abs(src.transform.a) != abs(target_transform.a)
+                    or abs(src.transform.e) != abs(target_transform.e)):
+                raise ValueError(f"{mask_path}: pixel size {src.res} != target {(target_transform.a, -target_transform.e)}")
 
-    # Resample to match target grid (same as all other layers)
-    vegetation_mask = np.empty(target_shape, dtype=np.float32)
-    reproject(
-        source=data_veg.astype(np.float32),
-        destination=vegetation_mask,
-        src_transform=src_transform_veg,
-        src_crs=src_crs_veg,
-        dst_transform=target_transform,
-        dst_crs=src_crs_veg,
-        resampling=Resampling.nearest,
-        src_nodata=0,
-        dst_nodata=0
-    )
-    vegetation_mask = vegetation_mask.astype(np.uint8)
+            window = from_bounds(*roi, src.transform)
+            win_transform = src.window_transform(window)
+
+            # Origin must fall on the same pixel edges as the target grid
+            if (abs(win_transform.c - target_transform.c) > 1e-6
+                    or abs(win_transform.f - target_transform.f) > 1e-6):
+                raise ValueError(f"{mask_path}: grid offset vs. target "
+                                f"({win_transform.c - target_transform.c}, {win_transform.f - target_transform.f})")
+
+            mask = src.read(1, window=window, boundless=True, fill_value=0,
+                            out_shape=target_shape)   # no resampling if sizes agree
+
+        return mask.astype(np.uint8, copy=False)
+    
+    # Generate the paths for the forest and vegetation masks, checking local assets first
+    path_forest_mask = resolve_mask_path(forest_mask_name)
+    path_vegetation_mask = resolve_mask_path(vegetation_mask_name)
+
+    # Load the masks and check if they're on the target grid
+    forest_mask = load_mask_on_target_grid(path_forest_mask, roi, target_transform, target_shape)
+    vegetation_mask = load_mask_on_target_grid(path_vegetation_mask, roi, target_transform, target_shape)
 
     # Apply vegetation mask to VHI
     vhi_forest = vhi.where(forest_mask != 0, other=config.PRODUCT_VHI['no_data'])
@@ -990,7 +960,7 @@ def process_product_vhi(
             except Exception:
                 return []
 
-        def raster_entry(asset_filename, geocat_id):
+        def raster_entry(asset_filename, geocat_id, mask_name):
             return {
                 "BANDS": raster_band_info(asset_filename),
                 "PROPERTIES": {
@@ -1019,10 +989,11 @@ def process_product_vhi(
                     "PIXEL_SIZE_METER": attrs.get('pixel_size_meter'),
                     "SYSTEM_TIME_START": str(attrs.get('system:time_start')),
                     "SYSTEM_TIME_END": str(attrs.get('system:time_end')),
+                    "VEGETATION_MASK": mask_name,
                 },
             } 
 
-        def warnregion_entry(warnregion_filename, source_tif, fmt):
+        def warnregion_entry(warnregion_filename, source_tif, fmt, mask_name):
             return {
                 "PRODUCT": config.PRODUCT_VHI['product_name'],
                 "ITEM": item_label,
@@ -1033,19 +1004,20 @@ def process_product_vhi(
                 "regionId": "RegionID",
                 "vhiMean": "VHI Mean Region",
                 "availabilityPercentage": "percentage of available pixels with information within region",
+                "VEGETATION_MASK": mask_name,
             }
 
         metadata = {}
 
-        metadata["FOREST-10M"] = raster_entry(filename_forest, config.PRODUCT_VHI['geocat_id_forest'])
+        metadata["FOREST-10M"] = raster_entry(filename_forest, config.PRODUCT_VHI['geocat_id_forest'], attrs.get('mask_forest'))
         for fmt in warnformats:
             key = f"FOREST-WARNREGIONS{fmt.replace('.', '-').upper()}"
-            metadata[key] = warnregion_entry(warnregionfilename_forest, filename_forest, fmt)
+            metadata[key] = warnregion_entry(warnregionfilename_forest, filename_forest, fmt, attrs.get('mask_forest'))
 
-        metadata["VEGETATION-10M"] = raster_entry(filename_vegetation, config.PRODUCT_VHI['geocat_id_vegetation'])
+        metadata["VEGETATION-10M"] = raster_entry(filename_vegetation, config.PRODUCT_VHI['geocat_id_vegetation'], attrs.get('mask_vegetation'))
         for fmt in warnformats:
             key = f"VEGETATION-WARNREGIONS{fmt.replace('.', '-').upper()}"
-            metadata[key] = warnregion_entry(warnregionfilename_vegetation, filename_vegetation, fmt)
+            metadata[key] = warnregion_entry(warnregionfilename_vegetation, filename_vegetation, fmt, attrs.get('mask_vegetation'))
 
         filename_metadata = (
             f"{config.PRODUCT_VHI['product_name'].replace('ch.swisstopo.', '')}"

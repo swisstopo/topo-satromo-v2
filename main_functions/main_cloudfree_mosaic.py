@@ -27,6 +27,8 @@ Usage (CLI):
                          Asset title of the cloud-mask COGtif. Default: "Cloud mask - 10m"
       --aoi PATH         GeoPackage with area-of-interest polygon. Default: assets/swissboundary_buffer_5000m.gpkg
                          Pass '' or 'none' to disable.
+      --edge-margin-px N       Width in px of scene-edge band checked for dark-border artifact. Default: 200. 0 disables.
+      --edge-brightness V      Mean RGB below which an edge-band pixel is dark-border. Default: 40.
 
     Examples:
         python main_functions/main_cloudfree_mosaic.py
@@ -54,6 +56,7 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.features import geometry_mask
 from rasterio.vrt import WarpedVRT
+from scipy.ndimage import binary_erosion
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -115,6 +118,49 @@ def _compute_valid_fraction(cloud_mask_href: str, tci_href: str) -> float:
         return 0.0
 
 
+def _flag_dark_edges(
+    bands: np.ndarray,
+    has_data: np.ndarray,
+    margin_px: int,
+    brightness_threshold: float,
+) -> np.ndarray:
+    """
+    Flag pixels near the edge of a scene's real footprint that are darker
+    than expected (the satellite-pass "dark border" artifact).
+
+    Some orbits have a border of dark-but-not-black pixels along one edge
+    of the swath (varies in width per pass and along the pass), which a
+    plain "band value == 0" no-data check does not catch. Only pixels
+    within `margin_px` of the true no-data boundary are checked here, so
+    genuinely dark interior features (water, deep shadow, dense forest)
+    are left untouched.
+
+    Returns a boolean array (same shape as has_data), True = dark-edge
+    pixel to be excluded.
+    """
+    dark_edge = np.zeros_like(has_data)
+    if margin_px <= 0 or not has_data.any():
+        return dark_edge
+
+    # Crop to the scene's bounding box so erosion runs on a much smaller
+    # array than the full mosaic canvas (which spans all of Switzerland).
+    rows = np.where(has_data.any(axis=1))[0]
+    cols = np.where(has_data.any(axis=0))[0]
+    r0, r1 = rows[0], rows[-1] + 1
+    c0, c1 = cols[0], cols[-1] + 1
+
+    sub_mask = has_data[r0:r1, c0:c1]
+    # Isotropic (8-connected) structuring element so the margin applies
+    # equally regardless of which side the dark border is on.
+    structure = np.ones((3, 3), dtype=bool)
+    eroded = binary_erosion(sub_mask, structure=structure, iterations=margin_px, border_value=0)
+    edge_zone_sub = sub_mask & ~eroded
+
+    brightness_sub = bands[:, r0:r1, c0:c1].mean(axis=0)
+    dark_edge[r0:r1, c0:c1] = edge_zone_sub & (brightness_sub < brightness_threshold)
+    return dark_edge
+
+
 def _sort_items(
     items: list,
     sort_method: str,
@@ -164,6 +210,8 @@ def create_cloudfree_mosaic(
     collection_id: str = COLLECTION_ID,
     cloud_mask_title: str = CLOUD_MASK_TITLE,
     aoi_gpkg: Optional[Union[str, Path]] = AOI_GPKG,
+    edge_margin_px: int = 200,
+    edge_brightness_threshold: float = 40,
 ) -> Optional[Path]:
     """
     Create a cloud-free mosaic from STAC Sentinel-2 assets.
@@ -209,6 +257,17 @@ def create_cloudfree_mosaic(
           margin that no scene ever covers;
         - pixels outside the AOI are always written as no-data.
         Defaults to assets/swissboundary_buffer_5000m.gpkg.
+    edge_margin_px : int
+        Width, in 10 m pixels, of the band along each scene's real
+        footprint edge that is checked for the "dark border" artifact
+        (some orbits have a dark-but-not-black strip of varying width
+        along one edge). Pixels in this band whose mean RGB is below
+        `edge_brightness_threshold` are treated as no-data. Set to 0 to
+        disable. Default 20 (200 m).
+    edge_brightness_threshold : float
+        Mean RGB value (0-255 for uint8 TCI) below which an edge-band
+        pixel is considered a dark-border artifact rather than real data.
+        Default 40.
 
     Returns
     -------
@@ -237,6 +296,7 @@ def create_cloudfree_mosaic(
     print(f"  Sort method   : {sort_method}")
     print(f"  Mosaic method : {mosaic_method}")
     print(f"  No-data thr.  : {no_data_threshold}")
+    print(f"  Dark-edge     : margin={edge_margin_px}px, brightness<{edge_brightness_threshold}")
     print(f"  STAC          : {stac_url}")
     print("=" * 60)
 
@@ -415,14 +475,26 @@ def create_cloudfree_mosaic(
             # Cloud mask 0 also means no-data outside the orbit, so restrict to
             # pixels where TCI actually has data (at least one band > 0).
             has_data = bands.max(axis=0) > 0
-            valid = has_data & (cloud == 0) & aoi_mask
+
+            # Exclude the dark-border artifact near the scene's real edge
+            # (see _flag_dark_edges) before it can be treated as valid data.
+            dark_edge = _flag_dark_edges(bands, has_data, edge_margin_px, edge_brightness_threshold)
+            has_data_clean = has_data & ~dark_edge
+
+            valid = has_data_clean & (cloud == 0) & aoi_mask
             n_valid      = int(valid.sum())
             n_tci_in_aoi = int((has_data & aoi_mask).sum())
+            n_dark_edge  = int((dark_edge & aoi_mask).sum())
             print(
                 f"    TCI coverage in AOI: {n_tci_in_aoi:,} px  |  "
                 f"cloud-free: {n_valid:,} px "
                 f"({n_valid/max(n_tci_in_aoi,1):.1%} of TCI coverage)"
             )
+            if n_dark_edge:
+                print(
+                    f"    Dark-edge excluded : {n_dark_edge:,} px "
+                    f"(within {edge_margin_px}px of scene edge, brightness < {edge_brightness_threshold})"
+                )
 
             if not valid.any():
                 print("    No valid pixels — skipping.")
@@ -640,6 +712,20 @@ def _parse_args() -> argparse.Namespace:
             "Pass '' or 'none' to disable."
         ),
     )
+    parser.add_argument(
+        "--edge-margin-px",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Width in 10m pixels of the scene-edge band checked for the dark-border artifact. 0 disables.",
+    )
+    parser.add_argument(
+        "--edge-brightness",
+        type=float,
+        default=40,
+        metavar="V",
+        help="Mean RGB value (0-255) below which an edge-band pixel is treated as a dark-border artifact.",
+    )
     return parser.parse_args()
 
 
@@ -660,6 +746,8 @@ def main() -> None:
         collection_id=args.collection,
         cloud_mask_title=args.cloud_mask_title,
         aoi_gpkg=aoi,
+        edge_margin_px=args.edge_margin_px,
+        edge_brightness_threshold=args.edge_brightness,
     )
 
 
