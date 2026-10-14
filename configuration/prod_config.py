@@ -31,7 +31,6 @@ ROI_BORDER_BUFFER = 5000  # Buffer around Switzerland
 
 # Switzerland border and lakes with 5km buffer :
 BUFFER = os.path.join("assets", "swissboundary_buffer_5000m.gpkg")
-
 OVERVIEW_LAKES = os.path.join("assets", "overview_lakes_2056.gpkg")
 OVERVIEW_RIVERS = os.path.join("assets", "overview_rivers_2056.gpkg")
 
@@ -44,16 +43,15 @@ GPU_ENFORCEMENT = True # Set to True to enforce GPU usage for AROSICS, False to 
 # A) PRODUCTS, INDICES
 # ********************
 
-
-#  ch.swisstopo.swisseo_s2-sr
-#Sentinel-2 L2A Band configurations
+# ch.swisstopo.swisseo_s2-sr
+# Sentinel-2 L2A Band configurations
 SENTINEL2_BAND_CONFIG ={
     10:['B02', 'B03', 'B04', 'B08',], # 10m bands: BLUE, GREEN, RED, NIR
     20:['B05', 'B06', 'B07', 'B8A', 'B11', 'B12', 'SCL',], # 20m bands: SWIR and RedEdge bands and SCL
     60:['B01', 'B09', 'AOT',] # 60m bands: Coastal Aerosol  Water Vapor and Aerosol
 }
 
-#Sentinel-2 L2A Band Names
+# Sentinel-2 L2A Band Names
 SENTINEL2_BAND_NAMES = {
     'B02': "Blue (band 2) - 10m",
     'B03': "Green (band 3) - 10m",
@@ -84,7 +82,25 @@ PRODUCT_S2_LEVEL_2A = {
     "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
 }
 
-
+# VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
+PRODUCT_VHI = {
+    # TODO: check if needed in context with step0
+    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
+    "geocat_id_forest": "a6ea2b6f-d723-4f10-b36c-b09cdc7fa0d3",
+    "geocat_id_vegetation": "859e8dcf-1882-481d-a878-30f6c1edd0d2",
+    "temporal_coverage": 7,  # Days
+    "spatial_scale_export": 10,  # Meters
+    "product_name": "ch.swisstopo.swisseo_vhi_v200",
+    "no_data": 255,
+    "missing_data": 110,
+    "scaling_factor": 1,
+    "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS/",
+    "LST_reference_data": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02/",
+    "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
+    "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
+    "step1_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
+    # "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+}
 
 # MSG – MeteoSchweiz: only used for repreocessing
 PRODUCT_MSG_CLIMA = {
