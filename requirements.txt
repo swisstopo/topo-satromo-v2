@@ -1,4 +1,5 @@
 affine==2.4.0
+aiohttp==3.13.3
 arosics==1.13.2
 attrs==25.4.0
 boto3==1.40.72
