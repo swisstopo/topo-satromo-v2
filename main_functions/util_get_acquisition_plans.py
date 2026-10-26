@@ -151,17 +151,21 @@ def extract_kml_links(html_text):
 # KML selection
 # ---------------------------------------------------------------------------
 
-def get_latest_kml(kml_dict):
+def get_kml_candidates(kml_dict):
     """
-    Pick the best KML from {slug: url}.
+    Order the KMLs from {slug: url} from best to worst.
 
     Priority:
-      1. KML whose [start, end] window contains today (newest end_date wins)
-      2. Fallback: KML with most recent end_date overall
+      1. KMLs whose [start, end] window contains today (newest end_date first)
+      2. All other KMLs (newest end_date first)
+
+    A list is returned (not only the best one) because ESA sometimes links a
+    freshly uploaded KML that is not yet public (HTTP 404). In that case the
+    caller tries the next candidate.
     """
     today = datetime.datetime.now()
-    best_active, best_active_end = None, None
-    best_fallback, best_fallback_end = None, None
+    active = []
+    others = []
 
     for slug in kml_dict:
         parts = slug.split("_")
@@ -177,37 +181,58 @@ def get_latest_kml(kml_dict):
             continue
 
         if start_date < today < end_date:
-            if best_active_end is None or end_date > best_active_end:
-                best_active, best_active_end = slug, end_date
+            active.append((end_date, slug))
         else:
-            if best_fallback_end is None or end_date > best_fallback_end:
-                best_fallback, best_fallback_end = slug, end_date
+            others.append((end_date, slug))
 
-    if best_active:
-        print(f"  -> Active KML: {best_active}")
-        return best_active
-    if best_fallback:
-        print(f"  -> No active KML; fallback to: {best_fallback}")
-        return best_fallback
-    return None
+    active.sort(reverse=True)
+    others.sort(reverse=True)
+
+    candidates = []
+    for end_date, slug in active:
+        candidates.append(slug)
+    for end_date, slug in others:
+        candidates.append(slug)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
 # Download and AOI extraction
 # ---------------------------------------------------------------------------
 
-def download_and_extract_kml(file_url, output_filename, output_path):
-    """Download KML and extract AOI entries to <output_filename>_AOI.csv."""
+def download_kml(file_url, output_filename, output_path):
+    """
+    Download KML to <output_filename>.kml; return True on success.
+
+    Some ESA files are stored with a trailing ":" in their URL, but the link
+    on the acquisition plan page omits it (HTTP 404). So if the linked URL
+    fails, the same URL with ":" appended is tried as well.
+    """
     kml_file_path = os.path.join(output_path, output_filename + ".kml")
-    try:
-        req = ul.Request(file_url, headers=HTTP_HEADERS)
-        with ul.urlopen(req, timeout=60) as resp, open(kml_file_path, "wb") as fh:
-            fh.write(resp.read())
-        print(f"  Downloaded: {file_url}")
-    except Exception as exc:
-        print(f"  ERROR downloading {file_url}: {exc}")
+    urls_to_try = [file_url, file_url + ":"]
+
+    content = None
+    for url in urls_to_try:
+        try:
+            req = ul.Request(url, headers=HTTP_HEADERS)
+            with ul.urlopen(req, timeout=60) as resp:
+                content = resp.read()
+            print(f"  Downloaded: {url}")
+            break
+        except Exception as exc:
+            print(f"  ERROR downloading {url}: {exc}")
+
+    if content is None:
         return False
 
+    with open(kml_file_path, "wb") as fh:
+        fh.write(content)
+    return True
+
+
+def extract_aoi(output_filename, output_path):
+    """Extract AOI entries from <output_filename>.kml to <output_filename>_AOI.csv."""
+    kml_file_path = os.path.join(output_path, output_filename + ".kml")
     platform_tag = output_filename[:3].upper()
     entries = extract_S2_entries(
         platform_tag, kml_file_path, output_filename + "_AOI.csv",
@@ -288,14 +313,14 @@ def main():
         for slug in sorted(kml_dict.keys(), reverse=True):
             print(f"    {slug}")
 
-        key = get_latest_kml(kml_dict)
-        if not key:
-            results[sat] = False
-            continue
-
-        results[sat] = download_and_extract_kml(
-            kml_dict[key], output_name, STORAGE_PATH,
-        )
+        # Try the best KML first; if it cannot be downloaded, try the next one
+        results[sat] = False
+        candidates = get_kml_candidates(kml_dict)
+        for slug in candidates:
+            print(f"  -> Trying KML: {slug}")
+            if download_kml(kml_dict[slug], output_name, STORAGE_PATH):
+                results[sat] = extract_aoi(output_name, STORAGE_PATH)
+                break
 
     print("\nMerging AOI CSV files ...")
     merge_ok = merge_aoi_files(STORAGE_PATH, os.path.join("tools", "acquisitionplan.csv"))
