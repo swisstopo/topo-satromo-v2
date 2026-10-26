@@ -5,6 +5,7 @@ import csv
 from datetime import datetime, timedelta
 from main_functions import main_utils
 from step0_processors import *
+from step0_processors.step0_utils import write_asset_as_empty
 from step1_processors import *
 
 def write_file(input_dict, output_file):
@@ -38,10 +39,16 @@ def step0_main(step0_product_dict, current_date_str):
     for step0_collection, (products, temporal_coverage, base_collection) in step0_product_dict.items():
         temporal_coverage -= 1
 
-        ok = step0_check_collection(
+        status = step0_check_collection(
             step0_collection, temporal_coverage, current_date_str)
-        if ok:
+        if status == 'ready':
             collections_ready.append(step0_collection)
+        elif status == 'empty' and 'PRODUCT_VHI' in products:
+            # No S2-SR data in the whole time window: no VHI can be made for this date
+            # Only write once per date, to avoid duplicate rows when the date is run again
+            product_name = config.PRODUCT_VHI['product_name']
+            if not main_utils.is_date_in_empty_asset_list(product_name, current_date_str):
+                write_asset_as_empty(product_name, current_date_str, 'No S2-SR scene in time window')
 
     return collections_ready
 
@@ -61,7 +68,9 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         current_date_str: Current date as string (format: 'YYYY-MM-DD')
 
     Returns:
-        bool: True if all assets are present, False otherwise
+        str: 'ready' if all dates are accounted for and at least one date has data,
+             'empty' if all dates are accounted for but none has data,
+             'not_ready' otherwise
     """
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
@@ -100,7 +109,7 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
             print(f"Collection ID: {collection_id}")
         except ValueError as e:
             print(f"Error parsing STAC URL: {e}")
-            return False
+            return 'not_ready'
 
         # Query STAC for items on the target date
         # We'll collect all items across the temporal coverage period
@@ -153,7 +162,12 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
     # Only mark collection as ready if:
     # 1. All dates are accounted for (either ready or empty)
     # 2. At least one date has actual data (not all dates are empty)
-    return all_present and has_any_real_data
+    if all_present and has_any_real_data:
+        return 'ready'
+    elif all_present:
+        return 'empty'
+    else:
+        return 'not_ready'
 
 
 def check_if_asset_prepared(collection, assets, check_date):

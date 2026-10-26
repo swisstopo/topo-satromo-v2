@@ -16,6 +16,7 @@ from affine import Affine
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from main_functions import main_utils, main_publish_stac_fsdi, main_extract_warnregions, main_thumbnails
+from step0_processors.step0_utils import write_asset_as_empty
 
 ##############################
 # INTRODUCTION
@@ -360,7 +361,17 @@ def process_product_vhi(
     )
 
     if len(s2_sr_items_sorted) == 0:
-        raise ValueError(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
+        print(f"No S2-SR items found for the time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
+        # Backup check: normally step0 (step0_functions.step0_main) already writes the VHI row when the
+        # whole time window has no S2-SR data, and this function is then not called at all.
+        # This only does something when step0 found data, but the search here finds none,
+        # e.g. when a test ROI is set that the available S2-SR items do not cover.
+        # Write the VHI product name (not the S2-SR input collection) into the empty asset list,
+        # so the S2-SR rows used by check_s2_sr.py / rerun.py are not affected.
+        # Only write once per date, to avoid duplicate rows when the date is run again.
+        if not main_utils.is_date_in_empty_asset_list(product_name, current_date_str):
+            write_asset_as_empty(product_name, current_date_str, 'No S2-SR scene in time window')
+        return f"VHI: no S2-SR scene available for {current_date_str}, written to empty asset list."
     else:
         print(f"Found {len(s2_sr_items_sorted)} items in time window {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} and the specified ROI.")
         print(f'Starting the VHI calculation for {current_date_str}')
