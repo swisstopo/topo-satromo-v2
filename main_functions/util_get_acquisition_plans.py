@@ -201,19 +201,32 @@ def get_kml_candidates(kml_dict):
 # ---------------------------------------------------------------------------
 
 def download_kml(file_url, output_filename, output_path):
-    """Download KML to <output_filename>.kml; return True on success."""
+    """
+    Download KML to <output_filename>.kml; return True on success.
+
+    Some ESA files are stored with a trailing ":" in their URL, but the link
+    on the acquisition plan page omits it (HTTP 404). So if the linked URL
+    fails, the same URL with ":" appended is tried as well.
+    """
     kml_file_path = os.path.join(output_path, output_filename + ".kml")
-    try:
-        req = ul.Request(file_url, headers=HTTP_HEADERS)
-        with ul.urlopen(req, timeout=60) as resp:
-            content = resp.read()
-    except Exception as exc:
-        print(f"  ERROR downloading {file_url}: {exc}")
+    urls_to_try = [file_url, file_url + ":"]
+
+    content = None
+    for url in urls_to_try:
+        try:
+            req = ul.Request(url, headers=HTTP_HEADERS)
+            with ul.urlopen(req, timeout=60) as resp:
+                content = resp.read()
+            print(f"  Downloaded: {url}")
+            break
+        except Exception as exc:
+            print(f"  ERROR downloading {url}: {exc}")
+
+    if content is None:
         return False
 
     with open(kml_file_path, "wb") as fh:
         fh.write(content)
-    print(f"  Downloaded: {file_url}")
     return True
 
 
