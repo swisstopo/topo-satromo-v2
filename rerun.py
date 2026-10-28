@@ -26,14 +26,44 @@ def count_csv_rows_for_date(collection_basename, date_str):
     return int(((df['collection'] == collection_basename) & (df['date'] == date_str)).sum())
 
 
-def s2_sr_item_exists(date_str):
-    """True if the S2-SR STAC collection has at least one item for this date."""
+# Remarks in the rows of the follow-up products (e.g. VHI) that mean "an input was
+# not there yet, try again later". Rows with any other remark are left alone.
+RETRY_REMARKS = ['LST missing']
+
+
+def stac_item_exists(collection_url, date_str):
+    """True if the STAC collection (URL as written in the config) has at least one item for this date."""
     api_path = getattr(config, 'STAC_FSDI_API')
-    collection = config.PRODUCT_S2_LEVEL_2A['step0_collection']
-    stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
+    stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection_url, api_path)
     check_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
     return len(items) > 0
+
+
+def build_subprocess_env(script_dir):
+    """Environment for the satromo_processor.py subprocess: current environment plus PYTHONPATH."""
+    env = os.environ.copy()
+
+    # Platform-agnostic virtual environment detection
+    venv_site_packages = os.path.join(sys.prefix, 'lib', 'site-packages')  # Linux
+    venv_site_packages_win = os.path.join(sys.prefix, 'Lib', 'site-packages')  # Windows
+
+    site_packages = None
+    if os.path.exists(venv_site_packages):
+        site_packages = venv_site_packages
+    elif os.path.exists(venv_site_packages_win):
+        site_packages = venv_site_packages_win
+
+    paths_to_add = [script_dir]
+    if site_packages:
+        paths_to_add.append(site_packages)
+
+    if 'PYTHONPATH' in env:
+        env['PYTHONPATH'] = os.pathsep.join(paths_to_add) + os.pathsep + env['PYTHONPATH']
+    else:
+        env['PYTHONPATH'] = os.pathsep.join(paths_to_add)
+
+    return env
 
 
 def get_follow_up_products():
@@ -94,30 +124,9 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
     Process and reprocess empty assets for a specific collection.
     """
 
-    # Setup environment - Use current environment as base
-    env = os.environ.copy()
-
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Platform-agnostic virtual environment detection
-    venv_site_packages = os.path.join(sys.prefix, 'lib', 'site-packages')  # Linux
-    venv_site_packages_win = os.path.join(sys.prefix, 'Lib', 'site-packages')  # Windows
-
-    site_packages = None
-    if os.path.exists(venv_site_packages):
-        site_packages = venv_site_packages
-    elif os.path.exists(venv_site_packages_win):
-        site_packages = venv_site_packages_win
-
-    paths_to_add = [script_dir]
-    if site_packages:
-        paths_to_add.append(site_packages)
-
-    if 'PYTHONPATH' in env:
-        env['PYTHONPATH'] = os.pathsep.join(paths_to_add) + os.pathsep + env['PYTHONPATH']
-    else:
-        env['PYTHONPATH'] = os.pathsep.join(paths_to_add)
+    env = build_subprocess_env(script_dir)
 
     try:
         # Read the empty asset list with error handling
@@ -219,7 +228,8 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                     print(f"✗ Process failed with exit code {return_code} for {check_date_str}")
                     failure_count += 1
                     date_failed = True
-                elif check_date_str in newly_marked_dates or not s2_sr_item_exists(check_date_str):
+                elif (check_date_str in newly_marked_dates
+                        or not stac_item_exists(config.PRODUCT_S2_LEVEL_2A['step0_collection'], check_date_str)):
                     print(f"! {check_date_str} was skipped by the processor "
                           f"(no S2-SR item in STAC). Nothing was produced, so the "
                           f"entry is kept in the CSV for the next run.")
@@ -330,6 +340,79 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         return False, False
 
 
+def retry_follow_up_products(days_back, config_file):
+    """
+    Retry dates where a follow-up product (e.g. VHI) was skipped because one of its
+    inputs was not there yet (remark in RETRY_REMARKS, e.g. 'LST missing').
+
+    For every such row: if the product already has a STAC item for that date, the
+    row is simply removed. Otherwise satromo_processor.py is run again for the date,
+    and the row is removed only if the product has a STAC item afterwards.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    env = build_subprocess_env(script_dir)
+
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=days_back)
+
+    for product in get_follow_up_products():
+        product_config = getattr(config, product)
+        collection_basename = product_config['product_name']
+
+        # The STAC check below needs the collection the product publishes to
+        if 'step1_collection' not in product_config:
+            print(f"{product}: no 'step1_collection' in config, retry of skipped dates not possible.")
+            continue
+        product_collection = product_config['step1_collection']
+
+        df = pd.read_csv(config.EMPTY_ASSET_LIST)
+        is_retry_remark = df['remark'].astype(str).apply(
+            lambda remark: any(marker in remark for marker in RETRY_REMARKS)
+        )
+        mask_retry = (
+            (df['collection'] == collection_basename) &
+            (df['date'] >= start_date.strftime('%Y-%m-%d')) &
+            (df['date'] <= end_date.strftime('%Y-%m-%d')) &
+            is_retry_remark
+        )
+        df_retry = df[mask_retry]
+
+        print(f"\n{'='*60}")
+        print(f"RETRY {product}: {len(df_retry)} date(s) with remark {RETRY_REMARKS}")
+        print(f"{'='*60}")
+
+        resolved_rows = []  # (date, remark) of the rows that can be removed from the CSV
+        for date_str, remark in zip(df_retry['date'], df_retry['remark']):
+            print(f"\n--- Retry {product} for {date_str} ({remark}) ---")
+            try:
+                # A follow-up run earlier in this rerun may already have produced it
+                if not stac_item_exists(product_collection, date_str):
+                    return_code = run_satromo_processor(config_file, date_str, env, script_dir)
+                    if return_code != 0:
+                        print(f"✗ Retry failed with exit code {return_code} for {date_str}, kept in CSV")
+                        continue
+
+                if stac_item_exists(product_collection, date_str):
+                    print(f"✓ {product} available for {date_str}, removing '{remark}' from CSV")
+                    resolved_rows.append((date_str, remark))
+                else:
+                    print(f"! {product} still not produced for {date_str}, kept in CSV for the next run")
+            except Exception as e:
+                print(f"✗ Unexpected error in retry for {date_str}: {e}")
+
+        # Re-read the CSV: the subprocesses write to it while they run (see process_empty_asset_list)
+        if resolved_rows:
+            df_now = pd.read_csv(config.EMPTY_ASSET_LIST)
+            mask_resolved = df_now.apply(
+                lambda row: (row['collection'] == collection_basename
+                             and (row['date'], row['remark']) in resolved_rows),
+                axis=1
+            )
+            df_now[~mask_resolved].to_csv(config.EMPTY_ASSET_LIST, index=False)
+
+        print(f"\nRETRY {product} SUMMARY: resolved {len(resolved_rows)} of {len(df_retry)}")
+
+
 def main():
     print("="*60)
     print("RERUN.PY - Empty Asset Reprocessing")
@@ -344,6 +427,10 @@ def main():
     collection = config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1]
 
     result, aborted_early = process_empty_asset_list(collection, days_back, config_file)
+
+    # Runs also after an early abort: the follow-up products (e.g. VHI) read from
+    # swisstopo STAC, not from Copernicus, so an outage there does not affect them.
+    retry_follow_up_products(days_back, config_file)
 
     print()
     print("="*60)
