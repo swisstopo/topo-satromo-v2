@@ -8,6 +8,7 @@ import shutil
 # Add parent directory to path for configuration import
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import configuration as config
+from main_functions import main_utils
 
 
 def count_csv_rows_for_date(collection_basename, date_str):
@@ -23,6 +24,69 @@ def count_csv_rows_for_date(collection_basename, date_str):
     except (FileNotFoundError, pd.errors.EmptyDataError):
         return 0
     return int(((df['collection'] == collection_basename) & (df['date'] == date_str)).sum())
+
+
+def s2_sr_item_exists(date_str):
+    """True if the S2-SR STAC collection has at least one item for this date."""
+    api_path = getattr(config, 'STAC_FSDI_API')
+    collection = config.PRODUCT_S2_LEVEL_2A['step0_collection']
+    stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
+    check_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
+    return len(items) > 0
+
+
+def get_follow_up_products():
+    """Names of the other products in the config that satromo_processor.py runs (e.g. PRODUCT_VHI).
+
+    satromo_processor.py runs every product that has a 'step0_collection' (same rule as
+    get_step0_dict() in step0_functions.py). S2-SR itself is left out: it is the product
+    this script reprocesses in the first place.
+    """
+    products = []
+    for name in dir(config):
+        if name == 'PRODUCT_S2_LEVEL_2A':
+            continue
+        value = getattr(config, name)
+        if isinstance(value, dict) and 'step0_collection' in value:
+            products.append(name)
+    return products
+
+
+def run_satromo_processor(config_file, date_str, env, script_dir):
+    """Run satromo_processor.py for one date, print its output live and return its exit code."""
+    processor_script = os.path.join(script_dir, 'satromo_processor.py')
+    if not os.path.exists(processor_script):
+        print(f"ERROR: Processor script not found: {processor_script}")
+        return 1
+
+    command = [
+        sys.executable,
+        '-u',
+        processor_script,
+        config_file,
+        date_str
+    ]
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=0,
+        env=env,
+        cwd=script_dir,
+        universal_newlines=True
+    )
+
+    while True:
+        line = process.stdout.readline()
+        if not line and process.poll() is not None:
+            break
+        if line:
+            print(line, end='', flush=True)
+
+    return process.poll()
 
 
 def process_empty_asset_list(collection_basename, days_back, config_file):
@@ -137,77 +201,33 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
             rows_before = count_csv_rows_for_date(collection_basename, check_date_str)
 
             try:
-                python_path = sys.executable
-                processor_script = os.path.join(script_dir, 'satromo_processor.py')
+                return_code = run_satromo_processor(config_file, check_date_str, env, script_dir)
 
-                if not os.path.exists(processor_script):
-                    print(f"ERROR: Processor script not found: {processor_script}")
+                # Check whether the subprocess appended a brand new CSV row for this date
+                # while it ran (e.g. "cloudy"). The final CSV rebuild below needs this to
+                # replace the old placeholder row with the fresh one instead of losing it.
+                rows_after = count_csv_rows_for_date(collection_basename, check_date_str)
+                if rows_after > rows_before:
+                    newly_marked_dates.add(check_date_str)
+
+                # The processor exits 0 both when it produced S2-SR and when it decided
+                # there was nothing to do. So we ask the S2-SR STAC collection directly
+                # whether the date now has an item. We do not search the log for text:
+                # other products in the config (e.g. VHI looks 7 days back) also print
+                # messages about OTHER dates, which would make a log check unreliable.
+                if return_code != 0:
+                    print(f"✗ Process failed with exit code {return_code} for {check_date_str}")
                     failure_count += 1
                     date_failed = True
+                elif check_date_str in newly_marked_dates or not s2_sr_item_exists(check_date_str):
+                    print(f"! {check_date_str} was skipped by the processor "
+                          f"(no S2-SR item in STAC). Nothing was produced, so the "
+                          f"entry is kept in the CSV for the next run.")
+                    skipped_count += 1
                 else:
-                    command = [
-                        python_path,
-                        '-u',
-                        processor_script,
-                        config_file,
-                        check_date_str
-                    ]
-
-                    process = subprocess.Popen(
-                        command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=0,
-                        env=env,
-                        cwd=script_dir,
-                        universal_newlines=True
-                    )
-
-                    # The processor exits 0 both when it produced a product and when it
-                    # decided there was nothing to do. Watch its output for the "nothing
-                    # to do" markers so a skipped date is never recorded as processed and
-                    # dropped from the CSV. 'Date found in empty_asset_list' covers a date
-                    # that was already known-empty before this run started; 'Cutting asset
-                    # create for' is printed by write_asset_as_empty() itself, so it also
-                    # catches a date that only turned out empty *during* this run (too
-                    # cloudy, tile download/upload incomplete, etc).
-                    skipped_as_empty = False
-
-                    while True:
-                        line = process.stdout.readline()
-                        if not line and process.poll() is not None:
-                            break
-                        if line:
-                            print(line, end='', flush=True)
-                            if ('Date found in empty_asset_list' in line
-                                    or 'Cutting asset create for' in line):
-                                skipped_as_empty = True
-
-                    return_code = process.poll()
-
-                    # Beyond the stdout marker above, also check whether the subprocess
-                    # appended a brand new CSV row for this date while it ran. This is the
-                    # authoritative signal (the marker text could in principle change or be
-                    # missed), and it is also what the final CSV rebuild below needs to
-                    # replace the old placeholder row with the fresh one instead of losing it.
-                    rows_after = count_csv_rows_for_date(collection_basename, check_date_str)
-                    if rows_after > rows_before:
-                        newly_marked_dates.add(check_date_str)
-
-                    if return_code == 0 and (skipped_as_empty or check_date_str in newly_marked_dates):
-                        print(f"! {check_date_str} was skipped by the processor "
-                              f"(still listed as having no source data). Nothing was "
-                              f"produced, so the entry is kept in the CSV for the next run.")
-                        skipped_count += 1
-                    elif return_code == 0:
-                        print(f"✓ Successfully processed {check_date_str}")
-                        success_count += 1
-                        processed_dates.add(check_date_str)
-                    else:
-                        print(f"✗ Process failed with exit code {return_code} for {check_date_str}")
-                        failure_count += 1
-                        date_failed = True
+                    print(f"✓ Successfully processed {check_date_str}")
+                    success_count += 1
+                    processed_dates.add(check_date_str)
 
             except Exception as e:
                 print(f"✗ Unexpected error processing {check_date_str}: {e}")
@@ -253,6 +273,32 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         df_final = df_now[~mask_stale]
         df_final.to_csv(config.EMPTY_ASSET_LIST, index=False)
 
+        # Follow-up run for the other products in the config (e.g. VHI).
+        # S2-SR is produced inside step0 of satromo_processor.py. In that same call the
+        # products that need S2-SR do not run yet, because S2-SR was not in STAC when
+        # step0 checked it. A second call for the same date runs them now. Which products
+        # run is decided by the config, exactly like in a normal satromo_processor.py run.
+        # This runs after the loop, so all S2-SR dates of this batch are already in STAC
+        # (products like VHI use several days of S2-SR).
+        follow_up_products = get_follow_up_products()
+        follow_up_failed = []
+        if follow_up_products and processed_dates:
+            print(f"\n{'='*60}")
+            print(f"FOLLOW-UP RUN for {follow_up_products} on {len(processed_dates)} date(s)")
+            print(f"{'='*60}")
+            for date_str in sorted(processed_dates):
+                print(f"\n--- Follow-up run for {date_str} ---")
+                try:
+                    return_code = run_satromo_processor(config_file, date_str, env, script_dir)
+                except Exception as e:
+                    print(f"✗ Unexpected error in follow-up run for {date_str}: {e}")
+                    return_code = None
+                if return_code == 0:
+                    print(f"✓ Follow-up run done for {date_str}")
+                else:
+                    print(f"✗ Follow-up run failed for {date_str} (exit code {return_code})")
+                    follow_up_failed.append(date_str)
+
         # Summary
         print(f"\n{'='*60}")
         print(f"PROCESSING SUMMARY")
@@ -261,6 +307,9 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         print(f"Successful: {success_count}")
         print(f"Failed: {failure_count}")
         print(f"Skipped (nothing produced, kept in CSV): {skipped_count}")
+        if follow_up_products:
+            print(f"Follow-up products: {follow_up_products}")
+            print(f"Follow-up runs: {len(processed_dates)}, failed: {follow_up_failed if follow_up_failed else 'none'}")
         if aborted_early:
             print(f"Aborted early due to consecutive upstream failures")
         print(f"{'='*60}\n")
