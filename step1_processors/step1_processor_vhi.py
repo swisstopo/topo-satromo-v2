@@ -3,6 +3,7 @@ os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR" # to avoid unnecessary 
 import re
 import json
 import socket
+import requests
 import xarray as xr
 from pystac_client import Client
 import numpy as np
@@ -111,6 +112,35 @@ def process_product_vhi(
     d = int(config.PRODUCT_VHI['temporal_coverage'])-1
     start_date = current_date - timedelta(days=d)
     end_date = current_date + timedelta(days=1) # add one day to include the current date in the window
+
+    ############################################################
+    # INPUT DATA: TEMPERATURE (paths)
+    # Generate the file paths for surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
+    if current_date < datetime(2024, 1, 1):
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
+    elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 4, 1):
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
+    else:
+        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc"
+        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc"
+
+    # Check that both LST files exist. MeteoSwiss publishes the file for day D
+    # on D+1 (~05:15 UTC), so a missing file usually means "not yet".
+    lst_missing = []
+    for lst_path in [sdl_path, sol_path]:
+        response = requests.head(lst_path, timeout=30, allow_redirects=True)
+        if response.status_code != 200:
+            lst_missing.append(lst_path)
+
+    if lst_missing:
+        print(f"LST data missing for {current_date_str}: {lst_missing}")
+        # Only write once per date, to avoid duplicate rows when the date is run again
+        if not main_utils.is_date_in_empty_asset_list(product_name, current_date_str):
+            write_asset_as_empty(product_name, current_date_str, 'LST missing')
+        return f"VHI: LST data missing for {current_date_str}, written to empty asset list."
+    del lst_missing
 
     ##############################
     # VEGETATION MASKS
@@ -551,19 +581,6 @@ def process_product_vhi(
     vci *= 100  # scale in-place
     print('Calculated VCI')
 
-    ############################################################
-    # INPUT DATA: TEMPERATURE
-    # Load surface downwelling longwave radiation (SDL) and surface outgoing longwave radiation (SOL) data for the specific date
-    if current_date < datetime(2024, 1, 1):
-        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
-        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
-    elif current_date >= datetime(2024, 1, 1) and current_date < datetime(2026, 4, 1):
-        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SDL.H_ch02.lonlat_{year}{month}01000000.nc"
-        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2024-2026/msg.SOL.H_ch02.lonlat_{year}{month}01000000.nc"
-    else:
-        sdl_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SDL.H_ch02.lonlat_{year}{month}{day}000000.nc"
-        sol_path = f"{config.PRODUCT_VHI['LST_current_data']}/msg.SOL.H_ch02.lonlat_{year}{month}{day}000000.nc"
-
     ##############################
     # CALCULATE LST
     # Function to calculate LST from radiance
@@ -646,6 +663,11 @@ def process_product_vhi(
          xr.open_dataset(sol_path, engine='h5netcdf') as ds_sol:
 
         ds_11am = calc_LST_for_date(ds_sol, ds_sdl, current_date_str, aggregation='hour', hour=11)
+        if ds_11am is None:
+            print(f"LST file found, but no data for {current_date_str}")
+            if not main_utils.is_date_in_empty_asset_list(product_name, current_date_str):
+                write_asset_as_empty(product_name, current_date_str, 'LST missing')
+            return f"VHI: LST data missing for {current_date_str}, written to empty asset list."
 
         LST_index_list = f'MSG_METEOSWISS_ALLSKY_mosaic_{current_date_str}T11000000_bands-1721m'
         LST_scene_count = 1
