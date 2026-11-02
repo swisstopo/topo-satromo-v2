@@ -72,7 +72,6 @@ SENTINEL2_BAND_NAMES = {
 }
 
 PRODUCT_S2_LEVEL_2A = {
-    "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "a4bc1c7a-3e2f-4d95-9d86-a1a0b09b11a7",
     "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
@@ -84,8 +83,6 @@ PRODUCT_S2_LEVEL_2A = {
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
 PRODUCT_VHI = {
-    # TODO: check if needed in context with step0
-    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
     "geocat_id_forest": "a6ea2b6f-d723-4f10-b36c-b09cdc7fa0d3",
     "geocat_id_vegetation": "859e8dcf-1882-481d-a878-30f6c1edd0d2",
     "temporal_coverage": 7,  # Days
@@ -104,9 +101,6 @@ PRODUCT_VHI = {
 
 # MSG – MeteoSchweiz: only used for repreocessing
 PRODUCT_MSG_CLIMA = {
-    #
-    # this is  placeholder, needed for the step0 function,
-    "image_collection": "METEOSCHWEIZ/MSG",
     "temporal_coverage": 1,  # Days
     "product_name": "ch.meteoschweiz.landoberflaechentemperatur",
     "no_data": 0,

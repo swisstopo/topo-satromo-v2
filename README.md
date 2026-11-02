@@ -384,7 +384,6 @@ python satromo_processor.py my_config.py 2024-06-12 --force
 
 ```python
 PRODUCT_MY_NEW = {
-    "image_collection": "...",
     "temporal_coverage": 1,
     "product_name": "ch.swisstopo.swisseo_my_product",
     "step0_collection": "https://...",  # STAC URL or s3://...

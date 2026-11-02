@@ -36,7 +36,7 @@ def step0_main(step0_product_dict, current_date_str):
     # Determine which collections are ready for processing
     # We check every step0 collection independently
     # The collection is ready if all assets are present for the interval [date-temporal_coverage; date]
-    for step0_collection, (products, temporal_coverage, base_collection) in step0_product_dict.items():
+    for step0_collection, (products, temporal_coverage) in step0_product_dict.items():
         temporal_coverage -= 1
 
         status = step0_check_collection(
@@ -277,11 +277,14 @@ def check_if_asset_prepared(collection, assets, check_date):
             print('Date found in empty_asset_list, skipping date (no source data available)')
             return 'empty'  # Return 'empty' status - date is accounted for but has no data
 
-    # 3. Start asset generation if not found and not for STAC collections
-    # # (STAC collections are read-only, we don't generate assets for them)
-    # if collection.startswith("http://") or collection.startswith("https://"):
-    #     print('STAC collection is read-only, cannot generate assets')
-    #     return 'not_ready'
+    # 3. Start asset generation if not found
+    # Only collections listed in config.step0 have a function to generate them.
+    # Other collections are read-only for this run (e.g. the prod S2-SR collection
+    # used by VHI in dev_config), so we just wait until the date shows up there.
+    if collection not in config.step0:
+        print('No step0_function in config.step0 for {}, cannot generate date {} (read-only collection)'.format(
+            collection, check_date_str))
+        return 'not_ready'
 
     print('Starting asset generation for {} / {}'.format(collection, check_date_str))
     generate_single_date_function = eval(
@@ -294,6 +297,7 @@ def get_step0_dict():
     """
     This function is used to extract the step0 information from the config object and store it in a dictionary.
     The dictionary has the collection names as keys and the product names and temporal coverages as values
+    If several products share the same step0_collection, the longest temporal coverage is used
     """
     step0_dict = dict()
     for entry in dir(config):
@@ -304,15 +308,9 @@ def get_step0_dict():
             continue
         temporal_coverage = int(entry_value['temporal_coverage'])
         collection_name = entry_value['step0_collection']
-        base_collection = entry_value['image_collection']
         if collection_name not in step0_dict:
-            step0_dict[collection_name] = [
-                [entry, ], temporal_coverage, base_collection]
+            step0_dict[collection_name] = [[entry, ], temporal_coverage]
         else:
-            if base_collection != step0_dict[collection_name][2]:
-                raise BrokenPipeError(
-                    'Inconsistent base collection in configuration file')
-
             temporal_coverage = max(
                 step0_dict[collection_name][1], temporal_coverage)
             step0_dict[collection_name][0].append(entry)

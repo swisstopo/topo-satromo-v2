@@ -72,20 +72,18 @@ SENTINEL2_BAND_NAMES = {
 }
 
 PRODUCT_S2_LEVEL_2A = {
-    "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "a4bc1c7a-3e2f-4d95-9d86-a1a0b09b11a7",
     "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
     "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    #"step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
 PRODUCT_VHI = {
-    # TODO: check if needed in context with step0
-    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
     "geocat_id_forest": "a6ea2b6f-d723-4f10-b36c-b09cdc7fa0d3",
     "geocat_id_vegetation": "859e8dcf-1882-481d-a878-30f6c1edd0d2",
     "temporal_coverage": 7,  # Days
@@ -99,14 +97,11 @@ PRODUCT_VHI = {
     "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing
 PRODUCT_MSG_CLIMA = {
-    #
-    # this is  placeholder, needed for the step0 function,
-    "image_collection": "METEOSCHWEIZ/MSG",
     "temporal_coverage": 1,  # Days
     "product_name": "ch.meteoschweiz.landoberflaechentemperatur",
     "no_data": 0,
