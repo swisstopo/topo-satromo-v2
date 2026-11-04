@@ -284,12 +284,12 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         df_final.to_csv(config.EMPTY_ASSET_LIST, index=False)
 
         # Follow-up run for the other products in the config (e.g. VHI).
-        # S2-SR is produced inside step0 of satromo_processor.py. In that same call the
-        # products that need S2-SR do not run yet, because S2-SR was not in STAC when
-        # step0 checked it. A second call for the same date runs them now. Which products
-        # run is decided by the config, exactly like in a normal satromo_processor.py run.
-        # This runs after the loop, so all S2-SR dates of this batch are already in STAC
-        # (products like VHI use several days of S2-SR).
+        # Normally the first call already runs them: step0 checks STAC again right after
+        # it generated S2-SR. This second call is a safety net for the cases where they
+        # could not run then (e.g. a product reads a different S2-SR collection than the
+        # one just generated). Products that already have a STAC item for the date are
+        # skipped, so this costs only a few STAC queries. Which products run is decided
+        # by the config, exactly like in a normal satromo_processor.py run.
         follow_up_products = get_follow_up_products()
         follow_up_failed = []
         if follow_up_products and processed_dates:
