@@ -571,8 +571,10 @@ git status
 needs saved credentials:
 
 - Create a GitHub token at <https://github.com/settings/personal-access-tokens>
-  (fine-grained, repository `swisstopo/topo-satromo-v2`, permission
-  *Contents: Read and write*). The organisation may have to approve the token.
+  (fine-grained, **Resource owner: swisstopo** — not your own account —,
+  repository `topo-satromo-v2`, permission *Contents: Read and write*). The token
+  belongs to your account; it works because your account has write access to the
+  swisstopo repository. The organisation may have to approve the token.
 - Save it with the `store` credential helper, as the same user that runs the
   cron job:
 
