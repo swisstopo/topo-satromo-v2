@@ -77,10 +77,12 @@ jobs:
   #            S2-SR tiles ready, or VHI ready to process)
   # Requires the following repository secrets and variables to be configured:
   #   Secrets:  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, GH_PAT,
-  #             GOOGLE_CLIENT_SECRET, S3_SECRETS
-  #   Variables: AWS_REGION, EC2_AMI_ID, EC2_INSTANCE_TYPE,
-  #              EC2_SUBNET_ID, EC2_SECURITY_GROUP_ID
-  
+  #             GOOGLE_CLIENT_SECRET, S3_SECRETS,
+  #             EC2_SUBNET_ID_1A/1B/1C, EC2_SECURITY_GROUP_ID_1A/1B/1C
+  #   Variables: AWS_REGION, EC2_AMI_ID, EC2_INSTANCE_TYPE
+  # The runner is started in eu-central-1a; if that zone has no capacity for
+  # the instance type, 1b and then 1c are tried (availability-zones-config).
+
   # Type	    Name	                    Purpose
   # Secret	  AWS_ACCESS_KEY_ID	AWS     credentials for EC2 start/stop
   # Secret	  AWS_SECRET_ACCESS_KEY	    AWS credentials
@@ -89,11 +91,15 @@ jobs:
   # Secret	  COPERNICUS_S3_SECRETS	    Existing processing secret
   # Secret	  FSDI_STAC_USER	          Existing processing secret
   # Secret	  FSDI_STAC_PASSWORD	      Existing processing secret
+  # Secret	  EC2_SUBNET_ID_1A	        VPC subnet in eu-central-1a for the runner (tried first)
+  # Secret	  EC2_SUBNET_ID_1B	        VPC subnet in eu-central-1b (tried second)
+  # Secret	  EC2_SUBNET_ID_1C	        VPC subnet in eu-central-1c (tried third)
+  # Secret	  EC2_SECURITY_GROUP_ID_1A	Security group for the 1a subnet, allowing GitHub Actions traffic
+  # Secret	  EC2_SECURITY_GROUP_ID_1B	Security group for the 1b subnet (same value as 1a if same VPC)
+  # Secret	  EC2_SECURITY_GROUP_ID_1C	Security group for the 1c subnet (same value as 1a if same VPC)
   # Variable	AWS_REGION	              e.g. eu-central-1
-  # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc.
-  # Variable	EC2_INSTANCE_TYPE	        e.g. g4dn.xlarge (GPU instance)
-  # Variable	EC2_SUBNET_ID	VPC         subnet for the runner
-  # Variable	EC2_SECURITY_GROUP_ID	    Security group allowing GitHub Actions traffic
+  # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc. (valid in all zones of the region)
+  # Variable	EC2_INSTANCE_TYPE	        e.g. gr6.4xlarge (GPU instance)
 
   # ============================================================================
   start-ec2:
@@ -118,10 +124,16 @@ jobs:
         with:
           mode: start
           github-token: ${{ secrets.GH_PAT }}
-          ec2-image-id: ${{ vars.EC2_AMI_ID }}
           ec2-instance-type: ${{ vars.EC2_INSTANCE_TYPE }}
-          subnet-id: ${{ vars.EC2_SUBNET_ID }}
-          security-group-id: ${{ vars.EC2_SECURITY_GROUP_ID }}
+          # Tried in this order: if a zone has no capacity for the instance type,
+          # the action moves on to the next zone. Replaces ec2-image-id,
+          # subnet-id and security-group-id.
+          availability-zones-config: >
+            [
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1A }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1A }}"},
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1B }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1B }}"},
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1C }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1C }}"}
+            ]
 
 
   # ============================================================================
