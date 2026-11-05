@@ -14,7 +14,11 @@ As a library function (from step1_processor_s2_sr.py or any other script):
 
 As a CLI script:
 
-    # Upload default asset list (acquisitionplan.csv + step0_empty_assets.csv):
+    # Upload default asset list:
+    #   S2-SR collection: acquisitionplan.csv + dates_with_no_imagery.csv (S2-SR rows only)
+    #   VHI collection:   dates_with_no_imagery.csv (VHI rows only)
+    # dates_with_no_imagery.csv is made from tools/step0_empty_assets.csv,
+    # keeping only the rows of the collection it is uploaded to.
     python util_upload_collection_asset.py [dev_config.py|prod_config.py]
 
     # Upload a specific file:
@@ -30,7 +34,9 @@ import importlib
 import json
 import os
 import sys
+import tempfile
 
+import pandas as pd
 import requests
 
 
@@ -41,18 +47,18 @@ import requests
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.join(_SCRIPT_DIR, "..")
 
-DEFAULT_ASSETS = [
-    {
-        "local_file": os.path.join(_REPO_ROOT,"tools", "acquisitionplan.csv"),
-        "asset_title": "Collection AcquisitionPlan",
-        "stac_asset_name": "acquisitionplan.csv",
-    },
-    {
-        "local_file": os.path.join(_REPO_ROOT, "tools", "step0_empty_assets.csv"),
-        "asset_title": "Collection DatesWithNoImagery",
-        "stac_asset_name": "dates_with_no_imagery.csv",
-    },
-]
+EMPTY_ASSET_LIST = os.path.join(_REPO_ROOT, "tools", "step0_empty_assets.csv")
+
+ACQUISITION_PLAN_ASSET = {
+    "local_file": os.path.join(_REPO_ROOT, "tools", "acquisitionplan.csv"),
+    "asset_title": "Collection AcquisitionPlan",
+    "stac_asset_name": "acquisitionplan.csv",
+}
+
+# The local file of this asset is made per collection from EMPTY_ASSET_LIST
+# (see write_rows_of_collection)
+DATES_WITH_NO_IMAGERY_TITLE = "Collection DatesWithNoImagery"
+DATES_WITH_NO_IMAGERY_NAME = "dates_with_no_imagery.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +150,36 @@ def _mime_for(local_file):
         ".parquet": "application/vnd.apache.parquet",
         ".gpkg": "application/geopackage+sqlite3",
     }.get(ext, "application/octet-stream")
+
+
+def write_rows_of_collection(collection_name, output_file):
+    """
+    Write the rows of EMPTY_ASSET_LIST that belong to collection_name to output_file.
+    The columns stay the same (collection, date, remark). If the collection has
+    no rows, only the header is written.
+    """
+    df = pd.read_csv(EMPTY_ASSET_LIST)
+    df_collection = df[df["collection"] == collection_name]
+    df_collection.to_csv(output_file, index=False)
+    print(f"  {len(df_collection)} of {len(df)} rows of {os.path.basename(EMPTY_ASSET_LIST)} "
+          f"belong to {collection_name}")
+
+
+def _upload_asset(stac_base, collection, local_file, asset_title, stac_asset_name, user, password):
+    """Register and upload one collection-level asset. Returns True on success."""
+    print(f"\n--- {asset_title} ({stac_asset_name}) -> {collection} ---")
+
+    if not os.path.isfile(local_file):
+        print(f"  ERROR: file not found: {local_file}")
+        return False
+
+    asset_url = f"{stac_base}collections/{collection}/assets/{stac_asset_name}"
+    if not _register_asset(asset_url, stac_asset_name, asset_title, _mime_for(local_file), user, password):
+        return False
+    if not _multipart_upload(asset_url + "/uploads", local_file, user, password):
+        return False
+    print(f"  Done: {asset_url}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -247,26 +283,29 @@ def _cli():
 
     else:
         # Default list mode
-        collection = cfg.PRODUCT_S2_LEVEL_2A["product_name"]
-        print(f"Collection: {collection}")
+        # Collections that get a dates_with_no_imagery.csv with their own rows
+        collections = [cfg.PRODUCT_S2_LEVEL_2A["product_name"]]
+        if hasattr(cfg, "PRODUCT_VHI"):
+            collections.append(cfg.PRODUCT_VHI["product_name"])
+        print(f"Collections: {collections}")
 
-        for asset in DEFAULT_ASSETS:
-            local_file = asset["local_file"]
-            asset_title = asset["asset_title"]
-            stac_asset_name = asset["stac_asset_name"]
+        # The acquisition plan only belongs to the S2-SR collection
+        _upload_asset(stac_base, cfg.PRODUCT_S2_LEVEL_2A["product_name"],
+                      ACQUISITION_PLAN_ASSET["local_file"],
+                      ACQUISITION_PLAN_ASSET["asset_title"],
+                      ACQUISITION_PLAN_ASSET["stac_asset_name"],
+                      user, password)
 
-            print(f"\n--- {asset_title} ({stac_asset_name}) ---")
-
-            if not os.path.isfile(local_file):
-                print(f"  ERROR: file not found: {local_file}")
-                continue
-
-            asset_url = f"{stac_base}collections/{collection}/assets/{stac_asset_name}"
-            if not _register_asset(asset_url, stac_asset_name, asset_title, _mime_for(local_file), user, password):
-                continue
-            if not _multipart_upload(asset_url + "/uploads", local_file, user, password):
-                continue
-            print(f"  Done: {asset_url}")
+        # The filtered files go to a temporary folder, not to tools/:
+        # the workflow commits everything in tools/
+        temp_dir = tempfile.mkdtemp()
+        for collection in collections:
+            local_file = os.path.join(temp_dir, f"{collection}_{DATES_WITH_NO_IMAGERY_NAME}")
+            print(f"\nPreparing {DATES_WITH_NO_IMAGERY_NAME} for {collection}")
+            write_rows_of_collection(collection, local_file)
+            _upload_asset(stac_base, collection, local_file,
+                          DATES_WITH_NO_IMAGERY_TITLE, DATES_WITH_NO_IMAGERY_NAME,
+                          user, password)
 
 
 if __name__ == "__main__":
