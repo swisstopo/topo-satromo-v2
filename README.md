@@ -26,6 +26,8 @@ Two deployment environments are supported:
 - **DEV** — local machine with Python
 - **PROD** — GitHub Actions, triggered hourly by an external scheduler, with GPU
   processing on a temporary AWS EC2 runner (see [Production Runtime](#production-runtime-github-actions--ec2))
+- **PROD (local alternative)** — the same job as a cron job on a local Linux machine
+  with GPU (see [Local Runtime](#local-runtime-cron-job-hourly_runnersh))
 
 ---
 
@@ -44,7 +46,9 @@ satromo_processor.py              # Daily orchestration (step0 → step1)
     └── configuration/            # dev_config.py, prod_config.py, ...
 
 check_s2_sr.py                    # Lightweight availability check (CI stage 1)
+check_vhi.py                      # Lightweight VHI 'LST missing' check (CI stage 1)
 rerun.py                          # Batch reprocessing driver (CI stage 2, GPU EC2)
+hourly_runner.sh                  # Local cron alternative to run_rerun.yml
 tools/step0_empty_assets.csv      # Live per-date/tile status, committed by CI
 ```
 
@@ -518,6 +522,89 @@ commits `tools/` back to `main`.
 
 `tools/step0_empty_assets.csv` is the live state file that couples the two stages;
 CI commits it to `main` after every run, so avoid editing it by hand.
+
+---
+
+## Local Runtime (cron job, `hourly_runner.sh`)
+
+`hourly_runner.sh` is the local alternative to `.github/workflows/run_rerun.yml`.
+It does the same steps, but `rerun.py` runs on the local machine instead of on an
+EC2 runner:
+
+1. **Update the code** — fetches, checks out and pulls the branch. Changes in
+   `tools/` left over from a run that stopped early are committed and pushed
+   first. `pip install -r requirements.txt` runs only when `requirements.txt`
+   changed.
+2. **Light check** (Stage 1) — `util_get_acquisition_plans.py`, `check_s2_sr.py`
+   and `check_vhi.py` (today in UTC, 30 days back), then uploads the collection
+   assets and pushes `tools/`.
+3. **Processing** (Stage 2) — only if `needs-processing` or
+   `vhi-needs-processing` is `true`: `rerun.py` (maximum 7 hours), then uploads
+   the collection assets and pushes `tools/` again.
+
+A lock (`flock`) makes sure only one run happens at a time: if `rerun.py` from an
+earlier run is still going, the new run stops right away.
+
+### Usage
+
+```bash
+./hourly_runner.sh <config> <branch>
+./hourly_runner.sh prod_config.py main     # defaults
+```
+
+The paths are set at the top of the script (`REPO_DIR`, `PYTHON_CMD`,
+`LOCK_FILE`). `REPO_DIR` is a separate checkout of this repository, only for the
+cron job, with its own `.venv`, `secrets/` and `local_assets/`
+(see [Installation](#installation)).
+
+### Setup
+
+**1. Clean checkout.** The script stops with an error if any file outside
+`tools/` has local changes, so nothing is lost by the checkout:
+
+```bash
+cd /path/to/REPO_DIR
+git status
+```
+
+**2. Git credentials for the push.** cron cannot ask for a password, so the push
+needs saved credentials:
+
+- Create a GitHub token at <https://github.com/settings/personal-access-tokens>
+  (fine-grained, repository `swisstopo/topo-satromo-v2`, permission
+  *Contents: Read and write*). The organisation may have to approve the token.
+- Save it with the `store` credential helper, as the same user that runs the
+  cron job:
+
+  ```bash
+  git config --global credential.helper store
+  cd /path/to/REPO_DIR
+  git push --dry-run origin main   # username: your GitHub login, password: the token
+  chmod 600 ~/.git-credentials
+  ```
+
+  The token is now in `~/.git-credentials` (plain text, readable only by you).
+  Run `git push --dry-run origin main` again: it must not ask for anything.
+
+Alternative: install the GitHub CLI and run `gh auth login`, then
+`gh auth setup-git`.
+
+**3. Test run by hand** (pushes to the branch and uploads to STAC):
+
+```bash
+./hourly_runner.sh prod_config.py main
+```
+
+**4. Cron job** (`crontab -e`). cron uses the local time of the machine. With
+Europe/Zurich, hours 0–13 cover 23–11 UTC in winter and summer, the same window
+as the GitHub workflow:
+
+```
+17 0-13 * * * /path/to/REPO_DIR/hourly_runner.sh prod_config.py main >> /path/to/hourly_runner.log 2>&1
+```
+
+> **Note:** Do not run the cron job and the GitHub workflow on the same branch at
+> the same time — both push `tools/step0_empty_assets.csv`.
 
 ---
 

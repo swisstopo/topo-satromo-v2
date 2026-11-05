@@ -1,187 +1,207 @@
 #!/bin/bash
 
-# Simplified Workflow Script with Locking
-# Runs Python scripts without git operations or dependency management
+# Local alternative to .github/workflows/run_rerun.yml, to be run as a cron job.
+# It does the same steps, but the processing runs on this machine instead of EC2:
+#
+#   1. Update the repository to the latest commit of the branch
+#   2. Light check: acquisition plan, check_s2_sr.py, check_vhi.py,
+#      upload collection assets, push tools/ to the branch
+#   3. Only if needed (S2-SR tiles ready or VHI ready to process):
+#      rerun.py, upload collection assets, push tools/ to the branch
+#
+# Usage:
+#   ./hourly_runner.sh <config> <branch>
+#   ./hourly_runner.sh prod_config.py main
+#
+# Cron example (crontab -e), at :17 from 00 to 13 local time
+# (covers 23 to 11 UTC in winter and summer, as in run_rerun.yml):
+#   17 0-13 * * * /mnt/c/Users/Localadmin/Documents/SATROMO/reprocess-prod/topo-satromo-v2/hourly_runner.sh prod_config.py main >> /mnt/c/Users/Localadmin/Documents/SATROMO/reprocess-prod/hourly_runner.log 2>&1
 
 # ============================================================================
 # CONFIGURATION - EDIT THESE VALUES
 # ============================================================================
 
-# Your repository path
-REPO_DIR="/mnt/c/Users/Localadmin/Documents/SATROMO/topo-satromo-v2/topo-satromo-v2"
-
-
+# Repository the job runs in (has its own .venv, secrets/ and local_assets/)
+REPO_DIR="/mnt/c/Users/Localadmin/Documents/SATROMO/reprocess-prod/topo-satromo-v2"
 
 # Python command
-PYTHON_CMD="/mnt/c/Users/Localadmin/Documents/SATROMO/topo-satromo-v2/topo-satromo-v2/.venv/bin/python"
+PYTHON_CMD="$REPO_DIR/.venv/bin/python"
 
-# Lock file location
-LOCK_FILE="//mnt/c/Users/Localadmin/Documents/SATROMO/topo-satromo-v2/topo-satromo-v2/workflow.lock"
+# Lock file: only one run at a time. Outside the repository, so git does not see it.
+LOCK_FILE="/mnt/c/Users/Localadmin/Documents/SATROMO/reprocess-prod/hourly_runner.lock"
 
-# Maximum lock age in seconds (3 hours = 10800 seconds)
-MAX_LOCK_AGE=10800
+# Number of days back for check_s2_sr.py and check_vhi.py (as in run_rerun.yml)
+DAYS_BACK=30
+
+# Maximum run time of rerun.py (as timeout-minutes: 840 in run_rerun.yml)
+RERUN_TIMEOUT="14h"
 
 # ============================================================================
 # END CONFIGURATION
 # ============================================================================
 
-set -e
-
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Arguments: config file and branch
+CONFIG_FILE="${1:-prod_config.py}"
+BRANCH="${2:-main}"
 
 # Log functions
 log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
 error() {
-    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR:${NC} $1" >&2
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
 }
 
-warn() {
-    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING:${NC} $1"
-}
-
-info() {
-    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] INFO:${NC} $1"
-}
-
-# Function to check if lock file is stale
-check_stale_lock() {
-    if [ -f "$LOCK_FILE" ]; then
-        local lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || stat -f %m "$LOCK_FILE" 2>/dev/null)))
-        if [ $lock_age -gt $MAX_LOCK_AGE ]; then
-            warn "Lock file is $lock_age seconds old (stale), removing it"
-            rm -f "$LOCK_FILE"
-            return 1
-        fi
-        return 0
+# Commit the files in tools/ and push them to the branch
+# (same as the "Push tools files to repo" step in run_rerun.yml)
+push_tools() {
+    log "Pushing tools files to $BRANCH..."
+    git add --force tools/
+    git diff --staged --quiet || git commit -m 'Tools files done'
+    if ! git pull --rebase origin "$BRANCH"; then
+        error "git pull --rebase failed"
+        exit 1
     fi
-    return 1
-}
-
-# Function to acquire lock
-acquire_lock() {
-    local max_wait=10
-    local waited=0
-    
-    # Check for stale locks first
-    check_stale_lock
-    
-    # Try to acquire lock with timeout
-    while [ $waited -lt $max_wait ]; do
-        if mkdir "$LOCK_FILE" 2>/dev/null; then
-            # Lock acquired successfully
-            echo $$ > "$LOCK_FILE/pid"
-            echo "$(date +%s)" > "$LOCK_FILE/timestamp"
-            echo "$RUN_MODE" > "$LOCK_FILE/mode"
-            trap 'release_lock' EXIT INT TERM
-            return 0
-        fi
-        
-        # Lock exists, check if process is still running
-        if [ -f "$LOCK_FILE/pid" ]; then
-            local lock_pid=$(cat "$LOCK_FILE/pid" 2>/dev/null)
-            local lock_mode=$(cat "$LOCK_FILE/mode" 2>/dev/null)
-            
-            if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-                error "Another workflow is already running (PID: $lock_pid, Mode: $lock_mode)"
-                info "Current job: $RUN_MODE mode will not start"
-                exit 0  # Exit gracefully, not an error
-            else
-                warn "Lock exists but process $lock_pid is not running, removing stale lock"
-                rm -rf "$LOCK_FILE"
-            fi
-        fi
-        
-        sleep 1
-        waited=$((waited + 1))
-    done
-    
-    error "Could not acquire lock after $max_wait seconds"
-    exit 1
-}
-
-# Function to release lock
-release_lock() {
-    if [ -d "$LOCK_FILE" ]; then
-        rm -rf "$LOCK_FILE"
-        log "Lock released"
+    if ! git push origin "$BRANCH"; then
+        error "git push failed"
+        exit 1
     fi
 }
 
-# Determine run mode based on current time or argument
-CURRENT_MINUTE=$(date +%M)
-CURRENT_HOUR=$(date +%H)
+# Upload acquisitionplan.csv and dates_with_no_imagery.csv to the STAC collections
+publish_collection_assets() {
+    log "Publishing acquisitionplan.csv and step0_empty_assets.csv..."
+    if ! $PYTHON_CMD main_functions/util_upload_collection_asset.py "$CONFIG_FILE"; then
+        error "util_upload_collection_asset.py failed"
+        exit 1
+    fi
+}
 
-if [ "$CURRENT_HOUR" == "01" ] && [ "$CURRENT_MINUTE" == "00" ]; then
-    RUN_MODE="processor"
-elif [ "$CURRENT_MINUTE" == "33" ]; then
-    RUN_MODE="rerun"
-else
-    # Allow manual override
-    RUN_MODE="${1:-processor}"
+# Read a value that check_s2_sr.py / check_vhi.py wrote to the outputs file
+read_output() {
+    grep "^$1=" "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2
+}
+
+log "========================================="
+log "Starting workflow: config=$CONFIG_FILE branch=$BRANCH"
+log "========================================="
+
+# ----------------------------------------------------------------------------
+# Lock: if another run is still going (e.g. a long rerun.py), stop here.
+# flock releases the lock automatically when this script ends.
+# ----------------------------------------------------------------------------
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    log "Another run is still going, this run does not start"
+    exit 0
 fi
 
-log "========================================="
-log "Starting workflow: $RUN_MODE mode"
-log "========================================="
-
-# Acquire lock before proceeding
-acquire_lock
-
-# Check if repository directory exists
+# ----------------------------------------------------------------------------
+# STEP 1 — Update the repository to the latest commit of the branch
+# ----------------------------------------------------------------------------
 if [ ! -d "$REPO_DIR" ]; then
     error "Repository directory does not exist: $REPO_DIR"
     exit 1
 fi
-
-# Go to repository
 cd "$REPO_DIR" || exit 1
 log "Working directory: $REPO_DIR"
 
-# Run CS PUBLISH (common to both workflows)
-log "Running CS PUBLISH script..."
-if ! $PYTHON_CMD main_functions/csplus_publish.py prod_config.py; then
-    error "CS PUBLISH script failed"
+if [ ! -f "configuration/$CONFIG_FILE" ]; then
+    error "Config file does not exist: configuration/$CONFIG_FILE"
     exit 1
 fi
 
-# Run the appropriate processor based on mode
-if [ "$RUN_MODE" == "processor" ]; then
-    log "Running PROCESSOR script..."
-    OUTPUT=$($PYTHON_CMD satromo_processor.py prod_config.py 2>&1)  # Capture output
-    if echo "$OUTPUT" | grep -q "cloudy"; then
-        log "PROCESSOR script encountered 'cloudy' remark. Output: $OUTPUT"
-    elif [ $? -ne 0 ]; then
-        error "PROCESSOR script failed with output: $OUTPUT"
-        exit 1
-    else
-        log "PROCESSOR script completed successfully!"
-    fi
-elif [ "$RUN_MODE" == "rerun" ]; then
-    log "Running RERUN PROCESSOR script..."
-    OUTPUT=$($PYTHON_CMD rerun.py prod_config.py 2>&1)  # Capture output
-    if echo "$OUTPUT" | grep -q "cloudy"; then
-        log "RERUN PROCESSOR script encountered 'cloudy' remark. Output: $OUTPUT"
-    elif [ $? -ne 0 ]; then
-        error "RERUN PROCESSOR script failed with output: $OUTPUT"
-        exit 1
-    else
-        log "RERUN PROCESSOR script completed successfully!"
-    fi
-else
-    error "Invalid run mode: $RUN_MODE"
+# Local code changes outside tools/ would be lost or block the update: stop
+CHANGED_FILES=$(git status --porcelain --untracked-files=no -- . ':(exclude)tools')
+if [ -n "$CHANGED_FILES" ]; then
+    error "Local changes outside tools/, please commit or undo them first:"
+    echo "$CHANGED_FILES" >&2
     exit 1
 fi
 
-log "========================================="
-log "Workflow completed successfully: $RUN_MODE mode"
-log "========================================="
+if ! git fetch origin "$BRANCH"; then
+    error "git fetch of branch $BRANCH failed"
+    exit 1
+fi
+if ! git checkout "$BRANCH"; then
+    error "git checkout of branch $BRANCH failed"
+    exit 1
+fi
 
-# Lock will be released automatically by trap
+REQUIREMENTS_BEFORE=$(git rev-parse HEAD:requirements.txt)
+
+# Pulls the latest commit. Also pushes tools/ changes that are left over from
+# a run that stopped before its push (e.g. rerun.py failed).
+push_tools
+
+# Install the dependencies again only when requirements.txt changed
+REQUIREMENTS_AFTER=$(git rev-parse HEAD:requirements.txt)
+if [ "$REQUIREMENTS_BEFORE" != "$REQUIREMENTS_AFTER" ]; then
+    log "requirements.txt changed, installing dependencies..."
+    if ! $PYTHON_CMD -m pip install -r requirements.txt; then
+        error "pip install failed"
+        exit 1
+    fi
+fi
+
+# ----------------------------------------------------------------------------
+# STEP 2 — Light check (STAGE 1 in run_rerun.yml)
+# ----------------------------------------------------------------------------
+# check_s2_sr.py and check_vhi.py write needs-processing / vhi-needs-processing
+# to the file in $GITHUB_OUTPUT (as in GitHub Actions)
+export GITHUB_OUTPUT=$(mktemp)
+trap 'rm -f "$GITHUB_OUTPUT"' EXIT
+
+# Same date as the GitHub runner, which runs in UTC
+TODAY=$(date -u +%Y-%m-%d)
+
+log "Getting acquisition plan..."
+if ! $PYTHON_CMD main_functions/util_get_acquisition_plans.py; then
+    error "util_get_acquisition_plans.py failed"
+    exit 1
+fi
+
+log "Checking S2 data availability and updating CSV..."
+if ! $PYTHON_CMD check_s2_sr.py "$TODAY" "$DAYS_BACK" "$CONFIG_FILE"; then
+    error "check_s2_sr.py failed"
+    exit 1
+fi
+
+log "Checking VHI 'LST missing' entries and updating CSV..."
+if ! $PYTHON_CMD check_vhi.py "$TODAY" "$DAYS_BACK" "$CONFIG_FILE"; then
+    error "check_vhi.py failed"
+    exit 1
+fi
+
+publish_collection_assets
+push_tools
+
+NEEDS_PROCESSING=$(read_output "needs-processing")
+VHI_NEEDS_PROCESSING=$(read_output "vhi-needs-processing")
+log "needs-processing=$NEEDS_PROCESSING vhi-needs-processing=$VHI_NEEDS_PROCESSING"
+
+# ----------------------------------------------------------------------------
+# STEP 3 — Full processing on this machine (STAGE 2 in run_rerun.yml),
+#          only when S2-SR tiles are ready or VHI is ready to process
+# ----------------------------------------------------------------------------
+if [ "$NEEDS_PROCESSING" != "true" ] && [ "$VHI_NEEDS_PROCESSING" != "true" ]; then
+    log "Nothing to process"
+    log "========================================="
+    log "Workflow completed successfully"
+    log "========================================="
+    exit 0
+fi
+
+log "Running rerun.py (maximum $RERUN_TIMEOUT)..."
+if ! timeout "$RERUN_TIMEOUT" $PYTHON_CMD rerun.py "$CONFIG_FILE"; then
+    error "rerun.py failed or ran longer than $RERUN_TIMEOUT"
+    exit 1
+fi
+
+publish_collection_assets
+push_tools
+
+log "========================================="
+log "Workflow completed successfully"
+log "========================================="
