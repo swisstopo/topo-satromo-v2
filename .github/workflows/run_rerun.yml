@@ -148,6 +148,11 @@ jobs:
     needs: [check-and-update, start-ec2]
     runs-on: ${{ needs.start-ec2.outputs.label }}
     timeout-minutes: 420
+    # The EC2 runner is started from user-data without a HOME variable.
+    # DuckDB (used by gpio / geoparquet-io) needs HOME to store its
+    # extensions (~/.duckdb/extensions), so set it for every step.
+    env:
+      HOME: /home/ubuntu
 
     steps:
       - name: Checkout repository
@@ -164,6 +169,7 @@ jobs:
           pip install -r requirements.txt
           # gpio (geoparquet-io) needs the DuckDB spatial extension; install it
           # up front so a missing/blocked download fails here, visibly
+          echo "Runner user: $(whoami)  HOME: $HOME"
           python -c "import duckdb; duckdb.sql('INSTALL spatial'); duckdb.sql('LOAD spatial'); print('duckdb', duckdb.__version__, 'spatial OK')"
           echo "VIRTUAL_ENV=/home/ubuntu/.venv" >> $GITHUB_ENV
           echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
