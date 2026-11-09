@@ -167,12 +167,19 @@ def export(raster_url, shape_file, filename, dateISO8601, missing_values, no_dat
     _gpkg_tmp = filename + '_tmp.gpkg'
     try:
         gdf.to_file(_gpkg_tmp, driver='GPKG')
-        subprocess.run(
+        result = subprocess.run(
             ['gpio', 'convert', _gpkg_tmp, filename + '.parquet'],
-            check=True,
             capture_output=True,
             text=True
-        )
+        )      
+        if result.returncode != 0:
+            # Surface gpio's real error (e.g. DuckDB spatial extension missing)
+            print(f"WARNING: gpio convert failed (exit {result.returncode}) for {filename}.parquet")
+            print(f"gpio stdout:\n{result.stdout}")
+            print(f"gpio stderr:\n{result.stderr}")
+            print("Falling back to geopandas to_parquet (no Hilbert sort)")
+            gdf.to_parquet(filename + '.parquet', compression='zstd',
+                           write_covering_bbox=True)
     finally:
         if os.path.exists(_gpkg_tmp):
             os.remove(_gpkg_tmp)

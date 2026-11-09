@@ -162,6 +162,9 @@ jobs:
         run: |
           source /home/ubuntu/.venv/bin/activate
           pip install -r requirements.txt
+          # gpio (geoparquet-io) needs the DuckDB spatial extension; install it
+          # up front so a missing/blocked download fails here, visibly
+          python -c "import duckdb; duckdb.sql('INSTALL spatial'); duckdb.sql('LOAD spatial'); print('duckdb', duckdb.__version__, 'spatial OK')"
           echo "VIRTUAL_ENV=/home/ubuntu/.venv" >> $GITHUB_ENV
           echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
 
