@@ -143,6 +143,8 @@ jobs:
   # using the full pipeline with GPU.
   # Then retries the VHI "LST missing" dates (retry_follow_up_products) and
   # removes their entries once VHI is published.
+  # If any date failed, the last step marks the run as failed (email to the
+  # user who started the run) -- after the CSV was published and pushed.
   # ============================================================================
   run-processing:
     needs: [check-and-update, start-ec2]
@@ -174,8 +176,12 @@ jobs:
           echo "VIRTUAL_ENV=/home/ubuntu/.venv" >> $GITHUB_ENV
           echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
 
+      # rerun.py always exits 0 (also with failed dates), so the steps below
+      # always run. Failed dates are passed on as outputs rerun-failed /
+      # rerun-failures and reported in the last step "Report failed dates".
       - name: Run rerun processor
-        run: python rerun.py prod_config.py 
+        id: rerun
+        run: python rerun.py prod_config.py
         env:
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
@@ -197,6 +203,18 @@ jobs:
           git diff --staged --quiet || git commit -m 'Tools files done'
           git pull --rebase origin main
           git push origin main
+
+      # Failure warning only: must stay the LAST step of this job. Everything
+      # above (processing, CSV publish, git push) is already done; stop-ec2 runs
+      # anyway (always()). It only turns the run red, so GitHub sends its normal
+      # "run failed" email. The failed dates stay in the CSV for the next run.
+      - name: Report failed dates
+        if: ${{ steps.rerun.outputs.rerun-failed == 'true' }}
+        env:
+          FAILURES: ${{ steps.rerun.outputs.rerun-failures }}
+        run: |
+          echo "::error title=rerun.py reported failed dates::$FAILURES"
+          exit 1
 
   # ============================================================================
   # STAGE 2c — Stop EC2 runner (always runs if EC2 was started)

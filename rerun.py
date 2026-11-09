@@ -31,6 +31,16 @@ def count_csv_rows_for_date(collection_basename, date_str):
 RETRY_REMARKS = ['LST missing']
 
 
+def set_github_output(key, value):
+    """Write key=value to $GITHUB_OUTPUT when running inside GitHub Actions."""
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        # A GitHub output value must be on one line
+        value = str(value).replace("\n", " ").replace("\r", " ")
+        with open(github_output, "a") as f:
+            f.write(f"{key}={value}\n")
+
+
 def stac_item_exists(collection_url, date_str):
     """True if the STAC collection (URL as written in the config) has at least one item for this date."""
     api_path = getattr(config, 'STAC_FSDI_API')
@@ -122,6 +132,9 @@ def run_satromo_processor(config_file, date_str, env, script_dir):
 def process_empty_asset_list(collection_basename, days_back, config_file):
     """
     Process and reprocess empty assets for a specific collection.
+
+    Returns (success, aborted_early, failures). failures is a list of short texts,
+    one per failed date (e.g. "S2-SR 2026-11-03: exit code 1"), empty if nothing failed.
     """
 
     # Get the directory where this script is located
@@ -140,10 +153,10 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
 
         except FileNotFoundError:
             print(f"ERROR: Empty asset list file not found: {config.EMPTY_ASSET_LIST}")
-            return False, False
+            return False, False, [f"Empty asset list file not found: {config.EMPTY_ASSET_LIST}"]
         except pd.errors.EmptyDataError:
             print("ERROR: Empty asset list file is empty.")
-            return False, False
+            return False, False, ["Empty asset list file is empty"]
 
         # Calculate date range
         end_date = datetime.today()
@@ -184,7 +197,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         if not reprocess_list:
             if os.path.exists(backup_file):
                 os.remove(backup_file)
-            return False, False
+            return False, False, []
 
         # Batch processing of dates
         success_count = 0
@@ -195,6 +208,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         processed_dates = set()  # dates confirmed successful -> safe to drop from CSV
         newly_marked_dates = set()  # dates where the subprocess itself appended a fresh empty-asset row this run
         aborted_early = False
+        failures = []  # short texts for the failure warning in GitHub Actions
 
         for i, check_date_str in enumerate(reprocess_list):
             print(f"\n{'='*60}")
@@ -228,6 +242,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                     print(f"✗ Process failed with exit code {return_code} for {check_date_str}")
                     failure_count += 1
                     date_failed = True
+                    failures.append(f"S2-SR {check_date_str}: exit code {return_code}")
                 elif (check_date_str in newly_marked_dates
                         or not stac_item_exists(config.PRODUCT_S2_LEVEL_2A['step0_collection'], check_date_str)):
                     print(f"! {check_date_str} was skipped by the processor "
@@ -243,6 +258,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 print(f"✗ Unexpected error processing {check_date_str}: {e}")
                 failure_count += 1
                 date_failed = True
+                failures.append(f"S2-SR {check_date_str}: {e}")
 
             if date_failed:
                 consecutive_failures += 1
@@ -255,6 +271,8 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                       f"(likely an upstream outage). Aborting batch, {remaining} remaining "
                       f"date(s) will be retried next run.")
                 aborted_early = True
+                failures.append(f"S2-SR aborted after {consecutive_failures} consecutive failures, "
+                                f"{remaining} date(s) not processed")
                 break
 
         # Rebuild the CSV. Dates the loop above never touched (failed / not-yet-attempted,
@@ -308,6 +326,7 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
                 else:
                     print(f"✗ Follow-up run failed for {date_str} (exit code {return_code})")
                     follow_up_failed.append(date_str)
+                    failures.append(f"Follow-up {date_str}: exit code {return_code}")
 
         # Summary
         print(f"\n{'='*60}")
@@ -330,14 +349,14 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
             else:
                 print(f"Kept backup file: {backup_file} (some failures occurred)")
 
-        return success_count > 0, aborted_early
+        return success_count > 0, aborted_early, failures
 
     except Exception as e:
         print(f"✗ FATAL ERROR in process_empty_asset_list: {e}")
         backup_file = config.EMPTY_ASSET_LIST + '.bak'
         if os.path.exists(backup_file):
             shutil.copy2(backup_file, config.EMPTY_ASSET_LIST)
-        return False, False
+        return False, False, [f"S2-SR fatal error in process_empty_asset_list: {e}"]
 
 
 def retry_follow_up_products(days_back, config_file):
@@ -348,9 +367,13 @@ def retry_follow_up_products(days_back, config_file):
     For every such row: if the product already has a STAC item for that date, the
     row is simply removed. Otherwise satromo_processor.py is run again for the date,
     and the row is removed only if the product has a STAC item afterwards.
+
+    Returns a list of short texts, one per failed retry (empty if nothing failed).
+    A product that is still not produced (e.g. LST still missing) is NOT a failure.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     env = build_subprocess_env(script_dir)
+    failures = []
 
     end_date = datetime.today()
     start_date = end_date - timedelta(days=days_back)
@@ -390,6 +413,7 @@ def retry_follow_up_products(days_back, config_file):
                     return_code = run_satromo_processor(config_file, date_str, env, script_dir)
                     if return_code != 0:
                         print(f"✗ Retry failed with exit code {return_code} for {date_str}, kept in CSV")
+                        failures.append(f"{product} retry {date_str}: exit code {return_code}")
                         continue
 
                 if stac_item_exists(product_collection, date_str):
@@ -399,6 +423,7 @@ def retry_follow_up_products(days_back, config_file):
                     print(f"! {product} still not produced for {date_str}, kept in CSV for the next run")
             except Exception as e:
                 print(f"✗ Unexpected error in retry for {date_str}: {e}")
+                failures.append(f"{product} retry {date_str}: {e}")
 
         # Re-read the CSV: the subprocesses write to it while they run (see process_empty_asset_list)
         if resolved_rows:
@@ -411,6 +436,8 @@ def retry_follow_up_products(days_back, config_file):
             df_now[~mask_resolved].to_csv(config.EMPTY_ASSET_LIST, index=False)
 
         print(f"\nRETRY {product} SUMMARY: resolved {len(resolved_rows)} of {len(df_retry)}")
+
+    return failures
 
 
 def main():
@@ -426,11 +453,21 @@ def main():
     days_back = 30
     collection = config.PRODUCT_S2_LEVEL_2A['step0_collection'].rsplit('/', 1)[-1]
 
-    result, aborted_early = process_empty_asset_list(collection, days_back, config_file)
+    result, aborted_early, s2_failures = process_empty_asset_list(collection, days_back, config_file)
 
     # Runs also after an early abort: the follow-up products (e.g. VHI) read from
     # swisstopo STAC, not from Copernicus, so an outage there does not affect them.
-    retry_follow_up_products(days_back, config_file)
+    retry_failures = retry_follow_up_products(days_back, config_file)
+
+    # Failure warning for GitHub Actions: the workflow reads these outputs in its
+    # last step ("Report failed dates") and turns the run red there, AFTER the CSV
+    # was published and pushed. Failed dates stay in the CSV for the next run.
+    failures = s2_failures + retry_failures
+    if failures:
+        set_github_output('rerun-failed', 'true')
+        set_github_output('rerun-failures', '; '.join(failures))
+    else:
+        set_github_output('rerun-failed', 'false')
 
     print()
     print("="*60)
@@ -440,12 +477,16 @@ def main():
         print("✓ RERUN COMPLETED SUCCESSFULLY")
     else:
         print("✓ RERUN COMPLETED (NO FILES PROCESSED)")
+    if failures:
+        print(f"✗ FAILURES ({len(failures)}):")
+        for failure in failures:
+            print(f"  - {failure}")
     print("="*60)
 
-    # Non-zero exit on circuit-breaker trip so CI surfaces the outage instead of
-    # silently reporting success; otherwise exit 0 even with per-date failures,
-    # since those dates simply remain queued in the CSV for the next run.
-    sys.exit(1 if aborted_early else 0)
+    # Always exit 0, also with failed dates or after the circuit breaker: the
+    # workflow must go on and publish/push the CSV (failed dates stay queued in it
+    # for the next run). The failures are reported through 'rerun-failed' above.
+    sys.exit(0)
 
 
 if __name__ == "__main__":
