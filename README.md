@@ -568,7 +568,37 @@ git status
 ```
 
 **2. Git credentials for the push.** cron cannot ask for a password, so the push
-needs saved credentials:
+needs saved credentials. The key or token belongs to your own GitHub account; it
+works for `swisstopo/topo-satromo-v2` because your account has write access to
+that repository.
+
+**Option A — SSH key (recommended):** no token in a text file, no expiry, no
+approval by the organisation needed.
+
+1. Create a key without passphrase (cron cannot type one), as the same user that
+   runs the cron job:
+
+   ```bash
+   ssh-keygen -t ed25519 -C "satromo cron" -N "" -f ~/.ssh/id_ed25519
+   cat ~/.ssh/id_ed25519.pub     # copy this line
+   ```
+
+2. Add the copied line at <https://github.com/settings/keys> → *New SSH key*
+   (key type *Authentication Key*). If swisstopo uses single sign-on, click
+   *Configure SSO* → *Authorize* for swisstopo next to the key.
+
+3. Switch the checkout of the cron job to SSH and test:
+
+   ```bash
+   cd /path/to/REPO_DIR
+   git remote set-url origin git@github.com:swisstopo/topo-satromo-v2.git
+   ssh -T git@github.com              # "Hi <your login>! You've successfully authenticated"
+   git push --dry-run origin main     # must not ask for anything
+   ```
+
+   The first `ssh -T` asks once to confirm the GitHub host key: answer `yes`.
+
+**Option B — token (HTTPS):**
 
 - Create a GitHub token at <https://github.com/settings/personal-access-tokens>
   (fine-grained, **Resource owner: swisstopo** — not your own account —,
@@ -588,7 +618,7 @@ needs saved credentials:
   The token is now in `~/.git-credentials` (plain text, readable only by you).
   Run `git push --dry-run origin main` again: it must not ask for anything.
 
-Alternative: install the GitHub CLI and run `gh auth login`, then
+**Option C — GitHub CLI:** install the GitHub CLI and run `gh auth login`, then
 `gh auth setup-git`.
 
 **3. Test run by hand** (pushes to the branch and uploads to STAC):
