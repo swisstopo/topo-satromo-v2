@@ -17,16 +17,19 @@ jobs:
   # Queries the Copernicus STAC API for new S2 data and updates the CSV.
   # Sets needs-processing=true if any "Tiles ready awaiting GPU system run"
   # entry exists in the CSV after the check.
-  # Then checks the VHI "LST missing" entries: removes the ones where VHI is
-  # already published, and sets vhi-needs-processing=true if for at least one
-  # date the LST is available and the VHI time window has S2-SR data
-  # (rules in check_vhi.py).
+  # Then checks the VHI "LST missing" and "No S2-SR scene in time window"
+  # entries: removes the ones where VHI is already published, and sets
+  # vhi-needs-processing=true if for at least one date the LST is available and
+  # the VHI time window has S2-SR data (rules in check_vhi.py).
+  # check_vhi.py also finds published VHI that misses S2-SR items published
+  # later: these dates go to vhi-reprocess-dates (and vhi-needs-processing=true).
   # ============================================================================
   check-and-update:
     runs-on: ubuntu-24.04
     outputs:
       needs-processing: ${{ steps.check.outputs.needs-processing }}
       vhi-needs-processing: ${{ steps.check-vhi.outputs.vhi-needs-processing }}
+      vhi-reprocess-dates: ${{ steps.check-vhi.outputs.vhi-reprocess-dates }}
 
     steps:
       - name: Checkout repository
@@ -52,7 +55,7 @@ jobs:
         run: python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py
         #run: python check_s2_sr.py 2026-08-05 30 prod_config.py
 
-      - name: Check VHI 'LST missing' entries and update CSV
+      - name: Check VHI entries, update CSV and find VHI to reprocess
         id: check-vhi
         run: python check_vhi.py $(date +%Y-%m-%d) 30 prod_config.py
 
@@ -141,8 +144,10 @@ jobs:
   # Runs rerun.py which picks up all "Tiles ready awaiting GPU system run"
   # entries (and other non-cloudy entries) from the CSV and processes them
   # using the full pipeline with GPU.
-  # Then retries the VHI "LST missing" dates (retry_follow_up_products) and
-  # removes their entries once VHI is published.
+  # Then retries the VHI "LST missing" / "No S2-SR scene in time window" dates
+  # (retry_follow_up_products) and removes their entries once VHI is published.
+  # Then reprocesses VHI (only VHI, --force-vhi) for the dates in
+  # VHI_REPROCESS_DATES (from check_vhi.py in stage 1).
   # If any date failed, the last step marks the run as failed (email to the
   # user who started the run) -- after the CSV was published and pushed.
   # ============================================================================
@@ -183,6 +188,7 @@ jobs:
         id: rerun
         run: python rerun.py prod_config.py
         env:
+          VHI_REPROCESS_DATES: ${{ needs.check-and-update.outputs.vhi-reprocess-dates }}
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}

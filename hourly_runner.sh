@@ -181,6 +181,11 @@ NEEDS_PROCESSING=$(read_output "needs-processing")
 VHI_NEEDS_PROCESSING=$(read_output "vhi-needs-processing")
 log "needs-processing=$NEEDS_PROCESSING vhi-needs-processing=$VHI_NEEDS_PROCESSING"
 
+# VHI dates where S2-SR data was published after the VHI (from check_vhi.py).
+# rerun.py reads this variable and reprocesses these dates with --force-vhi
+export VHI_REPROCESS_DATES=$(read_output "vhi-reprocess-dates")
+log "vhi-reprocess-dates=$VHI_REPROCESS_DATES"
+
 # ----------------------------------------------------------------------------
 # STEP 3 — Full processing on this machine (STAGE 2 in run_rerun.yml),
 #          only when S2-SR tiles are ready or VHI is ready to process

@@ -440,6 +440,14 @@ Use `--force` (or `-force`) to reprocess a date that already has STAC items:
 python satromo_processor.py dev_config.py 2024-06-12 --force
 ```
 
+`--force` reprocesses **all** products of the date, including S2-SR (download,
+co-registration on the GPU). To reprocess only VHI, use `--force-vhi`: S2-SR is
+then only processed if it does not exist yet for the date.
+
+```bash
+python satromo_processor.py dev_config.py 2024-06-12 --force-vhi
+```
+
 ### Debug Mode
 
 When no date argument is supplied, the script enters debug mode and uses a hardcoded date. Edit `satromo_processor.py` to change it:
@@ -503,7 +511,7 @@ commits `tools/` back to `main`.
 | 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, runs `python rerun.py prod_config.py`, republishes the CSVs and pushes `tools/`. Hard timeout **420 minutes** for cost protection. |
 | 2c | `stop-ec2` | `ubuntu-24.04` (hosted) | `if: always()` — terminates the EC2 runner even when stage 2b failed or timed out. |
 
-### The two production scripts
+### The production scripts
 
 - **`check_s2_sr.py`** — lightweight Copernicus STAC availability check. It queries
   the Copernicus STAC API for Switzerland and updates `tools/step0_empty_assets.csv`,
@@ -513,12 +521,30 @@ commits `tools/` back to `main`.
   Usage: `python check_s2_sr.py [YYYY-MM-DD] [days_back] [config.py]` (defaults:
   today, 30 days, `dev_config.py`).
 
+- **`check_vhi.py`** — lightweight VHI check, runs after `check_s2_sr.py`.
+  - VHI rows `LST missing` and `No S2-SR scene in time window` in the lookback
+    window: removed when VHI is already published; VHI is processed when the LST
+    is available and the VHI time window has S2-SR data (no incomplete S2-SR date).
+  - Published VHI that misses S2-SR data published later (delayed S2-SR): VHI of a
+    date is reprocessed when an S2-SR item of its time window is **not** in
+    `NDVI_INDEX_LIST` of the VHI metadata json **and** was published (STAC
+    `created`) after the VHI item (STAC `updated`). A count comparison does not
+    work: the VHI processor stops early once all pixels are filled, so
+    `NDVI_INDEX_LIST` often lists fewer items than the window has.
+
+  Outputs: `vhi-needs-processing` (start the GPU stage) and `vhi-reprocess-dates`
+  (comma separated, passed to `rerun.py` as environment variable
+  `VHI_REPROCESS_DATES`). Usage: `python check_vhi.py [YYYY-MM-DD] [days_back]
+  [config.py]` (defaults: today, 30 days, `dev_config.py`).
+
 - **`rerun.py`** — batch reprocessing driver for the GPU stage. It picks up all
   queued entries from `tools/step0_empty_assets.csv` (30 days back) and runs the
   full pipeline per date. Usage: `python rerun.py [config.py]` (default
-  `dev_config.py`). It backs the CSV up to `.bak` and restores it on a fatal error,
-  and exits non-zero only when its circuit breaker trips after consecutive upstream
-  failures — individual failed dates simply stay queued for the next run.
+  `dev_config.py`). It backs the CSV up to `.bak` and restores it on a fatal error.
+  Then it retries the VHI rows `LST missing` / `No S2-SR scene in time window`, and
+  reprocesses VHI (`--force-vhi`) for the dates in `VHI_REPROCESS_DATES`. It always
+  exits 0; failed dates are reported in the outputs `rerun-failed` /
+  `rerun-failures` and stay queued for the next run.
 
 `tools/step0_empty_assets.csv` is the live state file that couples the two stages;
 CI commits it to `main` after every run, so avoid editing it by hand.

@@ -28,7 +28,7 @@ def count_csv_rows_for_date(collection_basename, date_str):
 
 # Remarks in the rows of the follow-up products (e.g. VHI) that mean "an input was
 # not there yet, try again later". Rows with any other remark are left alone.
-RETRY_REMARKS = ['LST missing']
+RETRY_REMARKS = ['LST missing', 'No S2-SR scene in time window']
 
 
 def set_github_output(key, value):
@@ -93,8 +93,11 @@ def get_follow_up_products():
     return products
 
 
-def run_satromo_processor(config_file, date_str, env, script_dir):
-    """Run satromo_processor.py for one date, print its output live and return its exit code."""
+def run_satromo_processor(config_file, date_str, env, script_dir, extra_arg=None):
+    """Run satromo_processor.py for one date, print its output live and return its exit code.
+
+    extra_arg: optional additional argument after the date, e.g. '--force-vhi'.
+    """
     processor_script = os.path.join(script_dir, 'satromo_processor.py')
     if not os.path.exists(processor_script):
         print(f"ERROR: Processor script not found: {processor_script}")
@@ -107,6 +110,8 @@ def run_satromo_processor(config_file, date_str, env, script_dir):
         config_file,
         date_str
     ]
+    if extra_arg:
+        command.append(extra_arg)
 
     process = subprocess.Popen(
         command,
@@ -440,6 +445,47 @@ def retry_follow_up_products(days_back, config_file):
     return failures
 
 
+def reprocess_vhi_dates(config_file):
+    """
+    Reprocess VHI for the dates in the environment variable VHI_REPROCESS_DATES
+    (comma separated, e.g. '2026-11-02,2026-11-03').
+
+    check_vhi.py finds these dates: VHI is published, but an S2-SR item of its time
+    window was published later and is missing in the VHI. satromo_processor.py runs
+    with --force-vhi, so only VHI is calculated again, not S2-SR.
+    The CSV is not changed. If a reprocess fails, check_vhi.py finds the date again
+    in the next run.
+
+    Returns a list of short texts, one per failed date (empty if nothing failed).
+    """
+    dates_str = os.environ.get('VHI_REPROCESS_DATES', '').strip()
+    reprocess_dates = [date_str.strip() for date_str in dates_str.split(',') if date_str.strip()]
+
+    print(f"\n{'='*60}")
+    print(f"REPROCESS VHI: {len(reprocess_dates)} date(s) from VHI_REPROCESS_DATES: {reprocess_dates}")
+    print(f"{'='*60}")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    env = build_subprocess_env(script_dir)
+    failures = []
+
+    for date_str in reprocess_dates:
+        print(f"\n--- Reprocess VHI for {date_str} ---")
+        try:
+            return_code = run_satromo_processor(config_file, date_str, env, script_dir, '--force-vhi')
+            if return_code == 0:
+                print(f"✓ VHI reprocessed for {date_str}")
+            else:
+                print(f"✗ VHI reprocess failed with exit code {return_code} for {date_str}")
+                failures.append(f"PRODUCT_VHI reprocess {date_str}: exit code {return_code}")
+        except Exception as e:
+            print(f"✗ Unexpected error in VHI reprocess for {date_str}: {e}")
+            failures.append(f"PRODUCT_VHI reprocess {date_str}: {e}")
+
+    print(f"\nREPROCESS VHI SUMMARY: {len(reprocess_dates) - len(failures)} of {len(reprocess_dates)} done")
+    return failures
+
+
 def main():
     print("="*60)
     print("RERUN.PY - Empty Asset Reprocessing")
@@ -459,10 +505,13 @@ def main():
     # swisstopo STAC, not from Copernicus, so an outage there does not affect them.
     retry_failures = retry_follow_up_products(days_back, config_file)
 
+    # VHI dates where S2-SR data was published after the VHI (found by check_vhi.py)
+    reprocess_failures = reprocess_vhi_dates(config_file)
+
     # Failure warning for GitHub Actions: the workflow reads these outputs in its
     # last step ("Report failed dates") and turns the run red there, AFTER the CSV
     # was published and pushed. Failed dates stay in the CSV for the next run.
-    failures = s2_failures + retry_failures
+    failures = s2_failures + retry_failures + reprocess_failures
     if failures:
         set_github_output('rerun-failed', 'true')
         set_github_output('rerun-failures', '; '.join(failures))

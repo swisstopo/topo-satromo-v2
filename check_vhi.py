@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-check_vhi.py - Lightweight VHI 'LST missing' check.
+check_vhi.py - Lightweight VHI check.
 
+PART A - VHI entries in tools/step0_empty_assets.csv
 The VHI processor writes 'LST missing' to tools/step0_empty_assets.csv when the
-MeteoSwiss LST files for a date are not published yet. This script goes through
-these entries within the lookback window and checks each date, in this order:
+MeteoSwiss LST files for a date are not published yet, and step0 writes
+'No S2-SR scene in time window' when the whole VHI time window has no S2-SR data.
+This script goes through these entries within the lookback window and checks
+each date, in this order:
 
   1. VHI already published in FSDI STAC      -> the entry is stale and is removed
   2. LST files still missing                 -> entry is kept
@@ -18,8 +21,23 @@ these entries within the lookback window and checks each date, in this order:
 The VHI time window is [date - (temporal_coverage - 1), date], with
 temporal_coverage and the S2-SR collection taken from PRODUCT_VHI in the config.
 
-At the end, sets the GitHub Actions output 'vhi-needs-processing=true' if at
-least one date of case 5 was found. Only then the EC2 has to be started for VHI.
+PART B - published VHI that misses S2-SR data published later
+VHI is calculated with the S2-SR items that are in STAC at that moment. When an
+S2-SR item of the time window is published later (delayed S2-SR), the VHI has to
+be calculated again. A published VHI item is reprocessed when an S2-SR item in
+its time window
+  - is not in NDVI_INDEX_LIST of the VHI metadata json, and
+  - was published (STAC 'created') after the VHI item was last written (STAC 'updated').
+The second condition is needed because the VHI processor stops early once all
+pixels are filled: NDVI_INDEX_LIST then does not list the older S2-SR items on
+purpose. As in part A, no reprocess while an S2-SR date in the time window is
+'Tile upload incomplete' or 'Tile download incomplete'.
+
+At the end, sets the GitHub Actions outputs:
+  vhi-needs-processing=true   if at least one date of case 5 (part A) or of part B
+                              was found. Only then the EC2 has to be started for VHI.
+  vhi-reprocess-dates=...     the dates of part B, comma separated (empty if none).
+                              rerun.py reprocesses them with --force-vhi.
 
 Usage:
     python check_vhi.py                                      # date=today, days_back=30, dev_config.py
@@ -43,6 +61,10 @@ from datetime import datetime, timedelta
 EMPTY_ASSET_LIST = os.path.join("tools", "step0_empty_assets.csv")
 
 REMARK_LST_MISSING = "LST missing"
+REMARK_NO_S2 = "No S2-SR scene in time window"
+
+# VHI remarks that are checked again: VHI could not be made yet for these dates
+RETRY_REMARKS = [REMARK_LST_MISSING, REMARK_NO_S2]
 
 # S2-SR remarks that keep step0 from being ready (see step0_functions.py):
 # such a date is neither in STAC nor counted as "no data"
@@ -130,6 +152,88 @@ def stac_has_items(items_url, start_date_str, end_date_str):
         return False
 
 
+def get_stac_items(items_url, start_date_str, end_date_str):
+    """
+    All items of the STAC collection between the two dates (both included), as a
+    list of dicts (the STAC features). Returns None if the request fails.
+    """
+    start = f"{start_date_str}T00:00:00Z"
+    end = f"{end_date_str}T23:59:59Z"
+    items = []
+    url = items_url
+    params = {"datetime": f"{start}/{end}", "limit": 100}
+    try:
+        while url:
+            # "nocache": see stac_has_items
+            params["nocache"] = datetime.now().strftime('%Y%m%d%H%M%S%f')
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            items.extend(data.get("features", []))
+
+            # More than 100 items: the next page has its own URL with all parameters
+            url = None
+            params = {}
+            for link in data.get("links", []):
+                if link.get("rel") == "next":
+                    url = link["href"]
+    except Exception as e:
+        print(f"  WARNING: FSDI STAC query failed for {start_date_str} to {end_date_str}: {e}")
+        return None
+    return items
+
+
+def get_item_date(item):
+    """
+    Date of a STAC item from its id, e.g. '2026-10-01t235959' -> '2026-10-01'.
+    Returns None for items whose id is not a date, e.g. the 'latest' item that
+    has the collection name as id ('swisseo_vhi_v200').
+    """
+    date_str = item["id"][:10]
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return date_str
+
+
+def parse_stac_time(time_str):
+    """STAC time string, e.g. '2026-10-08T08:59:28.213908Z', as a datetime."""
+    return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+
+
+def get_ndvi_index_list(vhi_item):
+    """
+    The S2-SR item ids the VHI item was calculated with: NDVI_INDEX_LIST from the
+    metadata json asset of the VHI item. Returns None if it cannot be read.
+    """
+    metadata_url = None
+    for asset_name, asset in vhi_item.get("assets", {}).items():
+        if asset_name.endswith("_metadata.json"):
+            metadata_url = asset["href"]
+    if metadata_url is None:
+        print(f"  WARNING: no metadata json asset in VHI item {vhi_item['id']}")
+        return None
+
+    try:
+        resp = requests.get(metadata_url, params={"nocache": datetime.now().strftime('%Y%m%d%H%M%S%f')},
+                            timeout=30)
+        resp.raise_for_status()
+        metadata = resp.json()
+    except Exception as e:
+        print(f"  WARNING: could not read {metadata_url}: {e}")
+        return None
+
+    # The list is the same for the vegetation and the forest raster
+    for raster_name in ["VEGETATION-10M", "FOREST-10M"]:
+        index_list = metadata.get(raster_name, {}).get("PROPERTIES", {}).get("NDVI_INDEX_LIST")
+        if index_list:
+            return index_list.split(",")
+
+    print(f"  WARNING: no NDVI_INDEX_LIST in {metadata_url}")
+    return None
+
+
 # ============================================================================
 # LST CHECK
 # ============================================================================
@@ -192,6 +296,80 @@ def get_incomplete_s2_dates(df, s2_collection_name, start_date_str, end_date_str
 
 
 # ============================================================================
+# PART B - VHI TO REPROCESS
+# ============================================================================
+
+def find_vhi_dates_to_reprocess(vhi_config, df, start_date_str, end_date_str):
+    """
+    Published VHI items between the two dates that miss an S2-SR item published
+    later (see PART B in the docstring at the top).
+    Returns a dict {date: [new S2-SR item ids]}, sorted by date.
+    """
+    temporal_coverage = vhi_config["temporal_coverage"]
+
+    vhi_items = get_stac_items(vhi_config["vhi_items_url"], start_date_str, end_date_str)
+    # S2-SR items for the time windows of all these VHI dates
+    s2_start_date_str = (datetime.strptime(start_date_str, "%Y-%m-%d")
+                         - timedelta(days=temporal_coverage - 1)).strftime("%Y-%m-%d")
+    s2_items = get_stac_items(vhi_config["s2_items_url"], s2_start_date_str, end_date_str)
+
+    if vhi_items is None or s2_items is None:
+        print("  STAC query failed, no VHI reprocess check in this run")
+        return {}
+
+    # Leave out the 'latest' items (id is not a date)
+    vhi_items = [item for item in vhi_items if get_item_date(item) is not None]
+    s2_items = [item for item in s2_items if get_item_date(item) is not None]
+
+    print(f"Published VHI items: {len(vhi_items)}  |  S2-SR items from {s2_start_date_str}: {len(s2_items)}")
+
+    dates_to_reprocess = {}
+
+    for vhi_item in sorted(vhi_items, key=lambda item: item["id"]):
+        # VHI item id e.g. '2026-10-01t235959', S2-SR item id e.g. '2026-09-30t102821'
+        date_str = get_item_date(vhi_item)
+        window_start = (datetime.strptime(date_str, "%Y-%m-%d")
+                        - timedelta(days=temporal_coverage - 1)).strftime("%Y-%m-%d")
+        vhi_updated = parse_stac_time(vhi_item["properties"]["updated"])
+
+        # S2-SR items in the time window that were published after the VHI was written
+        later_s2_ids = []
+        for s2_item in s2_items:
+            s2_date_str = get_item_date(s2_item)
+            if s2_date_str < window_start or s2_date_str > date_str:
+                continue
+            if parse_stac_time(s2_item["properties"]["created"]) > vhi_updated:
+                later_s2_ids.append(s2_item["id"])
+
+        if not later_s2_ids:
+            continue
+
+        # Only now read the metadata json (one request per VHI item)
+        print(f"\nVHI {date_str}: S2-SR item(s) published after the VHI: {sorted(later_s2_ids)}")
+        used_s2_ids = get_ndvi_index_list(vhi_item)
+        if used_s2_ids is None:
+            print(f"  NDVI_INDEX_LIST not readable — no reprocess")
+            continue
+
+        new_s2_ids = sorted(s2_id for s2_id in later_s2_ids if s2_id not in used_s2_ids)
+        if not new_s2_ids:
+            print(f"  All of them are in NDVI_INDEX_LIST — no reprocess")
+            continue
+
+        # Wait until all S2-SR dates of the time window are complete
+        incomplete_dates = get_incomplete_s2_dates(df, vhi_config["s2_collection_name"], window_start, date_str)
+        if incomplete_dates:
+            print(f"  Not in NDVI_INDEX_LIST: {new_s2_ids}, but incomplete S2-SR date(s) in time window "
+                  f"{incomplete_dates} — reprocess later")
+            continue
+
+        print(f"  Not in NDVI_INDEX_LIST: {new_s2_ids} — VHI {date_str} has to be reprocessed")
+        dates_to_reprocess[date_str] = new_s2_ids
+
+    return dates_to_reprocess
+
+
+# ============================================================================
 # GITHUB ACTIONS OUTPUT
 # ============================================================================
 
@@ -213,7 +391,7 @@ def main():
     config_name = sys.argv[3] if len(sys.argv) > 3 else "dev_config.py"
 
     print("=" * 60)
-    print("check_vhi.py - VHI 'LST missing' Check")
+    print("check_vhi.py - VHI Check")
     print(f"Target date: {today}  |  Lookback window: {days_back} days  |  Config: {config_name}")
     print("=" * 60)
 
@@ -236,15 +414,19 @@ def main():
     df = pd.read_csv(EMPTY_ASSET_LIST)
     print(f"\nLoaded {len(df)} rows from {EMPTY_ASSET_LIST}")
 
-    lst_missing_mask = (
+    # ------------------------------------------------------------------
+    # PART A - VHI entries in the CSV
+    # ------------------------------------------------------------------
+    retry_mask = (
         (df["collection"] == product_name)
-        & (df["remark"] == REMARK_LST_MISSING)
+        & (df["remark"].isin(RETRY_REMARKS))
         & (df["date"] >= cutoff)
         & (df["date"] <= today)
     )
-    dates_to_check = list(dict.fromkeys(df[lst_missing_mask]["date"].tolist()))
+    # (date, remark) of each entry, without duplicates
+    rows_to_check = list(dict.fromkeys(zip(df[retry_mask]["date"], df[retry_mask]["remark"])))
 
-    print(f"\nDates with '{REMARK_LST_MISSING}' within {days_back} days ({len(dates_to_check)} total): {dates_to_check}")
+    print(f"\nEntries with {RETRY_REMARKS} within {days_back} days ({len(rows_to_check)} total): {rows_to_check}")
 
     removed_dates = []
     still_missing_dates = []
@@ -253,8 +435,8 @@ def main():
     s2_incomplete_dates = []
     ready_dates = []
 
-    for date_str in dates_to_check:
-        print(f"\nChecking {date_str} ...")
+    for date_str, remark in rows_to_check:
+        print(f"\nChecking {date_str} ({remark}) ...")
 
         # 1. VHI already published -> the entry is stale
         if stac_has_items(vhi_config["vhi_items_url"], date_str, date_str):
@@ -262,10 +444,10 @@ def main():
             stale_mask = (
                 (df["collection"] == product_name)
                 & (df["date"] == date_str)
-                & (df["remark"] == REMARK_LST_MISSING)
+                & (df["remark"] == remark)
             )
             df = df[~stale_mask]
-            print(f"    {date_str}: removed stale '{REMARK_LST_MISSING}' entry from CSV")
+            print(f"    {date_str}: removed stale '{remark}' entry from CSV")
             removed_dates.append(date_str)
             continue
 
@@ -307,8 +489,19 @@ def main():
     df.to_csv(EMPTY_ASSET_LIST, index=False)
     print(f"\nSaved updated CSV ({len(df)} rows) to {EMPTY_ASSET_LIST}")
 
-    result = "true" if ready_dates else "false"
+    # ------------------------------------------------------------------
+    # PART B - published VHI that misses S2-SR data published later
+    # ------------------------------------------------------------------
+    dates_to_reprocess = {}
+    if vhi_enabled:
+        print(f"\n{'-' * 60}")
+        print(f"Checking published VHI from {cutoff} to {today} for S2-SR items published later ...")
+        dates_to_reprocess = find_vhi_dates_to_reprocess(vhi_config, df, cutoff, today)
+
+    result = "true" if (ready_dates or dates_to_reprocess) else "false"
+    reprocess_dates_str = ",".join(dates_to_reprocess.keys())
     set_github_output("vhi-needs-processing", result)
+    set_github_output("vhi-reprocess-dates", reprocess_dates_str)
 
     print(f"\n{'=' * 60}")
     print(f"Removed (VHI already published):        {removed_dates if removed_dates else 'none'}")
@@ -318,7 +511,14 @@ def main():
     print(f"No S2-SR in time window:                {no_s2_dates if no_s2_dates else 'none'}")
     print(f"Incomplete S2-SR date in time window:   {s2_incomplete_dates if s2_incomplete_dates else 'none'}")
     print(f"VHI to process:                         {ready_dates if ready_dates else 'none'}")
+    if dates_to_reprocess:
+        print("VHI to reprocess (new S2-SR in window):")
+        for date_str, new_s2_ids in dates_to_reprocess.items():
+            print(f"    {date_str}: {new_s2_ids}")
+    else:
+        print("VHI to reprocess (new S2-SR in window): none")
     print(f"RESULT: vhi-needs-processing={result}")
+    print(f"RESULT: vhi-reprocess-dates={reprocess_dates_str}")
     print("=" * 60)
 
 
