@@ -100,6 +100,31 @@ PRODUCT_VHI = {
     "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
+# VHI historic – monthly VHI from Landsat 5/7/8 (1991-01 to 2015-12), published in the same collection as PRODUCT_VHI
+# Only run manually: python step1_processors/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01]
+PRODUCT_VHI_HIST = {
+    "geocat_id_forest": PRODUCT_VHI["geocat_id_forest"],
+    "geocat_id_vegetation": PRODUCT_VHI["geocat_id_vegetation"],
+    "product_name": PRODUCT_VHI["product_name"],
+    "step1_collection": PRODUCT_VHI["step1_collection"],
+    "first_month": "1991-01-01",  # first item: 1991-01-01t235959
+    "last_month": "2015-12-01",  # last item: 2015-12-01t235959, from 2016 onwards the daily Sentinel-2 VHI
+    "temporal_coverage": 1,  # Months
+    "spatial_scale_export": 30,  # Meters
+    "no_data": 255,
+    "missing_data": 110,
+    "scaling_factor": 1,
+    "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS_M_V2/",
+    "LST_current_data": PRODUCT_VHI["LST_current_data"],
+    "LST_reference_data": None,  # TODO: S3 folder of the monthly LST reference (1991-2020)
+    "LST_reference_file": None,  # TODO: file name pattern, e.g. "LST_statistics_M{month:02d}_....nc"
+    "LST_reference_dummy": True,  # True: use the DOY LST reference of the 15th of the month (test only, nothing is published)
+    "vegetation_masks": PRODUCT_VHI["vegetation_masks"],
+    "forest_mask_name": "forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",  # oldest habitat mask, 10 m
+    "vegetation_mask_name": "vegetation_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",
+    "mask_min_fraction_30m": 0.5,  # a 30 m pixel is in the mask if at least this share of its 9 pixels (10 m) is
+}
+
 # MSG – MeteoSchweiz: only used for repreocessing
 PRODUCT_MSG_CLIMA = {
     "temporal_coverage": 1,  # Days
