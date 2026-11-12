@@ -189,7 +189,10 @@ def process_empty_asset_list(collection_basename, days_back, config_file):
         # (see below). This ensures dates that fail (e.g. Copernicus STAC outage) stay
         # in the CSV and are retried on the next run, instead of being silently lost.
 
-        reprocess_list = df_to_process['date'].tolist()
+        # dict.fromkeys: a date that has more than one row in the CSV (e.g. two
+        # 'Tiles ready awaiting GPU system run' rows) must still be processed only
+        # once -- processing it twice also wrote its result row twice.
+        reprocess_list = list(dict.fromkeys(df_to_process['date'].tolist()))
         print(f"Found {len(df_cloudy)} cloudy entries (kept in CSV).")
         print(f"Found {len(reprocess_list)} dates to actually reprocess for {collection_basename}")
 
@@ -410,7 +413,8 @@ def retry_follow_up_products(days_back, config_file):
         print(f"{'='*60}")
 
         resolved_rows = []  # (date, remark) of the rows that can be removed from the CSV
-        for date_str, remark in zip(df_retry['date'], df_retry['remark']):
+        # dict.fromkeys: run each (date, remark) only once, even if the CSV has it twice
+        for date_str, remark in dict.fromkeys(zip(df_retry['date'], df_retry['remark'])):
             print(f"\n--- Retry {product} for {date_str} ({remark}) ---")
             try:
                 # A follow-up run earlier in this rerun may already have produced it
