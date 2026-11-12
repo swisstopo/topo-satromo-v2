@@ -51,6 +51,7 @@ if __name__ == "__main__":
     if debug_mode:
         current_date_str = "2024-05-01"
         force_reprocess = True  # <-- toggle this manually during debug
+        force_vhi = True  # <-- toggle this manually during debug
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print(f"Force reprocess: {force_reprocess}")
