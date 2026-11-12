@@ -181,3 +181,8 @@ local_assets/
 # Miscellaneous
 CloudMaskComparison/
 test/
+
+
+# Reference
+vi_reference/
+step1_processors/step1_processor_vhi_historic.py
