@@ -1,3 +1,4 @@
+import calendar
 import os
 import sys
 import requests
@@ -15,7 +16,9 @@ import configuration as config  # noqa: E402
 # INTRODUCTION
 # This script calculates land surface temperature (LST) from surface downwelling longwave
 # radiation (SDL) and surface outgoing longwave radiation (SOL) and aggregates it to
-# DOY reference statistics (2004-2020, 11am UTC, +/- 3 days window) for the VHI calculation.
+# reference statistics (2004-2020, 11am UTC):
+# - DOY reference (+/- 3 days window) for the daily VHI
+# - monthly reference (all days of the month) for the historic VHI
 #
 # The SDL and SOL input is the MeteoSwiss all-sky data published on data.geo.admin.ch,
 # i.e. exactly the same source and the same LST calculation as the daily VHI
@@ -27,8 +30,8 @@ import configuration as config  # noqa: E402
 ##############################
 # CONTENT
 # 1. Configuration / parameters
-# 2. Functions (download, date range, LST calculation)
-# 3. Processing: loop over the DOYs, calculate the statistics, save to NetCDF
+# 2. Functions (download, dates, LST calculation, statistics, saving)
+# 3. Processing: loop over the DOYs, then over the months, save each to NetCDF
 
 ##############################
 # CONFIGURATION / PARAMETERS
@@ -36,10 +39,13 @@ import configuration as config  # noqa: E402
 # DOYs to process: [196] for a test, range(1, 367) for the full reference
 doys_to_process = [196]
 
+# Months to process: [8] for a test, range(1, 13) for the full reference ([] skips the monthly part)
+months_to_process = [8]
+
 # Paths
 lst_source_url = f"{config.PRODUCT_VHI['LST_current_data']}/MSG2004-2023"  # same source as the daily VHI (before 2024)
 local_source_dir = os.path.join(REPO_DIR, 'local_assets', 'LST_SOURCE')  # downloaded SDL/SOL monthly files
-local_output_dir = os.path.join(REPO_DIR, 'local_assets', 'LST_REFERENCE')  # resulting DOY reference files
+local_output_dir = os.path.join(REPO_DIR, 'local_assets', 'LST_REFERENCE')  # resulting reference files
 
 # Constants
 n_days = 3  # Number of days to expand on each side of the target DOY
@@ -208,75 +214,64 @@ def calc_LST_for_date(ds_sol, ds_sdl, date, aggregation='hour', hour=None):
 
     return ds_output
 
-##############################
-# PROCESSING
-# Loop through the DOYs
-for doy in doys_to_process:
-    print(f"\n{'#'*80}")
-    print(f"PROCESSING DOY {doy}")
-    print(f"{'#'*80}\n")
+# Function to get all days of a month
+def get_dates_for_month(year, month):
+    """All dates of a calendar month (February has 28 or 29 days)."""
+    number_of_days = calendar.monthrange(year, month)[1]
+    return [datetime(year, month, day) for day in range(1, number_of_days + 1)]
 
-    doy_int = int(doy)
-    doy_str = str(doy_int).zfill(3)
+# Function to calculate the LST statistics for a list of dates
+def calculate_lst_statistics(dates):
+    """
+    Calculate the 11am LST of every date and the statistics over all dates.
 
+    Parameters
+    ----------
+    dates : list of datetime
+        All dates that go into the statistics (all years).
+
+    Returns
+    -------
+    tuple
+        (stats, n_samples) - xarray Dataset with the statistics in degrees Celsius,
+        and the number of dates that were used.
+    """
     # Initialize list to collect daily datasets
     lst_list = []
-
-    # Track statistics
-    total_dates_requested = 0
-    dates_skipped_boundary = 0
     dates_skipped_error = 0
 
-    # Process each year
-    for year in years:
-        print(f"\n{'='*60}")
-        print(f"Processing year {year}")
-        print(f"{'='*60}")
+    # Process each date
+    for date in dates:
+        try:
+            print(f"Processing {date.strftime('%Y-%m-%d')}...")
 
-        # Get date range for this year (with boundary protection)
-        date_range = get_date_range_for_doy(
-            year, doy_int, n_days,
-            first_date=first_available_date,
-            last_date=last_available_date
-        )
+            # Download the monthly files (only once) and open them
+            local_sdl, local_sol = download_month(date.year, date.month)
+            with xr.open_dataset(local_sdl, engine='h5netcdf') as ds_sdl, \
+                 xr.open_dataset(local_sol, engine='h5netcdf') as ds_sol:
 
-        total_dates_requested += (2 * n_days + 1)
-        dates_skipped_boundary += (2 * n_days + 1) - len(date_range)
+                # Calculate LST for 11AM UTC (same call as in step1_processor_vhi.py)
+                ds_lst = calc_LST_for_date(ds_sol, ds_sdl, date.strftime('%Y-%m-%d'), aggregation='hour', hour=11)
 
-        # Process each date in the range
-        for date in date_range:
-            try:
-                print(f"Processing {date.strftime('%Y-%m-%d')}...")
-
-                # Download the monthly files (only once) and open them
-                local_sdl, local_sol = download_month(date.year, date.month)
-                with xr.open_dataset(local_sdl, engine='h5netcdf') as ds_sdl, \
-                     xr.open_dataset(local_sol, engine='h5netcdf') as ds_sol:
-
-                    # Calculate LST for 11AM UTC (same call as in step1_processor_vhi.py)
-                    ds_lst = calc_LST_for_date(ds_sol, ds_sdl, date.strftime('%Y-%m-%d'), aggregation='hour', hour=11)
-
-                if ds_lst is None:
-                    dates_skipped_error += 1
-                    continue
-
-                lst_list.append(ds_lst)
-
-            except Exception as e:
-                print(f"Error processing {date.strftime('%Y-%m-%d')}: {e}")
+            if ds_lst is None:
                 dates_skipped_error += 1
                 continue
+
+            lst_list.append(ds_lst)
+
+        except Exception as e:
+            print(f"Error processing {date.strftime('%Y-%m-%d')}: {e}")
+            dates_skipped_error += 1
+            continue
 
     # Concatenate along time dimension
     print(f"\n{'='*60}")
     print("Concatenating all datasets...")
     ds_lst_stacked = xr.concat(lst_list, dim='time', data_vars='all')
+    n_samples = len(ds_lst_stacked.time)
+    print(f"Dates requested: {len(dates)}, used: {n_samples}, skipped (no data / error): {dates_skipped_error}")
 
-    print(f"Dates requested: {total_dates_requested}, used: {len(ds_lst_stacked.time)}, "
-          f"skipped (outside data range): {dates_skipped_boundary}, skipped (no data / error): {dates_skipped_error}")
-
-    # Calculate statistics for each variable across the time dimension
-    print(f"\n{'='*60}")
+    # Calculate statistics across the time dimension
     print("Calculating statistics across all years and time window...")
 
     # Convert to Celsius for all calculations
@@ -300,28 +295,68 @@ for doy in doys_to_process:
         'LST_11am_p95': lst_p95
     })
 
-    # Add metadata
+    return stats, n_samples
+
+# Function to add the metadata and save the statistics to a NetCDF file
+def save_statistics(stats, n_samples, extra_attrs, filename):
+    """Add the common metadata plus extra_attrs to the statistics and save them in local_output_dir."""
     metadata = {
         'years': f'{years[0]}-{years[-1]}',
-        'n_samples': len(ds_lst_stacked.time),
+        'n_samples': n_samples,
         'satellite': satellite,
         'first_available_date': first_available_date.strftime('%Y-%m-%d'),
         'last_available_date': last_available_date.strftime('%Y-%m-%d'),
         'description': 'LST statistics calculated from satellite data',
         'source': f'{lst_source_url} (MeteoSwiss all-sky SDL/SOL)',
         'units': 'degrees Celsius',
-        'doy': doy_int,
-        'window_days': 2 * n_days + 1,
+        **extra_attrs,
     }
-
     stats.attrs.update(metadata)
     stats.attrs['aggregation_type'] = 'hour_11_UTC'
 
-    ##############################
-    # SAVE STATISTICS TO FILES
-    # Same file name as the reference used by step1_processor_vhi.py
-    base_filename = f'LST_statistics_DOY{doy_str}_{satellite}_{channel}_{years[0]}-{years[-1]}_{n_days*2+1}days'
-    output_filename_11am = os.path.join(local_output_dir, f'{base_filename}_11am.nc')
+    output_path = os.path.join(local_output_dir, filename)
+    stats.to_netcdf(output_path)
+    print(f"LST_11am statistics saved to: {output_path}")
 
-    stats.to_netcdf(output_filename_11am)
-    print(f"LST_11am statistics saved to: {output_filename_11am}")
+##############################
+# PROCESSING
+# 1. DOY reference (daily VHI): +/- n_days around the DOY, all years
+for doy in doys_to_process:
+    print(f"\n{'#'*80}")
+    print(f"PROCESSING DOY {doy}")
+    print(f"{'#'*80}\n")
+
+    doy_int = int(doy)
+    doy_str = str(doy_int).zfill(3)
+
+    # Collect the dates of all years (with boundary protection)
+    dates = []
+    for year in years:
+        dates += get_date_range_for_doy(
+            year, doy_int, n_days,
+            first_date=first_available_date,
+            last_date=last_available_date
+        )
+
+    stats, n_samples = calculate_lst_statistics(dates)
+
+    # Same file name as the reference used by step1_processor_vhi.py
+    filename = f'LST_statistics_DOY{doy_str}_{satellite}_{channel}_{years[0]}-{years[-1]}_{n_days*2+1}days_11am.nc'
+    save_statistics(stats, n_samples, {'doy': doy_int, 'window_days': 2 * n_days + 1}, filename)
+
+# 2. Monthly reference (historic VHI): all days of the month, all years
+for month in months_to_process:
+    print(f"\n{'#'*80}")
+    print(f"PROCESSING MONTH {month:02d}")
+    print(f"{'#'*80}\n")
+
+    # Collect the dates of all years
+    dates = []
+    for year in years:
+        dates += get_dates_for_month(year, month)
+
+    stats, n_samples = calculate_lst_statistics(dates)
+
+    # Same file name as the monthly reference on S3 (2004-2020_LST_MSGch02_M)
+    filename = f'LST_statistics_M{month:02d}_{satellite}_{channel}_{years[0]}-{years[-1]}_11am.nc'
+    save_statistics(stats, n_samples, {'months': str(month)}, filename)
