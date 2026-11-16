@@ -101,7 +101,7 @@ PRODUCT_VHI = {
 }
 
 # VHI historic – monthly VHI from Landsat 5/7/8 (1991-01 to 2015-12), published in the same collection as PRODUCT_VHI
-# Only run manually: python step1_processors/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01]
+# Only run manually: python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01]
 PRODUCT_VHI_HIST = {
     "geocat_id_forest": PRODUCT_VHI["geocat_id_forest"],
     "geocat_id_vegetation": PRODUCT_VHI["geocat_id_vegetation"],

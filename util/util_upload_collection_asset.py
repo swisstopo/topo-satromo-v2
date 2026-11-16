@@ -4,7 +4,7 @@ Upload collection-level STAC assets.
 
 As a library function (from step1_processor_s2_sr.py or any other script):
 
-    from main_functions import util_upload_collection_asset
+    from util import util_upload_collection_asset
     util_upload_collection_asset.publish_collection_asset(
         local_file="acquisitionplan.csv",
         collection=config.PRODUCT_S2_LEVEL_2A["product_name"],

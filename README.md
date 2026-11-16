@@ -50,6 +50,14 @@ check_vhi.py                      # Lightweight VHI 'LST missing' check (CI stag
 rerun.py                          # Batch reprocessing driver (CI stage 2, GPU EC2)
 hourly_runner.sh                  # Local cron alternative to run_rerun.yml
 tools/step0_empty_assets.csv      # Live per-date/tile status, committed by CI
+
+util/                             # Manually run tools, not part of the daily pipeline (see util/README.md)
+    ├── util_*.py                 # STAC / S3 maintenance and reprocessing scripts
+    ├── ref_lst/                  # LST reference data
+    ├── ref_ndvi_landsat/         # NDVI reference from Landsat
+    ├── ref_ndvi_s2_forest/       # NDVI reference from Sentinel-2 for gap-filled forest VHI (planned)
+    ├── vhi_gapfill_forest/       # Gap-filled forest VHI (planned)
+    └── vhi_historic_landsat_monthly/  # Historic monthly VHI from Landsat (1991-2015)
 ```
 
 The `step0_function` registered per collection in the config is the callable that
@@ -506,7 +514,7 @@ commits `tools/` back to `main`.
 
 | Stage | Job | Runner | What it does |
 |-------|-----|--------|--------------|
-| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `main_functions/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets and pushes `tools/` back to `main`. Sets the output `needs-processing`. |
+| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `util/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets and pushes `tools/` back to `main`. Sets the output `needs-processing`. |
 | 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. |
 | 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, runs `python rerun.py prod_config.py`, republishes the CSVs and pushes `tools/`. Hard timeout **420 minutes** for cost protection. |
 | 2c | `stop-ec2` | `ubuntu-24.04` (hosted) | `if: always()` — terminates the EC2 runner even when stage 2b failed or timed out. |

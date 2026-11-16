@@ -72,7 +72,7 @@ push_tools() {
 # Upload acquisitionplan.csv and dates_with_no_imagery.csv to the STAC collections
 publish_collection_assets() {
     log "Publishing acquisitionplan.csv and step0_empty_assets.csv..."
-    if ! $PYTHON_CMD main_functions/util_upload_collection_asset.py "$CONFIG_FILE"; then
+    if ! $PYTHON_CMD util/util_upload_collection_asset.py "$CONFIG_FILE"; then
         error "util_upload_collection_asset.py failed"
         exit 1
     fi
@@ -157,7 +157,7 @@ trap 'rm -f "$GITHUB_OUTPUT"' EXIT
 TODAY=$(date -u +%Y-%m-%d)
 
 log "Getting acquisition plan..."
-if ! $PYTHON_CMD main_functions/util_get_acquisition_plans.py; then
+if ! $PYTHON_CMD util/util_get_acquisition_plans.py; then
     error "util_get_acquisition_plans.py failed"
     exit 1
 fi

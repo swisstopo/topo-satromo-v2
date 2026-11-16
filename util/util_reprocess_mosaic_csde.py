@@ -23,7 +23,7 @@ its presence means that window finished. The batch can therefore be
 interrupted and resumed without redoing completed windows.
 
 Usage:
-    python main_functions/util_reprocess_mosaic_csde.py
+    python util/util_reprocess_mosaic_csde.py
 """
 
 import subprocess

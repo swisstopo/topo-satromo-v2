@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 # The script is started from the repository root as a file, so the repository
 # has to be added to the search path for the config import below
-REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # util/ref_lst/ -> repository
 sys.path.insert(0, REPO_DIR)
 
 import configuration as config  # noqa: E402
@@ -25,7 +25,7 @@ import configuration as config  # noqa: E402
 # (step1_processors/step1_processor_vhi.py).
 #
 # Run from the repository root:
-#   python main_functions/LST_reference.py
+#   python util/ref_lst/LST_reference.py
 
 ##############################
 # CONTENT

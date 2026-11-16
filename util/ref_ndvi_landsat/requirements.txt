@@ -1,0 +1,13 @@
+# Packages for the vi_reference folder only.
+# GDAL command line tools (gdalwarp, gdaldem, gdalbuildvrt) must be available on the PATH.
+numpy<2.0.0
+pandas
+pyarrow
+scipy
+geopandas>=1.1.2
+shapely
+rasterio
+requests
+pystac-client
+boto3
+matplotlib

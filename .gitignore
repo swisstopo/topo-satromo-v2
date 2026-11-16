@@ -183,6 +183,5 @@ CloudMaskComparison/
 test/
 
 
-# Reference
-vi_reference/
-step1_processors/step1_processor_vhi_historic.py
+# Results of the util/ scripts (reference data, test runs): kept locally, not committed
+util/*/output/

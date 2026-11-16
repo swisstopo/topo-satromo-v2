@@ -17,6 +17,9 @@ step0_functions.py       # Availability checking and STAC/S3 querying logic
 step1_processor_s2_sr.py # Full S2 ARD: download, mosaic, cloud mask, co-register, terrain
 step1_processor_vhi.py   # VHI from S2-SR via NDVI/LST anomalies
 main_functions/          # Shared modules: auth, coregistration, terrain, STAC publish, mosaic
+util/                    # Manually run tools: util_*.py (STAC/S3 maintenance, reprocessing) + one folder per
+                         #   reference/derived dataset (ref_lst, ref_ndvi_landsat, ref_ndvi_s2_forest,
+                         #   vhi_gapfill_forest, vhi_historic_landsat_monthly); no deeper subfolders, output/ is git-ignored
 step0_processors/        # Per-product availability checks
 step1_processors/        # Per-product processing modules
 configuration/           # dev_config.py / prod_config.py / __init__.py (config loader)

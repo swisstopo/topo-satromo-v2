@@ -22,10 +22,10 @@ Pink marks missing data throughout: no-data pixels inside a mosaic (clouds,
 missing coverage) and whole months for which no mosaic exists.
 
 Usage:
-    python main_functions/util_reprocess_mosaic_thumbnails.py temp
-    python main_functions/util_reprocess_mosaic_thumbnails.py /mnt/d/temp/mosaic_csde
-    python main_functions/util_reprocess_mosaic_thumbnails.py temp --output-dir temp/overview
-    python main_functions/util_reprocess_mosaic_thumbnails.py temp --title-suffix "edge-margin-px=200"
+    python util/util_reprocess_mosaic_thumbnails.py temp
+    python util/util_reprocess_mosaic_thumbnails.py /mnt/d/temp/mosaic_csde
+    python util/util_reprocess_mosaic_thumbnails.py temp --output-dir temp/overview
+    python util/util_reprocess_mosaic_thumbnails.py temp --title-suffix "edge-margin-px=200"
 
     Options:
       --output-dir PATH   Directory for the PNG pages. Default: input_dir

@@ -48,7 +48,7 @@ jobs:
 
       - name: Get acquisition plan
         id: GetAcqui
-        run: python main_functions/util_get_acquisition_plans.py
+        run: python util/util_get_acquisition_plans.py
             
       - name: Check S2 data availability and update CSV
         id: check
@@ -61,7 +61,7 @@ jobs:
 
       - name: Publish acquisitionplan.csv and step0_empty_assets.csv
         id: PublishAcquiEmpty
-        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        run: python util/util_upload_collection_asset.py  prod_config.py
         env:
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
@@ -196,7 +196,7 @@ jobs:
 
       - name: Publish acquisitionplan.csv and step0_empty_assets.csv
         id: PublishAcquiEmpty2b
-        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        run: python util/util_upload_collection_asset.py  prod_config.py
         env:
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
