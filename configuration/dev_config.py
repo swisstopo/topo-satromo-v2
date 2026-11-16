@@ -116,9 +116,9 @@ PRODUCT_VHI_HIST = {
     "scaling_factor": 1,
     "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS_M_V2/",
     "LST_current_data": PRODUCT_VHI["LST_current_data"],
-    "LST_reference_data": None,  # TODO: S3 folder of the monthly LST reference (1991-2020)
-    "LST_reference_file": None,  # TODO: file name pattern, e.g. "LST_statistics_M{month:02d}_....nc"
-    "LST_reference_dummy": True,  # True: use the DOY LST reference of the 15th of the month (test only, nothing is published)
+    # Monthly LST reference (2004-2020): 0.05° grid for the MFG years, 0.02° grid for the MSG years
+    "LST_reference_ch05": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch05_M/LST_statistics_M{month:02d}_MSG_ch05_2004-2020_11am.nc",  # 1991-2003
+    "LST_reference_ch02": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02_M/LST_statistics_M{month:02d}_MSG_ch02_2004-2020_11am.nc",  # 2004-2015
     "vegetation_masks": PRODUCT_VHI["vegetation_masks"],
     "forest_mask_name": "forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",  # oldest habitat mask, 10 m
     "vegetation_mask_name": "vegetation_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",
