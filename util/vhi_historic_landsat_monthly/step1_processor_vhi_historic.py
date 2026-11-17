@@ -49,7 +49,10 @@ import vi_reference_config as ref_config  # noqa: E402
 # Usage (from the repository root):
 #   python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01               one month
 #   python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-01-01 2005-12-01    all months in between
+#   python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 --force       reprocess even if published
 # The dates are always the first of the month (item 2005-07-01t235959 = July 2005).
+# The results are published to the "step1_collection" of PRODUCT_VHI_HIST (int or prod, the login is chosen to match).
+# Months that are already completely published are skipped, incompletely published months are processed again.
 
 ##############################
 # CONTENT
@@ -73,6 +76,41 @@ ref_ndvi_nodata = 255  # NoData value in the reference NDVI statistics
 lst_hour = 11  # the LST of every day is taken at 11:00 UTC, as for the daily VHI
 first_msg_year = 2004  # MSG LST starts in 2004, before that MFG (source not yet defined)
 warnregions = "assets/warnregionen_vhi_2056.shp"  # same file as for the daily VHI
+expected_asset_count = 10  # 2 COGs, 6 warnregion files, metadata, thumbnail
+
+
+##############################
+# PUBLISH TARGET AND PUBLISHED MONTHS
+def use_step1_collection_for_publishing():
+    """Publish to the host of step1_collection, with the matching login.
+    publish_to_stac() takes the host from config.STAC_FSDI_HOSTNAME and the login from config.FSDI_SECRETS,
+    so both are set here from step1_collection (only for this run, the config files are not changed)."""
+    collection_url = config.PRODUCT_VHI_HIST["step1_collection"]
+    host = collection_url.split("://")[1].split("/")[0]  # e.g. sys-data.int.bgdi.ch
+    if ".int." in host:
+        secrets_file = os.path.join("secrets", "stac_fsdi-int.json")
+    else:
+        secrets_file = os.path.join("secrets", "stac_fsdi-prod.json")
+    if not os.path.exists(secrets_file):
+        print(f"Login file {secrets_file} for {host} is missing, stopping.")
+        sys.exit(1)
+    config.STAC_FSDI_HOSTNAME = host
+    config.FSDI_SECRETS = secrets_file
+    print(f"Publishing to: {collection_url} (login: {secrets_file})")
+
+
+def get_published_state(month_date_str):
+    """'missing', 'incomplete' or 'complete': is the item of the month already in step1_collection?"""
+    collection_url = config.PRODUCT_VHI_HIST["step1_collection"]
+    stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection_url, config.STAC_FSDI_API)
+    month_date = datetime.strptime(month_date_str, "%Y-%m-%d").date()
+    items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, month_date)
+    for item in items:
+        if item["id"].endswith(f"{month_date_str}t235959"):
+            if len(item.get("assets", {})) >= expected_asset_count:
+                return "complete"
+            return "incomplete"
+    return "missing"
 
 
 ##############################
@@ -362,12 +400,10 @@ def write_metadata_json(properties, filenames, warnregion_filenames, warnformats
 
 ##############################
 # PROCESSING FUNCTION
-def process_product_vhi_historic(month_date_str, collection=None):
+def process_product_vhi_historic(month_date_str):
     """Process the historic VHI of one month. month_date_str is the first of the month, e.g. '2005-07-01'."""
     product = config.PRODUCT_VHI_HIST
     product_name = product["product_name"]
-    if collection is None:
-        collection = product["step1_collection"]
     month_date = datetime.strptime(month_date_str, "%Y-%m-%d")
     year, month = month_date.year, month_date.month
     timestamp = f"{month_date_str}t235959"
@@ -544,11 +580,26 @@ def process_product_vhi_historic(month_date_str, collection=None):
 # This line is needed because the scenes are processed in 8 parallel worker processes: on Windows each worker
 # reads this file again, and without it every worker would start the whole run again.
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01]")
+    force = "--force" in sys.argv
+    arguments = [argument for argument in sys.argv if argument != "--force"]
+    if len(arguments) < 3:
+        print("Usage: python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01] [--force]")
         sys.exit(1)
-    first_date_str = sys.argv[2]
-    last_date_str = sys.argv[3] if len(sys.argv) > 3 else first_date_str
-    for month_date in get_months(first_date_str, last_date_str):
-        result = process_product_vhi_historic(month_date.strftime("%Y-%m-%d"))
+    first_date_str = arguments[2]
+    last_date_str = arguments[3] if len(arguments) > 3 else first_date_str
+    months = get_months(first_date_str, last_date_str)
+
+    use_step1_collection_for_publishing()
+
+    for month_date in months:
+        month_date_str = month_date.strftime("%Y-%m-%d")
+        state = get_published_state(month_date_str)
+        if state == "complete" and not force:
+            print(f"VHI historic {month_date:%Y-%m}: already published, skipped (use --force to reprocess).")
+            continue
+        if state == "complete":
+            print(f"VHI historic {month_date:%Y-%m}: already published, reprocessing (--force).")
+        if state == "incomplete":
+            print(f"VHI historic {month_date:%Y-%m}: incompletely published, reprocessing.")
+        result = process_product_vhi_historic(month_date_str)
         print(result)

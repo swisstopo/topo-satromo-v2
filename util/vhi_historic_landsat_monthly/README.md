@@ -16,4 +16,14 @@ Run from the repository root:
     python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01               one month
     python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-01-01 2005-12-01    all months in between
 
+    python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 --force       reprocess even if published
+
+Where the results go is decided by `step1_collection` of `PRODUCT_VHI_HIST`: sys-data.int.bgdi.ch (int) or
+data.geo.admin.ch (prod). The script uses the matching login (`secrets/stac_fsdi-int.json` or
+`secrets/stac_fsdi-prod.json`) and prints the target at the start. There is no `step0_collection` on purpose:
+it would make `satromo_processor.py` run this product.
+
+Months that are already completely published (all 10 assets) are skipped, so a stopped run can simply be started
+again. Incompletely published months are processed again. `--force` reprocesses every month.
+
 Open point: the LST input for 1991-2003 (MFG). Until it is added, months before 2004 are skipped.
