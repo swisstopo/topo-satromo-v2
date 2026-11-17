@@ -2,7 +2,7 @@
 import datetime
 
 import configuration as config
-from step0_functions import get_step0_dict, step0_main
+from step0_functions import get_step0_dict, step0_main, is_date_marked_empty
 from step1_processors import step1_processor_s2_sr, step1_processor_vhi #, step1_processor_l57_toa, step1_processor_l89_sr, step1_processor_l89_toa, step1_processor_s3_toa, step1_processor_vhi_hist
 from main_functions import main_utils
 
@@ -93,7 +93,14 @@ if __name__ == "__main__":
                     stac_catalog_url, collection_id,
                     datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date()
                 )
-                if len(daily_items) == 0 or force_reprocess:  # add force_reprocess
+                # Is the date in the empty_asset_list as "no source data" (e.g. 'cloudy', 'No candidate scene')?
+                # Then there is nothing to download. Queue rows (e.g. 'Tiles ready awaiting GPU system run') are not counted as empty.
+                date_is_empty = is_date_marked_empty(collection_id, current_date_str)
+
+                if date_is_empty and not force_reprocess:
+                    print(f"Date {current_date_str} is in empty_asset_list (no source data): skipping S2-SR processing.")
+                    result = f"PRODUCT_S2_LEVEL_2A: {current_date_str} in empty_asset_list, skipping processing."
+                elif len(daily_items) == 0 or force_reprocess:  # add force_reprocess
                     if force_reprocess and len(daily_items) > 0:
                         print(f"Force reprocess enabled: reprocessing {current_date_str} despite existing STAC items.")
                     result = step1_processor_s2_sr.process_product_s2_sr(
