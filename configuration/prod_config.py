@@ -96,7 +96,7 @@ PRODUCT_VHI = {
     "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    # "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing
