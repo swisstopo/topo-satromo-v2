@@ -591,7 +591,13 @@ if __name__ == "__main__":
 
     use_step1_collection_for_publishing()
 
+    # The STAC upload (main_multipart_upload_via_api.multipart_upload) overwrites sys.argv with its own arguments.
+    # The worker processes of the next month read the configuration from sys.argv again, so the original command
+    # line is put back before every month. Without this, the workers stop with "Invalid date format" and the run hangs.
+    original_argv = list(sys.argv)
+
     for month_date in months:
+        sys.argv = list(original_argv)
         month_date_str = month_date.strftime("%Y-%m-%d")
         state = get_published_state(month_date_str)
         if state == "complete" and not force:
