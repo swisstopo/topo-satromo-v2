@@ -38,7 +38,8 @@ from collections import defaultdict
 # CONSTANTS
 # ============================================================================
 
-STAC_SEARCH_URL = "https://stac.dataspace.copernicus.eu/v1/search"
+STAC_SEARCH_URL = "https://stac.opensearch.dataspace.copernicus.eu/v1/search"  # new SFEOS endpoint since 16.10.2026
+# STAC_SEARCH_URL = "https://stac.dataspace.copernicus.eu/v1/search"  # previous endpoint, runs in parallel for now
 COPERNICUS_COLLECTION = "sentinel-2-l2a"
 AOI_FILE = os.path.join("assets", "swissboundary_simplified_4326.json")
 BASELINE_VERSION = "04.00"

@@ -5,6 +5,7 @@ import csv
 from datetime import datetime, timedelta
 from main_functions import main_utils
 from step0_processors import *
+from step0_processors.step0_utils import write_asset_as_empty
 from step1_processors import *
 
 def write_file(input_dict, output_file):
@@ -35,13 +36,19 @@ def step0_main(step0_product_dict, current_date_str):
     # Determine which collections are ready for processing
     # We check every step0 collection independently
     # The collection is ready if all assets are present for the interval [date-temporal_coverage; date]
-    for step0_collection, (products, temporal_coverage, base_collection) in step0_product_dict.items():
+    for step0_collection, (products, temporal_coverage) in step0_product_dict.items():
         temporal_coverage -= 1
 
-        ok = step0_check_collection(
+        status = step0_check_collection(
             step0_collection, temporal_coverage, current_date_str)
-        if ok:
+        if status == 'ready':
             collections_ready.append(step0_collection)
+        elif status == 'empty' and 'PRODUCT_VHI' in products:
+            # No S2-SR data in the whole time window: no VHI can be made for this date
+            # Only write once per date, to avoid duplicate rows when the date is run again
+            product_name = config.PRODUCT_VHI['product_name']
+            if not main_utils.is_date_in_empty_asset_list(product_name, current_date_str):
+                write_asset_as_empty(product_name, current_date_str, 'No S2-SR scene in time window')
 
     return collections_ready
 
@@ -61,7 +68,9 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         current_date_str: Current date as string (format: 'YYYY-MM-DD')
 
     Returns:
-        bool: True if all assets are present, False otherwise
+        str: 'ready' if all dates are accounted for and at least one date has data,
+             'empty' if all dates are accounted for but none has data,
+             'not_ready' otherwise
     """
     target_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
 
@@ -100,7 +109,7 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
             print(f"Collection ID: {collection_id}")
         except ValueError as e:
             print(f"Error parsing STAC URL: {e}")
-            return False
+            return 'not_ready'
 
         # Query STAC for items on the target date
         # We'll collect all items across the temporal coverage period
@@ -153,7 +162,12 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
     # Only mark collection as ready if:
     # 1. All dates are accounted for (either ready or empty)
     # 2. At least one date has actual data (not all dates are empty)
-    return all_present and has_any_real_data
+    if all_present and has_any_real_data:
+        return 'ready'
+    elif all_present:
+        return 'empty'
+    else:
+        return 'not_ready'
 
 
 def check_if_asset_prepared(collection, assets, check_date):
@@ -241,17 +255,61 @@ def check_if_asset_prepared(collection, assets, check_date):
 
 
     # 2. if not in asset list check if in empty_asset_list
-    # The remark decides what a row means. check_s2_sr.py uses this same file as the
-    # GPU work queue, so some rows mean "process this date" rather than "no data here".
-    # Only the rows that really mean "no source data" may stop processing.
+    if is_date_marked_empty(collection_basename, check_date_str):
+        print('Date found in empty_asset_list, skipping date (no source data available)')
+        return 'empty'  # Return 'empty' status - date is accounted for but has no data
+
+    # 3. Start asset generation if not found
+    # Only collections listed in config.step0 have a function to generate them.
+    # Other collections are read-only for this run (e.g. the prod S2-SR collection
+    # used by VHI in dev_config), so we just wait until the date shows up there.
+    if collection not in config.step0:
+        print('No step0_function in config.step0 for {}, cannot generate date {} (read-only collection)'.format(
+            collection, check_date_str))
+        return 'not_ready'
+
+    print('Starting asset generation for {} / {}'.format(collection, check_date_str))
+    generate_single_date_function = eval(
+        config.step0[collection]['step0_function'])
+    generate_single_date_function(check_date_str, collection)
+
+    # 4. Check again after the generation: the date is now either in STAC, or the
+    #    generation wrote it to the empty_asset_list (e.g. cloudy), or it is still missing.
+    #    Checking it here lets the products that need this collection (e.g. VHI) run
+    #    in this same call, instead of only on the next run.
+    if collection.startswith("http://") or collection.startswith("https://"):
+        api_path = getattr(config, 'STAC_FSDI_API')
+        stac_catalog_url, collection_id = main_utils.extract_collection_id_from_url(collection, api_path)
+        new_items = main_utils.get_stac_items_for_date(stac_catalog_url, collection_id, check_date)
+        if len(new_items) > 0:
+            print('Collection {} READY for date {} (just generated)'.format(collection, check_date_str))
+            return 'ready'
+
+    if is_date_marked_empty(collection_basename, check_date_str):
+        print('Date written to empty_asset_list by the generation, no data for {}'.format(check_date_str))
+        return 'empty'
+
+    return 'not_ready'
+
+
+def is_date_marked_empty(collection_basename, check_date_str):
+    """
+    True if the empty_asset_list has a row for this collection and date that means
+    "no source data" (e.g. 'cloudy', 'No candidate scene').
+
+    check_s2_sr.py uses this same file as the GPU work queue, so some rows mean
+    "process this date" rather than "no data here". Those queue rows are ignored.
+    """
+    queue_markers = ['Tiles ready awaiting GPU system run',
+                     'Tile upload incomplete',
+                     'Tile download incomplete']
+
     df = pd.read_csv(config.EMPTY_ASSET_LIST)
     df_selection = df[(df.collection == collection_basename)
                       & (df.date == check_date_str)]
-    if len(df_selection) > 0:
-        remark = str(df_selection.iloc[0]['remark'])
-        queue_markers = ['Tiles ready awaiting GPU system run',
-                         'Tile upload incomplete',
-                         'Tile download incomplete']
+
+    for remark in df_selection['remark']:
+        remark = str(remark)
         is_queued = False
         for marker in queue_markers:
             if marker in remark:
@@ -260,26 +318,16 @@ def check_if_asset_prepared(collection, assets, check_date):
         if is_queued:
             print('Date is queued for processing ({}), continuing'.format(remark))
         else:
-            print('Date found in empty_asset_list, skipping date (no source data available)')
-            return 'empty'  # Return 'empty' status - date is accounted for but has no data
+            return True
 
-    # 3. Start asset generation if not found and not for STAC collections
-    # # (STAC collections are read-only, we don't generate assets for them)
-    # if collection.startswith("http://") or collection.startswith("https://"):
-    #     print('STAC collection is read-only, cannot generate assets')
-    #     return 'not_ready'
-
-    print('Starting asset generation for {} / {}'.format(collection, check_date_str))
-    generate_single_date_function = eval(
-        config.step0[collection]['step0_function'])
-    generate_single_date_function(check_date_str, collection)
-    return 'not_ready'
+    return False
 
 
 def get_step0_dict():
     """
     This function is used to extract the step0 information from the config object and store it in a dictionary.
     The dictionary has the collection names as keys and the product names and temporal coverages as values
+    If several products share the same step0_collection, the longest temporal coverage is used
     """
     step0_dict = dict()
     for entry in dir(config):
@@ -290,15 +338,9 @@ def get_step0_dict():
             continue
         temporal_coverage = int(entry_value['temporal_coverage'])
         collection_name = entry_value['step0_collection']
-        base_collection = entry_value['image_collection']
         if collection_name not in step0_dict:
-            step0_dict[collection_name] = [
-                [entry, ], temporal_coverage, base_collection]
+            step0_dict[collection_name] = [[entry, ], temporal_coverage]
         else:
-            if base_collection != step0_dict[collection_name][2]:
-                raise BrokenPipeError(
-                    'Inconsistent base collection in configuration file')
-
             temporal_coverage = max(
                 step0_dict[collection_name][1], temporal_coverage)
             step0_dict[collection_name][0].append(entry)

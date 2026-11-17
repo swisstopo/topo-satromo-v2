@@ -180,3 +180,8 @@ local_assets/
 
 # Miscellaneous
 CloudMaskComparison/
+test/
+
+
+# Results of the util/ scripts (reference data, test runs): kept locally, not committed
+util/*/output/

@@ -61,13 +61,14 @@ import pystac_client
 #   sys.argv[0] = script name   (ignored)
 #   sys.argv[1] = config file   e.g. "dev_config.py"
 # ---------------------------------------------------------------------------
-# __file__ ist main_functions/util_terrain_backfill.py
+# __file__ ist util/util_terrain_backfill.py
 # Projektwurzel ist eine Ebene höher
 # Ganz oben nach den Standard-Imports, VOR dem configuration-Import:
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR  = os.path.dirname(THIS_DIR)
+MAIN_FUNCTIONS_DIR = os.path.join(ROOT_DIR, "main_functions")
 sys.path.insert(0, ROOT_DIR)
-sys.path.insert(0, THIS_DIR)
+sys.path.insert(0, MAIN_FUNCTIONS_DIR)
 
 # Default-Argumente fuer VSCode-Start (kein Terminal-Aufruf)
 if len(sys.argv) == 1:
@@ -80,7 +81,9 @@ import configuration as config  # noqa: F401
 
 sys.argv = _original_argv
 
-from main_terrain_parallel import create_terrain_mask
+# main_terrain_parallel uses a relative import (from .main_terrain_module ...),
+# so it has to be loaded as part of the main_functions package
+from main_functions.main_terrain_parallel import create_terrain_mask
 from main_publish_stac_fsdi import publish_to_stac
 
 # ---------------------------------------------------------------------------
@@ -356,12 +359,17 @@ def process_year(year, dry_run=False):
         # Die interne Parallelisierung (n_proc Worker) in create_terrain_mask
         # bleibt vollstaendig erhalten.
 
+        # Started through main_functions/_terrain_worker.py (same as util_reprocess_terrain_tap.py):
+        # the worker takes the config file as first argument, which configuration/__init__.py needs,
+        # and loads main_terrain_parallel as part of the main_functions package (relative import).
         python_exe  = sys.executable
-        script_path = os.path.join(THIS_DIR, "main_terrain_parallel.py")
+        worker_path = os.path.join(MAIN_FUNCTIONS_DIR, "_terrain_worker.py")
+        config_file = _original_argv[1]   # the config file this script was started with
 
         cmd = [
             python_exe,
-            script_path,
+            worker_path,
+            config_file,
             "--orbit",   orbit_nr,
             "--timedate", timedate,
             "--output",  output_filename,

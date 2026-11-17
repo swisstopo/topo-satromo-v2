@@ -72,20 +72,18 @@ SENTINEL2_BAND_NAMES = {
 }
 
 PRODUCT_S2_LEVEL_2A = {
-    "image_collection": "S2_SR_HARMONIZED_SWISS",
     "geocat_id": "a4bc1c7a-3e2f-4d95-9d86-a1a0b09b11a7",
     "temporal_coverage": 1,  # Days # TODO: check if needed in context with V2
     "product_name": "ch.swisstopo.swisseo_s2-sr_v200",
     "copernicus_collection": "sentinel-2-l2a", # local copernnicus STAC Collection
     "band_config": SENTINEL2_BAND_CONFIG,
     "band_names": SENTINEL2_BAND_NAMES,
-    #"step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200" # TODO: check copernicus bucket as step 0 and this as step 1
+    #"step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
 }
 
 # VHI – Trockenstress ch.swisstopo.swisseo_vhi_v200
 PRODUCT_VHI = {
-    # TODO: check if needed in context with step0
-    "image_collection": "COPERNICUS/S2_SR_HARMONIZED",
     "geocat_id_forest": "a6ea2b6f-d723-4f10-b36c-b09cdc7fa0d3",
     "geocat_id_vegetation": "859e8dcf-1882-481d-a878-30f6c1edd0d2",
     "temporal_coverage": 7,  # Days
@@ -99,14 +97,36 @@ PRODUCT_VHI = {
     "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
     "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    "step0_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+    "step0_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_s2-sr_v200"
+}
+
+# VHI historic – monthly VHI from Landsat 5/7/8 (1991-01 to 2015-12), published in the same collection as PRODUCT_VHI
+# Only run manually: python util/vhi_historic_landsat_monthly/step1_processor_vhi_historic.py dev_config.py 2005-07-01 [2005-12-01]
+PRODUCT_VHI_HIST = {
+    "geocat_id_forest": PRODUCT_VHI["geocat_id_forest"],
+    "geocat_id_vegetation": PRODUCT_VHI["geocat_id_vegetation"],
+    "product_name": PRODUCT_VHI["product_name"],
+    "step1_collection": PRODUCT_VHI["step1_collection"],
+    "first_month": "1991-01-01",  # first item: 1991-01-01t235959
+    "last_month": "2015-12-01",  # last item: 2015-12-01t235959, from 2016 onwards the daily Sentinel-2 VHI
+    "temporal_coverage": 1,  # Months
+    "spatial_scale_export": 30,  # Meters
+    "no_data": 255,
+    "missing_data": 110,
+    "scaling_factor": 1,
+    "NDVI_reference_data": "s3://s3-topo-satromo-prod/data/NDVI_REFERENCE/1991-2020_NDVI_SWISS_M_V2/",
+    "LST_current_data": PRODUCT_VHI["LST_current_data"],
+    # Monthly LST reference (2004-2020): 0.05° grid for the MFG years, 0.02° grid for the MSG years
+    "LST_reference_ch05": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch05_M/LST_statistics_M{month:02d}_MSG_ch05_2004-2020_11am.nc",  # 1991-2003
+    "LST_reference_ch02": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02_M/LST_statistics_M{month:02d}_MSG_ch02_2004-2020_11am.nc",  # 2004-2015
+    "vegetation_masks": PRODUCT_VHI["vegetation_masks"],
+    "forest_mask_name": "forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",  # oldest habitat mask, 10 m
+    "vegetation_mask_name": "vegetation_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",
+    "mask_min_fraction_30m": 0.5,  # a 30 m pixel is in the mask if at least this share of its 9 pixels (10 m) is
 }
 
 # MSG – MeteoSchweiz: only used for repreocessing
 PRODUCT_MSG_CLIMA = {
-    #
-    # this is  placeholder, needed for the step0 function,
-    "image_collection": "METEOSCHWEIZ/MSG",
     "temporal_coverage": 1,  # Days
     "product_name": "ch.meteoschweiz.landoberflaechentemperatur",
     "no_data": 0,

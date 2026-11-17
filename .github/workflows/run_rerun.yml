@@ -1,4 +1,4 @@
-name: Run S2 Processor
+name: Run S2-SR and VHI Processor
 
 on:
   #schedule:
@@ -17,11 +17,19 @@ jobs:
   # Queries the Copernicus STAC API for new S2 data and updates the CSV.
   # Sets needs-processing=true if any "Tiles ready awaiting GPU system run"
   # entry exists in the CSV after the check.
+  # Then checks the VHI "LST missing" and "No S2-SR scene in time window"
+  # entries: removes the ones where VHI is already published, and sets
+  # vhi-needs-processing=true if for at least one date the LST is available and
+  # the VHI time window has S2-SR data (rules in check_vhi.py).
+  # check_vhi.py also finds published VHI that misses S2-SR items published
+  # later: these dates go to vhi-reprocess-dates (and vhi-needs-processing=true).
   # ============================================================================
   check-and-update:
     runs-on: ubuntu-24.04
     outputs:
       needs-processing: ${{ steps.check.outputs.needs-processing }}
+      vhi-needs-processing: ${{ steps.check-vhi.outputs.vhi-needs-processing }}
+      vhi-reprocess-dates: ${{ steps.check-vhi.outputs.vhi-reprocess-dates }}
 
     steps:
       - name: Checkout repository
@@ -40,16 +48,20 @@ jobs:
 
       - name: Get acquisition plan
         id: GetAcqui
-        run: python main_functions/util_get_acquisition_plans.py
+        run: python util/util_get_acquisition_plans.py
             
       - name: Check S2 data availability and update CSV
         id: check
         run: python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py
         #run: python check_s2_sr.py 2026-08-05 30 prod_config.py
 
+      - name: Check VHI entries, update CSV and find VHI to reprocess
+        id: check-vhi
+        run: python check_vhi.py $(date +%Y-%m-%d) 30 prod_config.py
+
       - name: Publish acquisitionplan.csv and step0_empty_assets.csv
         id: PublishAcquiEmpty
-        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        run: python util/util_upload_collection_asset.py  prod_config.py
         env:
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
@@ -64,13 +76,16 @@ jobs:
           git push origin main
 
   # ============================================================================
-  # STAGE 2a — Start EC2 runner (only when processing is needed)
+  # STAGE 2a — Start EC2 runner (only when processing is needed:
+  #            S2-SR tiles ready, or VHI ready to process)
   # Requires the following repository secrets and variables to be configured:
   #   Secrets:  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, GH_PAT,
-  #             GOOGLE_CLIENT_SECRET, S3_SECRETS
-  #   Variables: AWS_REGION, EC2_AMI_ID, EC2_INSTANCE_TYPE,
-  #              EC2_SUBNET_ID, EC2_SECURITY_GROUP_ID
-  
+  #             GOOGLE_CLIENT_SECRET, S3_SECRETS,
+  #             EC2_SUBNET_ID_1A/1B/1C, EC2_SECURITY_GROUP_ID_1A/1B/1C
+  #   Variables: AWS_REGION, EC2_AMI_ID, EC2_INSTANCE_TYPE
+  # The runner is started in eu-central-1a; if that zone has no capacity for
+  # the instance type, 1b and then 1c are tried (availability-zones-config).
+
   # Type	    Name	                    Purpose
   # Secret	  AWS_ACCESS_KEY_ID	AWS     credentials for EC2 start/stop
   # Secret	  AWS_SECRET_ACCESS_KEY	    AWS credentials
@@ -79,16 +94,20 @@ jobs:
   # Secret	  COPERNICUS_S3_SECRETS	    Existing processing secret
   # Secret	  FSDI_STAC_USER	          Existing processing secret
   # Secret	  FSDI_STAC_PASSWORD	      Existing processing secret
+  # Secret	  EC2_SUBNET_ID_1A	        VPC subnet in eu-central-1a for the runner (tried first)
+  # Secret	  EC2_SUBNET_ID_1B	        VPC subnet in eu-central-1b (tried second)
+  # Secret	  EC2_SUBNET_ID_1C	        VPC subnet in eu-central-1c (tried third)
+  # Secret	  EC2_SECURITY_GROUP_ID_1A	Security group for the 1a subnet, allowing GitHub Actions traffic
+  # Secret	  EC2_SECURITY_GROUP_ID_1B	Security group for the 1b subnet (same value as 1a if same VPC)
+  # Secret	  EC2_SECURITY_GROUP_ID_1C	Security group for the 1c subnet (same value as 1a if same VPC)
   # Variable	AWS_REGION	              e.g. eu-central-1
-  # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc.
-  # Variable	EC2_INSTANCE_TYPE	        e.g. g4dn.xlarge (GPU instance)
-  # Variable	EC2_SUBNET_ID	VPC         subnet for the runner
-  # Variable	EC2_SECURITY_GROUP_ID	    Security group allowing GitHub Actions traffic
+  # Variable	EC2_AMI_ID	              Your pre-configured AMI with GDAL etc. (valid in all zones of the region)
+  # Variable	EC2_INSTANCE_TYPE	        e.g. gr6.4xlarge (GPU instance)
 
   # ============================================================================
   start-ec2:
     needs: check-and-update
-    if: ${{ needs.check-and-update.outputs.needs-processing == 'true' }}
+    if: ${{ needs.check-and-update.outputs.needs-processing == 'true' || needs.check-and-update.outputs.vhi-needs-processing == 'true' }}
     runs-on: ubuntu-24.04
     outputs:
       label: ${{ steps.start-runner.outputs.label }}
@@ -108,10 +127,16 @@ jobs:
         with:
           mode: start
           github-token: ${{ secrets.GH_PAT }}
-          ec2-image-id: ${{ vars.EC2_AMI_ID }}
           ec2-instance-type: ${{ vars.EC2_INSTANCE_TYPE }}
-          subnet-id: ${{ vars.EC2_SUBNET_ID }}
-          security-group-id: ${{ vars.EC2_SECURITY_GROUP_ID }}
+          # Tried in this order: if a zone has no capacity for the instance type,
+          # the action moves on to the next zone. Replaces ec2-image-id,
+          # subnet-id and security-group-id.
+          availability-zones-config: >
+            [
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1A }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1A }}"},
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1B }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1B }}"},
+              {"imageId": "${{ vars.EC2_AMI_ID }}", "subnetId": "${{ secrets.EC2_SUBNET_ID_1C }}", "securityGroupId": "${{ secrets.EC2_SECURITY_GROUP_ID_1C }}"}
+            ]
 
 
   # ============================================================================
@@ -119,11 +144,22 @@ jobs:
   # Runs rerun.py which picks up all "Tiles ready awaiting GPU system run"
   # entries (and other non-cloudy entries) from the CSV and processes them
   # using the full pipeline with GPU.
+  # Then retries the VHI "LST missing" / "No S2-SR scene in time window" dates
+  # (retry_follow_up_products) and removes their entries once VHI is published.
+  # Then reprocesses VHI (only VHI, --force-vhi) for the dates in
+  # VHI_REPROCESS_DATES (from check_vhi.py in stage 1).
+  # If any date failed, the last step marks the run as failed (email to the
+  # user who started the run) -- after the CSV was published and pushed.
   # ============================================================================
   run-processing:
     needs: [check-and-update, start-ec2]
     runs-on: ${{ needs.start-ec2.outputs.label }}
     timeout-minutes: 420
+    # The EC2 runner is started from user-data without a HOME variable.
+    # DuckDB (used by gpio / geoparquet-io) needs HOME to store its
+    # extensions (~/.duckdb/extensions), so set it for every step.
+    env:
+      HOME: /home/ubuntu
 
     steps:
       - name: Checkout repository
@@ -138,12 +174,21 @@ jobs:
         run: |
           source /home/ubuntu/.venv/bin/activate
           pip install -r requirements.txt
+          # gpio (geoparquet-io) needs the DuckDB spatial extension; install it
+          # up front so a missing/blocked download fails here, visibly
+          echo "Runner user: $(whoami)  HOME: $HOME"
+          python -c "import duckdb; duckdb.sql('INSTALL spatial'); duckdb.sql('LOAD spatial'); print('duckdb', duckdb.__version__, 'spatial OK')"
           echo "VIRTUAL_ENV=/home/ubuntu/.venv" >> $GITHUB_ENV
           echo "/home/ubuntu/.venv/bin" >> $GITHUB_PATH
 
+      # rerun.py always exits 0 (also with failed dates), so the steps below
+      # always run. Failed dates are passed on as outputs rerun-failed /
+      # rerun-failures and reported in the last step "Report failed dates".
       - name: Run rerun processor
-        run: python rerun.py prod_config.py 
+        id: rerun
+        run: python rerun.py prod_config.py
         env:
+          VHI_REPROCESS_DATES: ${{ needs.check-and-update.outputs.vhi-reprocess-dates }}
           S3_SECRETS: ${{ secrets.S3_SECRETS }}
           COPERNICUS_S3_SECRETS: ${{ secrets.COPERNICUS_S3_SECRETS }}
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
@@ -151,7 +196,7 @@ jobs:
 
       - name: Publish acquisitionplan.csv and step0_empty_assets.csv
         id: PublishAcquiEmpty2b
-        run: python main_functions/util_upload_collection_asset.py  prod_config.py
+        run: python util/util_upload_collection_asset.py  prod_config.py
         env:
           FSDI_STAC_USER: ${{ secrets.FSDI_STAC_USER }}
           FSDI_STAC_PASSWORD: ${{ secrets.FSDI_STAC_PASSWORD }}
@@ -164,6 +209,18 @@ jobs:
           git diff --staged --quiet || git commit -m 'Tools files done'
           git pull --rebase origin main
           git push origin main
+
+      # Failure warning only: must stay the LAST step of this job. Everything
+      # above (processing, CSV publish, git push) is already done; stop-ec2 runs
+      # anyway (always()). It only turns the run red, so GitHub sends its normal
+      # "run failed" email. The failed dates stay in the CSV for the next run.
+      - name: Report failed dates
+        if: ${{ steps.rerun.outputs.rerun-failed == 'true' }}
+        env:
+          FAILURES: ${{ steps.rerun.outputs.rerun-failures }}
+        run: |
+          echo "::error title=rerun.py reported failed dates::$FAILURES"
+          exit 1
 
   # ============================================================================
   # STAGE 2c — Stop EC2 runner (always runs if EC2 was started)

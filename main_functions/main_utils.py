@@ -730,9 +730,13 @@ def get_stac_items_for_date(
     datetime_str = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
     items = []
+    # The STAC API is behind CloudFront, which caches each search URL for 10 minutes
+    # (cache-control: max-age=600). Without "nocache", a check right after publishing
+    # would get the old "no items" answer. A new value on every call gives a fresh answer.
     params = {
         "datetime": datetime_str,
         "limit": 100,
+        "nocache": datetime.now().strftime('%Y%m%d%H%M%S%f'),
     }
 
     while True:

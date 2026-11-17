@@ -118,7 +118,8 @@ def process_product_s2_sr(day_to_process: str, collection: str) -> None:
             Exception: For other errors such as file reading or JSON parsing issues.
         """
         # STAC Access point
-        search_url = "https://stac.dataspace.copernicus.eu/v1/search"
+        search_url = "https://stac.opensearch.dataspace.copernicus.eu/v1/search" # new SFEOS endpoint since 16.10.2026
+        #search_url = "https://stac.dataspace.copernicus.eu/v1/search" # previous endpoint, runs in parallel for now
         #search_url = "https://catalogue.dataspace.copernicus.eu/stac/search" #old endpoint dead on 17.11.2025
 
         with open(aoi, 'r') as f:

@@ -10,10 +10,10 @@ Unlike util_terrain_backfill.py this script always reprocesses every item in the
 date range regardless of whether a terrain mask already exists.
 
 Usage (run from project root):
-    python main_functions/util_reprocess_terrain_tap.py --secrets path/to/secrets.json
-    python main_functions/util_reprocess_terrain_tap.py --secrets path/to/secrets.json \\
+    python util/util_reprocess_terrain_tap.py --secrets path/to/secrets.json
+    python util/util_reprocess_terrain_tap.py --secrets path/to/secrets.json \\
         --date-from 2025-06-01T00:00:00Z --date-to 2025-09-30T23:59:59Z
-    python main_functions/util_reprocess_terrain_tap.py --secrets path/to/secrets.json --dry-run
+    python util/util_reprocess_terrain_tap.py --secrets path/to/secrets.json --dry-run
 
 Author: swisstopo
 """
@@ -29,12 +29,13 @@ import requests
 import pystac_client
 
 # ---------------------------------------------------------------------------
-# Allow imports from the project root (one level up from main_functions/)
+# Allow imports from the project root (one level up from util/)
+# and from the main_functions folder
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
-THIS_DIR = Path(__file__).resolve().parent
+MAIN_FUNCTIONS_DIR = ROOT / "main_functions"
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(THIS_DIR))
+sys.path.insert(0, str(MAIN_FUNCTIONS_DIR))
 
 import configuration as config                           # noqa: E402
 from main_publish_stac_fsdi import publish_to_stac       # noqa: E402
@@ -242,7 +243,7 @@ def main() -> None:
         # Running in a subprocess also avoids the HORAYZON/Embree
         # "scene not committed" error that occurs in long-running loops.
         python_exe   = sys.executable
-        worker_path  = str(THIS_DIR / "_terrain_worker.py")
+        worker_path  = str(MAIN_FUNCTIONS_DIR / "_terrain_worker.py")
         config_file  = "dev_config.py"   # passed as sys.argv[1] for configuration
 
         cmd = [

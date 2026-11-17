@@ -7,7 +7,7 @@ month as --date and --days 31 so the whole month is covered. Output
 GeoTIFFs are written to the temp/ folder, one file per month.
 
 Usage:
-    python main_functions/util_reprocess_mosaic.py
+    python util/util_reprocess_mosaic.py
 """
 
 import subprocess

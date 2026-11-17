@@ -31,10 +31,10 @@ Design goal: minimal data transfer.
     is transferred, only headers.
 
 Usage (run from the repo root):
-  python main_functions/util_validate_stac_collection.py --start 2024-01 --end 2024-12 --compare
-  python main_functions/util_validate_stac_collection.py --start 2025-01 --end 2025-06 --check-assets
-  python main_functions/util_validate_stac_collection.py --start 2025-01 --end 2025-06 --list-missing
-  python main_functions/util_validate_stac_collection.py --start 2024-01 --end 2025-12 --compare --check-assets --list-missing
+  python util/util_validate_stac_collection.py --start 2024-01 --end 2024-12 --compare
+  python util/util_validate_stac_collection.py --start 2025-01 --end 2025-06 --check-assets
+  python util/util_validate_stac_collection.py --start 2025-01 --end 2025-06 --list-missing
+  python util/util_validate_stac_collection.py --start 2024-01 --end 2025-12 --compare --check-assets --list-missing
 """
 
 import argparse

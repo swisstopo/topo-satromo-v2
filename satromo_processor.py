@@ -29,7 +29,7 @@ if __name__ == "__main__":
     current_date_str = previous_date.strftime('%Y-%m-%d')
 
     # Check for command line argument (highest priority)
-    from configuration import arg_date_str , arg_force
+    from configuration import arg_date_str , arg_force, arg_force_vhi
     if arg_date_str:
         current_date_str = arg_date_str
         print(f'Using command line date: {arg_date_str}')
@@ -37,15 +37,21 @@ if __name__ == "__main__":
         force_reprocess = arg_force  # use CLI flag
         if force_reprocess:
             print("Force reprocess enabled via CLI flag")
+        # --force-vhi: reprocess only VHI, S2-SR is not processed again if it exists
+        force_vhi = arg_force_vhi
+        if force_vhi:
+            print("Force reprocess for VHI only enabled via CLI flag")
     else:
         # Enable debug mode if no command line argument is given
         debug_mode = True
         force_reprocess = False  # set default here
+        force_vhi = False
 
     # Check for debug override (second priority)
     if debug_mode:
         current_date_str = "2024-05-01"
         force_reprocess = True  # <-- toggle this manually during debug
+        force_vhi = True  # <-- toggle this manually during debug
         print("*****************************")
         print("Using manually set date:", current_date_str)
         print(f"Force reprocess: {force_reprocess}")
@@ -119,7 +125,7 @@ if __name__ == "__main__":
                     print(f"VHI: No existing VHI STAC items for {current_date_str}, processing VHI.")
                     result = step1_processor_vhi.process_product_vhi(
                     current_date_str, collection_ready, roi)
-                elif force_reprocess:
+                elif force_reprocess or force_vhi:
                     print(f"Force reprocess enabled: reprocessing {current_date_str} despite existing STAC items.")
                     result = step1_processor_vhi.process_product_vhi(
                         current_date_str, collection_ready, roi)

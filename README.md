@@ -1,4 +1,4 @@
-[![GitHub commit](https://img.shields.io/github/last-commit/swisstopo/topo-satromo-v2)](https://github.com/swisstopo/topo-satromo-v2/commits/main)[![Python 3.12](https://img.shields.io/badge/python-3.12.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-31213/)[![Python 3.11](https://img.shields.io/badge/python-3.11.3-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3113/)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/swisstopo/topo-satromo-v2)
+[![GitHub commit](https://img.shields.io/github/last-commit/swisstopo/topo-satromo-v2)](https://github.com/swisstopo/topo-satromo-v2/commits/main)[![Python 3.12](https://img.shields.io/badge/python-3.12.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-31213/)[![Python 3.11](https://img.shields.io/badge/python-3.11.3-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3113/)[![Ask DeepWiki](https://img.shields.io/badge/DeepWiki-Ask-blue)](https://deepwiki.com/swisstopo/topo-satromo-v2)
 # topo-satromo-v2
 
 **Erdbeobachtungs-SAtellitendaten fürs TRockenheitsMOnitoring (SATROMO) — Version 2**
@@ -8,9 +8,9 @@ An operational Python ETL pipeline for generating and publishing Analysis-Ready 
 |                  | swissEO S2-SR | swissEO VHI |
 |------------------|---------------|-------------|
 | Data description | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-s2-sr) | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-vhi) |
-| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | *not yet operational* |
+| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_vhi_v200) |
 
-> **Note:** This project is currently in the commissioning phase and is not yet fully operational.
+Both products are operational and are produced in production with `configuration/prod_config.py`.
 
 
 
@@ -19,13 +19,17 @@ An operational Python ETL pipeline for generating and publishing Analysis-Ready 
 SATROMO v2 is a serverless satellite data processing chain for Switzerland that:
 
 1. **step0** — Checks availability of input data in STAC CSDE and STAC swisstopo catalogs (Sentinel-2 L2A)
-2. **step1** — Generates ARD products and publishes to STAC  (co-registered, cloud/shadow masked, topographic corrected Sentinel-2 mosaics) and indices (VHI, NDVI, etc.)
+2. **step1** — Generates the products and publishes them to STAC and S3:
+   - **S2-SR**: ARD (co-registered, cloud/shadow masked, topographic corrected Sentinel-2 mosaics)
+   - **VHI**: Vegetation Health Index from the S2-SR NDVI and the MeteoSwiss land surface temperature (LST)
 
 
 Two deployment environments are supported:
 - **DEV** — local machine with Python
 - **PROD** — GitHub Actions, triggered hourly by an external scheduler, with GPU
   processing on a temporary AWS EC2 runner (see [Production Runtime](#production-runtime-github-actions--ec2))
+- **PROD (local alternative)** — the same job as a cron job on a local Linux machine
+  with GPU (see [Local Runtime](#local-runtime-cron-job-hourly_runnersh))
 
 ---
 
@@ -37,21 +41,38 @@ satromo_processor.py              # Daily orchestration (step0 → step1)
     ├── step0_functions.py        # Check STAC / S3, decide what is ready
     │       └── step0_processors/ # Shared step0 helpers (step0_utils.py)
     │
-    ├── step1_processors/         # Product generation (S2-SR, VHI, ...)
+    ├── step1_processors/         # Product generation: step1_processor_s2_sr.py, step1_processor_vhi.py
     │
     ├── main_functions/           #  STAC utils, S3 helpers
     │
     └── configuration/            # dev_config.py, prod_config.py, ...
 
 check_s2_sr.py                    # Lightweight availability check (CI stage 1)
+check_vhi.py                      # Lightweight VHI 'LST missing' check (CI stage 1)
 rerun.py                          # Batch reprocessing driver (CI stage 2, GPU EC2)
+hourly_runner.sh                  # Local cron alternative to run_rerun.yml
 tools/step0_empty_assets.csv      # Live per-date/tile status, committed by CI
+
+util/                             # Manually run tools, not part of the daily pipeline (see util/README.md)
+    ├── util_*.py                 # STAC / S3 maintenance and reprocessing scripts
+    ├── ref_lst/                  # LST reference data
+    ├── ref_ndvi_landsat/         # NDVI reference from Landsat
+    ├── ref_ndvi_s2_forest/       # NDVI reference from Sentinel-2 for gap-filled forest VHI (planned)
+    ├── vhi_gapfill_forest/       # Gap-filled forest VHI (planned)
+    └── vhi_historic_landsat_monthly/  # Historic monthly VHI from Landsat (1991-2015)
 ```
 
 The `step0_function` registered per collection in the config is the callable that
 produces the data for a date. For S2-SR this is the step1 processor itself
 (`step1_processor_s2_sr.process_product_s2_sr`); `step0_processors/` holds only
 shared helper code, not per-collection generators.
+
+`PRODUCT_S2_LEVEL_2A` and `PRODUCT_VHI` share the same `step0_collection` (the
+swisstopo S2-SR STAC collection). `get_step0_dict()` groups them under this
+collection and uses the longest `temporal_coverage` (7 days, from VHI). When the
+collection is ready for a date, `satromo_processor.py` runs S2-SR first and then
+VHI. Each product is skipped if a STAC item for the date already exists, unless
+`--force` / `--force-vhi` is set.
 
 Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https://deepwiki.com/swisstopo/topo-satromo-v2)
 
@@ -350,16 +371,16 @@ and `configuration/prod_config.py`:
 | `AWS_ACCESS_KEY_ID` | AWS credentials used to start/stop the EC2 runner |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials used to start/stop the EC2 runner |
 | `GH_PAT` | Personal access token for the `machulav/ec2-github-runner` action |
+| `EC2_SUBNET_ID_1A` / `_1B` / `_1C` | VPC subnet for the runner in `eu-central-1a` / `1b` / `1c` (tried in this order) |
+| `EC2_SECURITY_GROUP_ID_1A` / `_1B` / `_1C` | Security group of each subnet, allowing GitHub Actions traffic (same value if same VPC) |
 
 **GitHub Actions variables** (for PROD, repository *Variables*, not secrets):
 
 | Variable name | Content |
 |---------------|---------|
 | `AWS_REGION` | e.g. `eu-central-1` |
-| `EC2_AMI_ID` | Pre-configured AMI with GDAL, the venv and `local_assets/` |
-| `EC2_INSTANCE_TYPE` | e.g. `g4dn.xlarge` (GPU instance) |
-| `EC2_SUBNET_ID` | VPC subnet for the runner |
-| `EC2_SECURITY_GROUP_ID` | Security group allowing GitHub Actions traffic |
+| `EC2_AMI_ID` | Pre-configured AMI with GDAL, the venv and `local_assets/` (valid in all zones of the region) |
+| `EC2_INSTANCE_TYPE` | GPU instance type, e.g. `g4dn.xlarge` |
 
 ---
 
@@ -384,7 +405,6 @@ python satromo_processor.py my_config.py 2024-06-12 --force
 
 ```python
 PRODUCT_MY_NEW = {
-    "image_collection": "...",
     "temporal_coverage": 1,
     "product_name": "ch.swisstopo.swisseo_my_product",
     "step0_collection": "https://...",  # STAC URL or s3://...
@@ -437,15 +457,28 @@ Use `--force` (or `-force`) to reprocess a date that already has STAC items:
 python satromo_processor.py dev_config.py 2024-06-12 --force
 ```
 
+`--force` reprocesses **all** products of the date, including S2-SR (download,
+co-registration on the GPU). To reprocess only VHI, use `--force-vhi`: S2-SR is
+then only processed if it does not exist yet for the date.
+
+```bash
+python satromo_processor.py dev_config.py 2024-06-12 --force-vhi
+```
+
 ### Debug Mode
 
 When no date argument is supplied, the script enters debug mode and uses a hardcoded date. Edit `satromo_processor.py` to change it:
 
 ```python
 if debug_mode:
-    current_date_str = "2016-04-28"
-    force_reprocess = True   # <-- toggle manually
+    current_date_str = "2024-05-01"
+    force_reprocess = True   # <-- toggle manually (S2-SR and VHI)
+    force_vhi = True         # <-- toggle manually (VHI only)
 ```
+
+For VHI tests on a small area, set `roi` in the `PRODUCT_VHI` branch of
+`satromo_processor.py` (examples are in the comments there); `roi = None` is the
+operational setting (all of Switzerland).
 
 ### Manual Reprocessing Workflow (local → PROD)
 
@@ -458,11 +491,13 @@ venv\Scripts\activate
 REM 2. Run processor for the target date
 python satromo_processor.py prod_config.py 2024-06-12
 
-
+REM    or reprocess an existing date (S2-SR and VHI), or only VHI
+python satromo_processor.py prod_config.py 2024-06-12 --force
+python satromo_processor.py prod_config.py 2024-06-12 --force-vhi
 ```
 
 Before reprocessing, also:
-- Delete affected GEE assets from the `step0_collection`
+- Delete the affected STAC items if needed (`util/util_stac_delete.py`)
 - Remove the date entry from `tools/step0_empty_assets.csv` if present
 
 ---
@@ -470,7 +505,7 @@ Before reprocessing, also:
 ## Production Runtime (GitHub Actions + EC2)
 
 Production runs from a single workflow, `.github/workflows/run_rerun.yml`
-("Run S2 Processor"). It is deliberately split into a cheap availability check on
+("Run S2-SR and VHI Processor"). It is deliberately split into a cheap availability check on
 a GitHub-hosted runner and an expensive GPU stage on a temporary AWS EC2 runner
 that is started only when there is something to process and always stopped
 afterwards.
@@ -495,12 +530,12 @@ commits `tools/` back to `main`.
 
 | Stage | Job | Runner | What it does |
 |-------|-----|--------|--------------|
-| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `main_functions/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets and pushes `tools/` back to `main`. Sets the output `needs-processing`. |
-| 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. |
-| 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, runs `python rerun.py prod_config.py`, republishes the CSVs and pushes `tools/`. Hard timeout **420 minutes** for cost protection. |
+| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `util/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py` and `python check_vhi.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets (`util/util_upload_collection_asset.py`) and pushes `tools/` back to `main`. Sets the outputs `needs-processing`, `vhi-needs-processing` and `vhi-reprocess-dates`. |
+| 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'` **or** `vhi-needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. Tries the availability zones 1a, 1b and 1c in this order (if a zone has no capacity for the instance type). |
+| 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, checks the DuckDB `spatial` extension (needed by `gpio` for the GeoParquet warn regions), runs `python rerun.py prod_config.py` with `VHI_REPROCESS_DATES`, republishes the CSVs and pushes `tools/`. If `rerun.py` reports failed dates, the last step marks the run as failed (GitHub sends an email). Hard timeout **420 minutes** for cost protection. |
 | 2c | `stop-ec2` | `ubuntu-24.04` (hosted) | `if: always()` — terminates the EC2 runner even when stage 2b failed or timed out. |
 
-### The two production scripts
+### The production scripts
 
 - **`check_s2_sr.py`** — lightweight Copernicus STAC availability check. It queries
   the Copernicus STAC API for Switzerland and updates `tools/step0_empty_assets.csv`,
@@ -510,15 +545,148 @@ commits `tools/` back to `main`.
   Usage: `python check_s2_sr.py [YYYY-MM-DD] [days_back] [config.py]` (defaults:
   today, 30 days, `dev_config.py`).
 
+- **`check_vhi.py`** — lightweight VHI check, runs after `check_s2_sr.py`.
+  - VHI rows `LST missing` and `No S2-SR scene in time window` in the lookback
+    window: removed when VHI is already published; VHI is processed when the LST
+    is available and the VHI time window has S2-SR data (no incomplete S2-SR date).
+  - Published VHI that misses S2-SR data published later (delayed S2-SR): VHI of a
+    date is reprocessed when an S2-SR item of its time window is **not** in
+    `NDVI_INDEX_LIST` of the VHI metadata json **and** was published (STAC
+    `created`) after the VHI item (STAC `updated`). A count comparison does not
+    work: the VHI processor stops early once all pixels are filled, so
+    `NDVI_INDEX_LIST` often lists fewer items than the window has.
+
+  Outputs: `vhi-needs-processing` (start the GPU stage) and `vhi-reprocess-dates`
+  (comma separated, passed to `rerun.py` as environment variable
+  `VHI_REPROCESS_DATES`). Usage: `python check_vhi.py [YYYY-MM-DD] [days_back]
+  [config.py]` (defaults: today, 30 days, `dev_config.py`).
+
 - **`rerun.py`** — batch reprocessing driver for the GPU stage. It picks up all
   queued entries from `tools/step0_empty_assets.csv` (30 days back) and runs the
   full pipeline per date. Usage: `python rerun.py [config.py]` (default
-  `dev_config.py`). It backs the CSV up to `.bak` and restores it on a fatal error,
-  and exits non-zero only when its circuit breaker trips after consecutive upstream
-  failures — individual failed dates simply stay queued for the next run.
+  `dev_config.py`). It backs the CSV up to `.bak` and restores it on a fatal error.
+  Then it retries the VHI rows `LST missing` / `No S2-SR scene in time window`, and
+  reprocesses VHI (`--force-vhi`) for the dates in `VHI_REPROCESS_DATES`. It always
+  exits 0; failed dates are reported in the outputs `rerun-failed` /
+  `rerun-failures` and stay queued for the next run.
 
 `tools/step0_empty_assets.csv` is the live state file that couples the two stages;
 CI commits it to `main` after every run, so avoid editing it by hand.
+
+---
+
+## Local Runtime (cron job, `hourly_runner.sh`)
+
+`hourly_runner.sh` is the local alternative to `.github/workflows/run_rerun.yml`.
+It does the same steps, but `rerun.py` runs on the local machine instead of on an
+EC2 runner:
+
+1. **Update the code** — fetches, checks out and pulls the branch. Changes in
+   `tools/` left over from a run that stopped early are committed and pushed
+   first. `pip install -r requirements.txt` runs only when `requirements.txt`
+   changed.
+2. **Light check** (Stage 1) — `util_get_acquisition_plans.py`, `check_s2_sr.py`
+   and `check_vhi.py` (today in UTC, 30 days back), then uploads the collection
+   assets and pushes `tools/`.
+3. **Processing** (Stage 2) — only if `needs-processing` or
+   `vhi-needs-processing` is `true`: `rerun.py` (maximum 14 hours, `RERUN_TIMEOUT`), then uploads
+   the collection assets and pushes `tools/` again.
+
+A lock (`flock`) makes sure only one run happens at a time: if `rerun.py` from an
+earlier run is still going, the new run stops right away.
+
+### Usage
+
+```bash
+./hourly_runner.sh <config> <branch>
+./hourly_runner.sh prod_config.py main     # defaults
+```
+
+The paths are set at the top of the script (`REPO_DIR`, `PYTHON_CMD`,
+`LOCK_FILE`). `REPO_DIR` is a separate checkout of this repository, only for the
+cron job, with its own `.venv`, `secrets/` and `local_assets/`
+(see [Installation](#installation)).
+
+### Setup
+
+**1. Clean checkout.** The script stops with an error if any file outside
+`tools/` has local changes, so nothing is lost by the checkout:
+
+```bash
+cd /path/to/REPO_DIR
+git status
+```
+
+**2. Git credentials for the push.** cron cannot ask for a password, so the push
+needs saved credentials. The key or token belongs to your own GitHub account; it
+works for `swisstopo/topo-satromo-v2` because your account has write access to
+that repository.
+
+**Option A — SSH key (recommended):** no token in a text file, no expiry, no
+approval by the organisation needed.
+
+1. Create a key without passphrase (cron cannot type one), as the same user that
+   runs the cron job:
+
+   ```bash
+   ssh-keygen -t ed25519 -C "satromo cron" -N "" -f ~/.ssh/id_ed25519
+   cat ~/.ssh/id_ed25519.pub     # copy this line
+   ```
+
+2. Add the copied line at <https://github.com/settings/keys> → *New SSH key*
+   (key type *Authentication Key*). If swisstopo uses single sign-on, click
+   *Configure SSO* → *Authorize* for swisstopo next to the key.
+
+3. Switch the checkout of the cron job to SSH and test:
+
+   ```bash
+   cd /path/to/REPO_DIR
+   git remote set-url origin git@github.com:swisstopo/topo-satromo-v2.git
+   ssh -T git@github.com              # "Hi <your login>! You've successfully authenticated"
+   git push --dry-run origin main     # must not ask for anything
+   ```
+
+   The first `ssh -T` asks once to confirm the GitHub host key: answer `yes`.
+
+**Option B — token (HTTPS):**
+
+- Create a GitHub token at <https://github.com/settings/personal-access-tokens>
+  (fine-grained, **Resource owner: swisstopo** — not your own account —,
+  repository `topo-satromo-v2`, permission *Contents: Read and write*). The token
+  belongs to your account; it works because your account has write access to the
+  swisstopo repository. The organisation may have to approve the token.
+- Save it with the `store` credential helper, as the same user that runs the
+  cron job:
+
+  ```bash
+  git config --global credential.helper store
+  cd /path/to/REPO_DIR
+  git push --dry-run origin main   # username: your GitHub login, password: the token
+  chmod 600 ~/.git-credentials
+  ```
+
+  The token is now in `~/.git-credentials` (plain text, readable only by you).
+  Run `git push --dry-run origin main` again: it must not ask for anything.
+
+**Option C — GitHub CLI:** install the GitHub CLI and run `gh auth login`, then
+`gh auth setup-git`.
+
+**3. Test run by hand** (pushes to the branch and uploads to STAC):
+
+```bash
+./hourly_runner.sh prod_config.py main
+```
+
+**4. Cron job** (`crontab -e`). cron uses the local time of the machine. With
+Europe/Zurich, hours 0–13 cover 23–11 UTC in winter and summer, the same window
+as the GitHub workflow:
+
+```
+17 0-13 * * * /path/to/REPO_DIR/hourly_runner.sh prod_config.py main >> /path/to/hourly_runner.log 2>&1
+```
+
+> **Note:** Do not run the cron job and the GitHub workflow on the same branch at
+> the same time — both push `tools/step0_empty_assets.csv`.
 
 ---
 
@@ -527,8 +695,42 @@ CI commits it to `main` after every run, so avoid editing it by hand.
 | Config key | Product name | Description |
 |------------|-------------|-------------|
 | `PRODUCT_S2_LEVEL_2A` | `ch.swisstopo.swisseo_s2-sr_v200` | Sentinel-2 L2A ARD — co-registered, cloud masked, all bands |
-| `PRODUCT_VHI` | `ch.swisstopo.swisseo_vhi_v200` | Vegetation Health Index (drought stress) |
+| `PRODUCT_VHI` | `ch.swisstopo.swisseo_vhi_v200` | Vegetation Health Index (drought stress), 10 m, forest and all vegetation |
 
+`PRODUCT_MSG_CLIMA` in the config is only used for reprocessing (it has no
+`step0_collection`, so the daily run does not use it).
+
+### VHI
+
+`step1_processors/step1_processor_vhi.py` calculates the VHI for a date from a
+7-day window (`temporal_coverage`):
+
+| Input | Source (`PRODUCT_VHI` in the config) |
+|-------|--------------------------------------|
+| Current NDVI | swissEO S2-SR items of the time window (`step0_collection`) |
+| Current LST | MeteoSwiss land surface temperature (`LST_current_data`) |
+| NDVI reference 1991–2020 | S3 (`NDVI_reference_data`) |
+| LST reference 2004–2020 | S3 (`LST_reference_data`) |
+| Forest and vegetation masks | `local_assets/`, else S3 (`vegetation_masks`) |
+
+Steps: NDVI → VCI (with the NDVI reference) and LST → TCI (with the LST
+reference), VCI and TCI → VHI, then masked for forest and for all vegetation.
+
+Outputs per date (published to the VHI STAC collection and S3):
+
+- `swisseo_vhi_v200_mosaic_<date>_forest-10m.tif` and `..._vegetation-10m.tif`
+  (values 0–100, `missing_data` = 110, `no_data` = 255)
+- Warn regions for forest and vegetation (`assets/warnregionen_vhi_2056.shp`) as
+  `.csv`, `.geojson` and `.parquet`
+- Thumbnail and metadata JSON (includes `NDVI_INDEX_LIST`, the S2-SR items used)
+
+If an input is not there yet, VHI writes a row to `tools/step0_empty_assets.csv`
+with the remark `LST missing` or `No S2-SR scene in time window`. `check_vhi.py`
+and `rerun.py` retry these dates in the hourly runs.
+
+The historic monthly VHI from Landsat (1991–2015) is not part of the daily run:
+see `util/vhi_historic_landsat_monthly/` (uses `PRODUCT_VHI_HIST` in
+`dev_config.py`).
 
 Sentinel-2 band groups:
 
@@ -547,7 +749,8 @@ Sentinel-2 band groups:
 - [x] Co-registration via AROSICS
 - [x] `--force` CLI flag for reprocessing
 - [x] S3 + FSDI STAC publishing
-- [x] Vegetation Health Index (VHI) — implemented, not yet operational
+- [x] Vegetation Health Index (VHI) — operational
+- [ ] Gap-filled VHI for forest (`util/vhi_gapfill_forest/`)
 - [ ] NDVI anomalies (N1, N2)
 - [ ] NDMI anomalies (M1)
 - [ ] NBR natural disturbance index (B2)

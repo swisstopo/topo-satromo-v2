@@ -9,10 +9,15 @@ arg_date_str = None
 # Global variable to hold the force flag
 arg_force = False
 
+# Global variable to hold the VHI-only force flag: reprocess VHI, but not S2-SR
+arg_force_vhi = False
+
 # The first command-line argument is used to define which configuration is loaded.
 # The value has to correspond to a python filename found in the configuration directory.
 # For example, to launch the program satromo_processor with the specific_config.py file, and force to reprocess use:
 # > python satromo_processor.py specific_config.py 2024-06-12 --force
+# To reprocess only VHI (S2-SR is not processed again if it already exists), use:
+# > python satromo_processor.py specific_config.py 2024-06-12 --force-vhi
 
 # By default, the file dev_config.py will be loaded as configuration.
 
@@ -33,6 +38,10 @@ if len(sys.argv) > 1:
             if len(sys.argv) > 3 and sys.argv[3].lower() == '--force':
                 arg_force = True
                 print('Force mode enabled')
+            # Check if the VHI-only force flag is provided
+            if len(sys.argv) > 3 and sys.argv[3].lower() == '--force-vhi':
+                arg_force_vhi = True
+                print('Force mode enabled for VHI only')
         except ValueError:
             print('Invalid date format. Please use YYYY-MM-DD.')
             sys.exit(1)
@@ -68,5 +77,5 @@ else:
     print('Loading dev_config as default configuration.')
     from .dev_config import *
 
-# Export the arg_date_str and arg_force variables for use in other modules
-__all__ = ['arg_date_str', 'arg_force']
+# Export the arg_date_str, arg_force and arg_force_vhi variables for use in other modules
+__all__ = ['arg_date_str', 'arg_force', 'arg_force_vhi']

@@ -7,7 +7,7 @@ re-runs gdalwarp with -tap (no cutline), and uploads the result
 back to STAC via publish_to_stac.
 
 Usage:
-    python main_functions/util_reprocess_tci_tap.py --secrets path/to/secrets.json
+    python util/util_reprocess_tci_tap.py --secrets path/to/secrets.json
 
 Author: swisstopo
 """
@@ -24,10 +24,12 @@ import requests
 import pystac_client
 
 # ---------------------------------------------------------------------------
-# Allow imports from the project root (one level up from main_functions/)
+# Allow imports from the project root (one level up from util/)
+# and from the main_functions folder
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "main_functions"))
 
 import configuration as config                           # noqa: E402
 from main_publish_stac_fsdi import publish_to_stac       # noqa: E402
