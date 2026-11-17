@@ -143,7 +143,7 @@ def export(raster_url, shape_file, filename, dateISO8601, missing_values, no_dat
         filename + '.csv', index=False)
 
     # Remove the "Name" column from the GeoDataFrame
-    gdf.drop(columns=[regionname], inplace=True)
+    gdf = gdf.drop(columns=[regionname])
 
     # Convert "REGION_NR" and "vhi_mean" columns to UInt8 datatype
     gdf[regionnr] = gdf[regionnr].astype(int)
@@ -185,7 +185,7 @@ def export(raster_url, shape_file, filename, dateISO8601, missing_values, no_dat
             os.remove(_gpkg_tmp)
 
     # Remove the date column from the GeoDataFrame
-    gdf.drop(columns=[date_column], inplace=True)
+    gdf = gdf.drop(columns=[date_column])
 
     # Convert the GeoDataFrame to WGS84 (EPSG:4326)
     gdf_wgs84 = gdf.to_crs(epsg=4326)

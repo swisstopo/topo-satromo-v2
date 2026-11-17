@@ -270,7 +270,7 @@ def merge_aoi_files(directory, output_file):
         if df.empty:
             continue
         df = df[["Acquisition Date", "OrbitRelative", "Platform"]]
-        df.rename(columns={"OrbitRelative": "Orbit"}, inplace=True)
+        df = df.rename(columns={"OrbitRelative": "Orbit"})
         merged.append(df)
 
     if not merged:
