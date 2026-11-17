@@ -10,18 +10,19 @@ Published to swisstopo STAC catalog and AWS S3.
 ## Repository Architecture
 
 ```
-satromo_processor.py     # Main orchestration (daily; step0 → step1 dispatch)
-check_s2_sr.py           # Lightweight Copernicus STAC availability check (hourly)
-rerun.py                 # Reprocessing engine (GPU EC2; reads tools/step0_empty_assets.csv)
+satromo_processor.py     # Main orchestration (daily; step0 → step1 dispatch: S2-SR, then VHI)
+check_s2_sr.py           # Lightweight Copernicus STAC availability check (hourly, CI stage 1)
+check_vhi.py             # Lightweight VHI check: retry 'LST missing' / 'No S2-SR scene in time window', find VHI to reprocess (CI stage 1)
+rerun.py                 # Reprocessing engine (GPU EC2; reads tools/step0_empty_assets.csv and VHI_REPROCESS_DATES)
+hourly_runner.sh         # Local cron alternative to run_rerun.yml
 step0_functions.py       # Availability checking and STAC/S3 querying logic
-step1_processor_s2_sr.py # Full S2 ARD: download, mosaic, cloud mask, co-register, terrain
-step1_processor_vhi.py   # VHI from S2-SR via NDVI/LST anomalies
-main_functions/          # Shared modules: auth, coregistration, terrain, STAC publish, mosaic
+main_functions/          # Shared modules: auth, coregistration, terrain, STAC publish, mosaic, warn regions
 util/                    # Manually run tools: util_*.py (STAC/S3 maintenance, reprocessing) + one folder per
                          #   reference/derived dataset (ref_lst, ref_ndvi_landsat, ref_ndvi_s2_forest,
                          #   vhi_gapfill_forest, vhi_historic_landsat_monthly); no deeper subfolders, output/ is git-ignored
-step0_processors/        # Per-product availability checks
-step1_processors/        # Per-product processing modules
+step0_processors/        # Shared step0 helpers (step0_utils.py), not per-product generators
+step1_processors/        # step1_processor_s2_sr.py: full S2 ARD (download, mosaic, cloud mask, co-register, terrain)
+                         # step1_processor_vhi.py: VHI from S2-SR NDVI and MeteoSwiss LST (forest + vegetation, 10 m)
 configuration/           # dev_config.py / prod_config.py / __init__.py (config loader)
 tools/                   # Runtime tracking files (CSV tile status, committed to git)
 assets/                  # Geospatial reference vectors (boundaries, lakes, rivers)
@@ -35,13 +36,15 @@ secrets/                 # Credentials — git-ignored; injected as env vars in 
 ```bash
 python satromo_processor.py                              # dev_config, today
 python satromo_processor.py dev_config.py 2024-06-12    # specific date
-python satromo_processor.py dev_config.py 2024-06-12 --force  # force reprocess
+python satromo_processor.py dev_config.py 2024-06-12 --force      # force reprocess S2-SR and VHI
+python satromo_processor.py dev_config.py 2024-06-12 --force-vhi  # force reprocess VHI only
 ```
 
-**Debug mode** (in `satromo_processor.py`): set `debug_mode = True` and hardcode `current_date_str` and `force_reprocess` at the top of `main()`.
+**Debug mode** (in `satromo_processor.py`): run without a date argument; the hardcoded `current_date_str`, `force_reprocess` and `force_vhi` in the `if debug_mode:` block are used.
 
 **CI/CD (GitHub Actions):**
-- `run_rerun.yml` — every :33 min; Stage 1: check tile availability on ubuntu-24.04; Stage 2: start g4dn.xlarge EC2, run `rerun.py`; Stage 3: always stop EC2 (cost protection, 3-hour timeout)
+- `run_rerun.yml` — `workflow_dispatch` only, triggered hourly by an external scheduler (cron-job.org), roughly 23–11 UTC. Stage 1 (ubuntu-24.04): `util_get_acquisition_plans.py`, `check_s2_sr.py`, `check_vhi.py`, publish CSVs, push `tools/`. Stage 2a: start GPU EC2 runner only if `needs-processing` or `vhi-needs-processing`. Stage 2b: `rerun.py` on EC2 (420-minute timeout). Stage 2c: always stop EC2 (cost protection).
+- `hourly_runner.sh` — same steps as a local cron job; do not run it and the workflow on the same branch at the same time.
 
 **Config selection:** Pass config name as first CLI arg; defaults to `dev_config.py`. Production uses `prod_config.py`.
 
@@ -77,7 +80,7 @@ The primary maintainer is a Python beginner and prefers straightforward code.
 | xarray + rioxarray | N-dimensional arrays | |
 
 ## Performance Considerations
-- GPU processing (`rerun.py`) runs on AWS g4dn.xlarge EC2 — only triggered when tiles are ready
+- GPU processing (`rerun.py`) runs on an AWS GPU EC2 instance (`EC2_INSTANCE_TYPE`) — only triggered when S2-SR tiles are ready or VHI is ready to process
 - `local_assets/` contains large static files (DSM, reference images); never regenerate these on the fly — they are symlinked on EC2 from `/home/ubuntu`
 - Parallel terrain processing available via `main_terrain_parallel.py`
 - AROSICS window size and co-registration thresholds are tunable in config; poor reference coverage degrades quality

@@ -8,9 +8,9 @@ An operational Python ETL pipeline for generating and publishing Analysis-Ready 
 |                  | swissEO S2-SR | swissEO VHI |
 |------------------|---------------|-------------|
 | Data description | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-s2-sr) | [Product site](https://www.swisstopo.admin.ch/en/satelliteimage-swisseo-vhi) |
-| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | *not yet operational* |
+| Access to data   | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_s2-sr_v200) | [STAC](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swisseo_vhi_v200) |
 
-> **Note:** This project is currently in the commissioning phase and is not yet fully operational.
+Both products are operational and are produced in production with `configuration/prod_config.py`.
 
 
 
@@ -19,7 +19,9 @@ An operational Python ETL pipeline for generating and publishing Analysis-Ready 
 SATROMO v2 is a serverless satellite data processing chain for Switzerland that:
 
 1. **step0** — Checks availability of input data in STAC CSDE and STAC swisstopo catalogs (Sentinel-2 L2A)
-2. **step1** — Generates ARD products and publishes to STAC  (co-registered, cloud/shadow masked, topographic corrected Sentinel-2 mosaics) and indices (VHI, NDVI, etc.)
+2. **step1** — Generates the products and publishes them to STAC and S3:
+   - **S2-SR**: ARD (co-registered, cloud/shadow masked, topographic corrected Sentinel-2 mosaics)
+   - **VHI**: Vegetation Health Index from the S2-SR NDVI and the MeteoSwiss land surface temperature (LST)
 
 
 Two deployment environments are supported:
@@ -39,7 +41,7 @@ satromo_processor.py              # Daily orchestration (step0 → step1)
     ├── step0_functions.py        # Check STAC / S3, decide what is ready
     │       └── step0_processors/ # Shared step0 helpers (step0_utils.py)
     │
-    ├── step1_processors/         # Product generation (S2-SR, VHI, ...)
+    ├── step1_processors/         # Product generation: step1_processor_s2_sr.py, step1_processor_vhi.py
     │
     ├── main_functions/           #  STAC utils, S3 helpers
     │
@@ -64,6 +66,13 @@ The `step0_function` registered per collection in the config is the callable tha
 produces the data for a date. For S2-SR this is the step1 processor itself
 (`step1_processor_s2_sr.process_product_s2_sr`); `step0_processors/` holds only
 shared helper code, not per-collection generators.
+
+`PRODUCT_S2_LEVEL_2A` and `PRODUCT_VHI` share the same `step0_collection` (the
+swisstopo S2-SR STAC collection). `get_step0_dict()` groups them under this
+collection and uses the longest `temporal_coverage` (7 days, from VHI). When the
+collection is ready for a date, `satromo_processor.py` runs S2-SR first and then
+VHI. Each product is skipped if a STAC item for the date already exists, unless
+`--force` / `--force-vhi` is set.
 
 Full architecture documentation: [deepwiki.com/swisstopo/topo-satromo-v2](https://deepwiki.com/swisstopo/topo-satromo-v2)
 
@@ -362,16 +371,16 @@ and `configuration/prod_config.py`:
 | `AWS_ACCESS_KEY_ID` | AWS credentials used to start/stop the EC2 runner |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials used to start/stop the EC2 runner |
 | `GH_PAT` | Personal access token for the `machulav/ec2-github-runner` action |
+| `EC2_SUBNET_ID_1A` / `_1B` / `_1C` | VPC subnet for the runner in `eu-central-1a` / `1b` / `1c` (tried in this order) |
+| `EC2_SECURITY_GROUP_ID_1A` / `_1B` / `_1C` | Security group of each subnet, allowing GitHub Actions traffic (same value if same VPC) |
 
 **GitHub Actions variables** (for PROD, repository *Variables*, not secrets):
 
 | Variable name | Content |
 |---------------|---------|
 | `AWS_REGION` | e.g. `eu-central-1` |
-| `EC2_AMI_ID` | Pre-configured AMI with GDAL, the venv and `local_assets/` |
-| `EC2_INSTANCE_TYPE` | e.g. `g4dn.xlarge` (GPU instance) |
-| `EC2_SUBNET_ID` | VPC subnet for the runner |
-| `EC2_SECURITY_GROUP_ID` | Security group allowing GitHub Actions traffic |
+| `EC2_AMI_ID` | Pre-configured AMI with GDAL, the venv and `local_assets/` (valid in all zones of the region) |
+| `EC2_INSTANCE_TYPE` | GPU instance type, e.g. `g4dn.xlarge` |
 
 ---
 
@@ -462,9 +471,14 @@ When no date argument is supplied, the script enters debug mode and uses a hardc
 
 ```python
 if debug_mode:
-    current_date_str = "2016-04-28"
-    force_reprocess = True   # <-- toggle manually
+    current_date_str = "2024-05-01"
+    force_reprocess = True   # <-- toggle manually (S2-SR and VHI)
+    force_vhi = True         # <-- toggle manually (VHI only)
 ```
+
+For VHI tests on a small area, set `roi` in the `PRODUCT_VHI` branch of
+`satromo_processor.py` (examples are in the comments there); `roi = None` is the
+operational setting (all of Switzerland).
 
 ### Manual Reprocessing Workflow (local → PROD)
 
@@ -477,11 +491,13 @@ venv\Scripts\activate
 REM 2. Run processor for the target date
 python satromo_processor.py prod_config.py 2024-06-12
 
-
+REM    or reprocess an existing date (S2-SR and VHI), or only VHI
+python satromo_processor.py prod_config.py 2024-06-12 --force
+python satromo_processor.py prod_config.py 2024-06-12 --force-vhi
 ```
 
 Before reprocessing, also:
-- Delete affected GEE assets from the `step0_collection`
+- Delete the affected STAC items if needed (`util/util_stac_delete.py`)
 - Remove the date entry from `tools/step0_empty_assets.csv` if present
 
 ---
@@ -489,7 +505,7 @@ Before reprocessing, also:
 ## Production Runtime (GitHub Actions + EC2)
 
 Production runs from a single workflow, `.github/workflows/run_rerun.yml`
-("Run S2 Processor"). It is deliberately split into a cheap availability check on
+("Run S2-SR and VHI Processor"). It is deliberately split into a cheap availability check on
 a GitHub-hosted runner and an expensive GPU stage on a temporary AWS EC2 runner
 that is started only when there is something to process and always stopped
 afterwards.
@@ -514,9 +530,9 @@ commits `tools/` back to `main`.
 
 | Stage | Job | Runner | What it does |
 |-------|-----|--------|--------------|
-| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `util/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets and pushes `tools/` back to `main`. Sets the output `needs-processing`. |
-| 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. |
-| 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, runs `python rerun.py prod_config.py`, republishes the CSVs and pushes `tools/`. Hard timeout **420 minutes** for cost protection. |
+| 1 | `check-and-update` | `ubuntu-24.04` (hosted) | `util/util_get_acquisition_plans.py`, then `python check_s2_sr.py $(date +%Y-%m-%d) 30 prod_config.py` and `python check_vhi.py $(date +%Y-%m-%d) 30 prod_config.py`; publishes `acquisitionplan.csv` / `step0_empty_assets.csv` as collection assets (`util/util_upload_collection_asset.py`) and pushes `tools/` back to `main`. Sets the outputs `needs-processing`, `vhi-needs-processing` and `vhi-reprocess-dates`. |
+| 2a | `start-ec2` | `ubuntu-24.04` (hosted) | Only if `needs-processing == 'true'` **or** `vhi-needs-processing == 'true'`: starts a GPU EC2 self-hosted runner via `machulav/ec2-github-runner`. Tries the availability zones 1a, 1b and 1c in this order (if a zone has no capacity for the instance type). |
+| 2b | `run-processing` | EC2 GPU runner | Symlinks `/home/ubuntu/local_assets`, activates `/home/ubuntu/.venv`, installs `requirements.txt`, checks the DuckDB `spatial` extension (needed by `gpio` for the GeoParquet warn regions), runs `python rerun.py prod_config.py` with `VHI_REPROCESS_DATES`, republishes the CSVs and pushes `tools/`. If `rerun.py` reports failed dates, the last step marks the run as failed (GitHub sends an email). Hard timeout **420 minutes** for cost protection. |
 | 2c | `stop-ec2` | `ubuntu-24.04` (hosted) | `if: always()` — terminates the EC2 runner even when stage 2b failed or timed out. |
 
 ### The production scripts
@@ -573,7 +589,7 @@ EC2 runner:
    and `check_vhi.py` (today in UTC, 30 days back), then uploads the collection
    assets and pushes `tools/`.
 3. **Processing** (Stage 2) — only if `needs-processing` or
-   `vhi-needs-processing` is `true`: `rerun.py` (maximum 7 hours), then uploads
+   `vhi-needs-processing` is `true`: `rerun.py` (maximum 14 hours, `RERUN_TIMEOUT`), then uploads
    the collection assets and pushes `tools/` again.
 
 A lock (`flock`) makes sure only one run happens at a time: if `rerun.py` from an
@@ -679,8 +695,42 @@ as the GitHub workflow:
 | Config key | Product name | Description |
 |------------|-------------|-------------|
 | `PRODUCT_S2_LEVEL_2A` | `ch.swisstopo.swisseo_s2-sr_v200` | Sentinel-2 L2A ARD — co-registered, cloud masked, all bands |
-| `PRODUCT_VHI` | `ch.swisstopo.swisseo_vhi_v200` | Vegetation Health Index (drought stress) |
+| `PRODUCT_VHI` | `ch.swisstopo.swisseo_vhi_v200` | Vegetation Health Index (drought stress), 10 m, forest and all vegetation |
 
+`PRODUCT_MSG_CLIMA` in the config is only used for reprocessing (it has no
+`step0_collection`, so the daily run does not use it).
+
+### VHI
+
+`step1_processors/step1_processor_vhi.py` calculates the VHI for a date from a
+7-day window (`temporal_coverage`):
+
+| Input | Source (`PRODUCT_VHI` in the config) |
+|-------|--------------------------------------|
+| Current NDVI | swissEO S2-SR items of the time window (`step0_collection`) |
+| Current LST | MeteoSwiss land surface temperature (`LST_current_data`) |
+| NDVI reference 1991–2020 | S3 (`NDVI_reference_data`) |
+| LST reference 2004–2020 | S3 (`LST_reference_data`) |
+| Forest and vegetation masks | `local_assets/`, else S3 (`vegetation_masks`) |
+
+Steps: NDVI → VCI (with the NDVI reference) and LST → TCI (with the LST
+reference), VCI and TCI → VHI, then masked for forest and for all vegetation.
+
+Outputs per date (published to the VHI STAC collection and S3):
+
+- `swisseo_vhi_v200_mosaic_<date>_forest-10m.tif` and `..._vegetation-10m.tif`
+  (values 0–100, `missing_data` = 110, `no_data` = 255)
+- Warn regions for forest and vegetation (`assets/warnregionen_vhi_2056.shp`) as
+  `.csv`, `.geojson` and `.parquet`
+- Thumbnail and metadata JSON (includes `NDVI_INDEX_LIST`, the S2-SR items used)
+
+If an input is not there yet, VHI writes a row to `tools/step0_empty_assets.csv`
+with the remark `LST missing` or `No S2-SR scene in time window`. `check_vhi.py`
+and `rerun.py` retry these dates in the hourly runs.
+
+The historic monthly VHI from Landsat (1991–2015) is not part of the daily run:
+see `util/vhi_historic_landsat_monthly/` (uses `PRODUCT_VHI_HIST` in
+`dev_config.py`).
 
 Sentinel-2 band groups:
 
@@ -699,7 +749,8 @@ Sentinel-2 band groups:
 - [x] Co-registration via AROSICS
 - [x] `--force` CLI flag for reprocessing
 - [x] S3 + FSDI STAC publishing
-- [x] Vegetation Health Index (VHI) — implemented, not yet operational
+- [x] Vegetation Health Index (VHI) — operational
+- [ ] Gap-filled VHI for forest (`util/vhi_gapfill_forest/`)
 - [ ] NDVI anomalies (N1, N2)
 - [ ] NDMI anomalies (M1)
 - [ ] NBR natural disturbance index (B2)
