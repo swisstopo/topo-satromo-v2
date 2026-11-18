@@ -26,4 +26,7 @@ it would make `satromo_processor.py` run this product.
 Months that are already completely published (all 10 assets) are skipped, so a stopped run can simply be started
 again. Incompletely published months are processed again. `--force` reprocesses every month.
 
-Open point: the LST input for 1991-2003 (MFG). Until it is added, months before 2004 are skipped.
+LST input (MeteoSwiss, data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur, one file per month, SDL and SOL):
+
+- 1991-2003: MFG, `MFG1991-2005/mfg.{SDL|SOL}.H_ch05h.lonlat_YYYYMM01000000.nc`, 0.05° grid, LST reference `LST_reference_ch05`
+- 2004-2015: MSG, `MSG2004-2023/msg.{SDL|SOL}.H_ch02.lonlat_YYYYMM01000000.nc`, 0.02° grid, LST reference `LST_reference_ch02`

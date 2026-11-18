@@ -74,7 +74,7 @@ alpha = 0.5  # weighting factor for the VHI (0.5 means equal weight for VCI and 
 vhi_version = "v200"
 ref_ndvi_nodata = 255  # NoData value in the reference NDVI statistics
 lst_hour = 11  # the LST of every day is taken at 11:00 UTC, as for the daily VHI
-first_msg_year = 2004  # MSG LST starts in 2004, before that MFG (source not yet defined)
+first_msg_year = 2004  # MSG LST from 2004, before that MFG (1991-2003)
 warnregions = "assets/warnregionen_vhi_2056.shp"  # same file as for the daily VHI
 expected_asset_count = 10  # 2 COGs, 6 warnregion files, metadata, thumbnail
 
@@ -214,16 +214,22 @@ def read_ndvi_reference(month, band_name):
 
 ##############################
 # LST
-def get_msg_paths(year, month):
-    """The MeteoSwiss MSG files (one month of hourly values each) for 2004-2023, as in step1_processor_vhi.py."""
+def get_lst_paths(year, month):
+    """The MeteoSwiss SDL and SOL files of the month (one month of hourly values each).
+    1991-2003: MFG on the 0.05° grid (channel ch05h), 2004-2015: MSG on the 0.02° grid (ch02, as in step1_processor_vhi.py).
+    Both have the same structure (variables SDL and SOL, hourly time steps, lat/lon)."""
     base = config.PRODUCT_VHI_HIST["LST_current_data"]
-    sdl_path = f"{base}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month:02d}01000000.nc"
-    sol_path = f"{base}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month:02d}01000000.nc"
+    if year < first_msg_year:
+        sdl_path = f"{base}/MFG1991-2005/mfg.SDL.H_ch05h.lonlat_{year}{month:02d}01000000.nc"
+        sol_path = f"{base}/MFG1991-2005/mfg.SOL.H_ch05h.lonlat_{year}{month:02d}01000000.nc"
+    else:
+        sdl_path = f"{base}/MSG2004-2023/msg.SDL.H_ch02.lonlat_{year}{month:02d}01000000.nc"
+        sol_path = f"{base}/MSG2004-2023/msg.SOL.H_ch02.lonlat_{year}{month:02d}01000000.nc"
     return sdl_path, sol_path
 
 
 def lst_files_exist(year, month):
-    for path in get_msg_paths(year, month):
+    for path in get_lst_paths(year, month):
         response = requests.head(path, timeout=30, allow_redirects=True)
         if response.status_code != 200:
             print(f"LST file missing: {path}")
@@ -233,12 +239,9 @@ def lst_files_exist(year, month):
 
 def load_monthly_lst(year, month):
     """Mean of the daily 11am LST over the month, in degrees Celsius, on the lat/lon grid of MeteoSwiss.
-    Same formula as step1_processor_vhi.py. Returns (lat, lon, values, list of the days used)."""
-    if year < first_msg_year:
-        # TODO: before 2004 the LST comes from MFG. Add the reading of these files here once the source is defined.
-        raise NotImplementedError("MFG LST source (1991-2003) not yet defined, see TODO in load_monthly_lst")
-
-    sdl_path, sol_path = get_msg_paths(year, month)
+    Same formula as step1_processor_vhi.py, for MFG (1991-2003) and MSG (2004-2015).
+    Returns (lat, lon, values, list of the days used)."""
+    sdl_path, sol_path = get_lst_paths(year, month)
     boltzmann = 5.670374419e-8
     emissivity = 0.98
     daily_lst = []
@@ -411,8 +414,6 @@ def process_product_vhi_historic(month_date_str):
 
     ##############################
     # 1. LST CHECK (before any scene is processed)
-    if year < first_msg_year:
-        return f"VHI historic {month_date:%Y-%m}: MFG LST source (1991-2003) not yet defined, see TODO in load_monthly_lst"
     lst_reference_path = get_lst_reference_path(year, month)
     if not lst_files_exist(year, month):
         write_empty_asset_once(product_name, month_date_str, "LST missing")
