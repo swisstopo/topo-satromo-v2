@@ -147,8 +147,11 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
     has_any_real_data = False  # Track if we found at least one date with actual data
 
     while check_date <= end_date:
+        # The target date is treated differently from the other dates of the time window:
+        # see 'is_target_date' in check_if_asset_prepared()
+        is_target_date = (check_date == target_date)
         asset_status = check_if_asset_prepared(
-            collection, assets, check_date)
+            collection, assets, check_date, is_target_date)
 
         # asset_status returns: 'ready', 'empty', or 'not_ready'
         if asset_status == 'not_ready':
@@ -170,7 +173,7 @@ def step0_check_collection(collection, temporal_coverage, current_date_str):
         return 'not_ready'
 
 
-def check_if_asset_prepared(collection, assets, check_date):
+def check_if_asset_prepared(collection, assets, check_date, is_target_date):
     """
     Check if an asset is prepared for a given date.
 
@@ -183,6 +186,13 @@ def check_if_asset_prepared(collection, assets, check_date):
         collection: Collection path/URL
         assets: List of assets
         check_date: Date to check
+        is_target_date: True if check_date is the date of this run, False for the
+            other (earlier) dates of the time window.
+            A 'Tile upload incomplete' / 'Tile download incomplete' date counts as
+            "no data" for the time window (e.g. VHI then uses the other dates):
+            - earlier dates of the window: right away, no new generation attempt
+              (rerun.py retries these dates as their own target date)
+            - the target date: only after its generation was tried again in this run
 
 
     Returns:
@@ -255,7 +265,10 @@ def check_if_asset_prepared(collection, assets, check_date):
 
 
     # 2. if not in asset list check if in empty_asset_list
-    if is_date_marked_empty(collection_basename, check_date_str):
+    #    For the earlier dates of the time window, an incomplete date counts as "no data".
+    #    For the target date it does not: its generation is tried again below.
+    if is_date_marked_empty(collection_basename, check_date_str,
+                            count_incomplete_as_empty=not is_target_date):
         print('Date found in empty_asset_list, skipping date (no source data available)')
         return 'empty'  # Return 'empty' status - date is accounted for but has no data
 
@@ -285,24 +298,31 @@ def check_if_asset_prepared(collection, assets, check_date):
             print('Collection {} READY for date {} (just generated)'.format(collection, check_date_str))
             return 'ready'
 
-    if is_date_marked_empty(collection_basename, check_date_str):
+    # The generation was tried in this run: a date that is still incomplete now counts as "no data"
+    if is_date_marked_empty(collection_basename, check_date_str, count_incomplete_as_empty=True):
         print('Date written to empty_asset_list by the generation, no data for {}'.format(check_date_str))
         return 'empty'
 
     return 'not_ready'
 
 
-def is_date_marked_empty(collection_basename, check_date_str):
+def is_date_marked_empty(collection_basename, check_date_str, count_incomplete_as_empty=False):
     """
     True if the empty_asset_list has a row for this collection and date that means
     "no source data" (e.g. 'cloudy', 'No candidate scene').
 
     check_s2_sr.py uses this same file as the GPU work queue, so some rows mean
     "process this date" rather than "no data here". Those queue rows are ignored.
+
+    count_incomplete_as_empty: if True, 'Tile upload incomplete' and
+    'Tile download incomplete' count as "no data" instead of as queue rows.
+    Used for the time window (e.g. VHI): the window goes on without these dates.
+    If the S2-SR of such a date is published later, check_vhi.py reprocesses the VHI.
     """
-    queue_markers = ['Tiles ready awaiting GPU system run',
-                     'Tile upload incomplete',
-                     'Tile download incomplete']
+    queue_markers = ['Tiles ready awaiting GPU system run']
+    if not count_incomplete_as_empty:
+        queue_markers = queue_markers + ['Tile upload incomplete',
+                                         'Tile download incomplete']
 
     df = pd.read_csv(config.EMPTY_ASSET_LIST)
     df_selection = df[(df.collection == collection_basename)

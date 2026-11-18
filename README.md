@@ -548,7 +548,11 @@ commits `tools/` back to `main`.
 - **`check_vhi.py`** — lightweight VHI check, runs after `check_s2_sr.py`.
   - VHI rows `LST missing` and `No S2-SR scene in time window` in the lookback
     window: removed when VHI is already published; VHI is processed when the LST
-    is available and the VHI time window has S2-SR data (no incomplete S2-SR date).
+    is available and the VHI time window has S2-SR data.
+  - An S2-SR date of the VHI time window with `Tile upload incomplete` or
+    `Tile download incomplete` counts as "no data" for VHI: VHI is made with the
+    other dates (for the date of the run itself, only after S2-SR was tried again).
+    If that S2-SR is published later, the VHI is reprocessed (next point).
   - Published VHI that misses S2-SR data published later (delayed S2-SR): VHI of a
     date is reprocessed when an S2-SR item of its time window is **not** in
     `NDVI_INDEX_LIST` of the VHI metadata json **and** was published (STAC

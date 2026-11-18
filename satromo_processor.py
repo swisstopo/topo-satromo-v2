@@ -95,7 +95,10 @@ if __name__ == "__main__":
                 )
                 # Is the date in the empty_asset_list as "no source data" (e.g. 'cloudy', 'No candidate scene')?
                 # Then there is nothing to download. Queue rows (e.g. 'Tiles ready awaiting GPU system run') are not counted as empty.
-                date_is_empty = is_date_marked_empty(collection_id, current_date_str)
+                # 'Tile upload incomplete' / 'Tile download incomplete' count as empty here: step0 already tried
+                # this date again in this run (see check_if_asset_prepared), so we do not download a second time.
+                date_is_empty = is_date_marked_empty(collection_id, current_date_str,
+                                                     count_incomplete_as_empty=True)
 
                 if date_is_empty and not force_reprocess:
                     print(f"Date {current_date_str} is in empty_asset_list (no source data): skipping S2-SR processing.")

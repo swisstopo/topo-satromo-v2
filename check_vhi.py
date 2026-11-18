@@ -12,11 +12,13 @@ each date, in this order:
   1. VHI already published in FSDI STAC      -> the entry is stale and is removed
   2. LST files still missing                 -> entry is kept
   3. No S2-SR item in the VHI time window    -> entry is kept
-  4. An S2-SR date in the time window is
-     'Tile upload incomplete' or
-     'Tile download incomplete'               -> entry is kept (step0 would not be ready)
-  5. Otherwise                               -> VHI can be processed (entry is kept,
+  4. Otherwise                               -> VHI can be processed (entry is kept,
                                                 rerun.py retries it and removes it)
+
+An S2-SR date of the time window with 'Tile upload incomplete' or
+'Tile download incomplete' counts as "no data" for VHI (see step0_functions.py):
+VHI is made with the other dates. If the S2-SR of such a date is published
+later, part B reprocesses the VHI.
 
 The VHI time window is [date - (temporal_coverage - 1), date], with
 temporal_coverage and the S2-SR collection taken from PRODUCT_VHI in the config.
@@ -30,11 +32,10 @@ its time window
   - was published (STAC 'created') after the VHI item was last written (STAC 'updated').
 The second condition is needed because the VHI processor stops early once all
 pixels are filled: NDVI_INDEX_LIST then does not list the older S2-SR items on
-purpose. As in part A, no reprocess while an S2-SR date in the time window is
-'Tile upload incomplete' or 'Tile download incomplete'.
+purpose.
 
 At the end, sets the GitHub Actions outputs:
-  vhi-needs-processing=true   if at least one date of case 5 (part A) or of part B
+  vhi-needs-processing=true   if at least one date of case 4 (part A) or of part B
                               was found. Only then the EC2 has to be started for VHI.
   vhi-reprocess-dates=...     the dates of part B, comma separated (empty if none).
                               rerun.py reprocesses them with --force-vhi.
@@ -65,10 +66,6 @@ REMARK_NO_S2 = "No S2-SR scene in time window"
 
 # VHI remarks that are checked again: VHI could not be made yet for these dates
 RETRY_REMARKS = [REMARK_LST_MISSING, REMARK_NO_S2]
-
-# S2-SR remarks that keep step0 from being ready (see step0_functions.py):
-# such a date is neither in STAC nor counted as "no data"
-S2_INCOMPLETE_REMARKS = ["Tile upload incomplete", "Tile download incomplete"]
 
 
 # ============================================================================
@@ -276,30 +273,10 @@ def check_lst_available(date_str, lst_base_url):
 
 
 # ============================================================================
-# S2-SR TIME WINDOW CHECK
-# ============================================================================
-
-def get_incomplete_s2_dates(df, s2_collection_name, start_date_str, end_date_str):
-    """
-    Dates in [start_date_str, end_date_str] whose S2-SR row in the CSV is
-    'Tile upload incomplete' or 'Tile download incomplete'.
-    """
-    in_window = (
-        (df["collection"] == s2_collection_name)
-        & (df["date"] >= start_date_str)
-        & (df["date"] <= end_date_str)
-    )
-    is_incomplete = df["remark"].astype(str).apply(
-        lambda remark: any(marker in remark for marker in S2_INCOMPLETE_REMARKS)
-    )
-    return sorted(set(df[in_window & is_incomplete]["date"].tolist()))
-
-
-# ============================================================================
 # PART B - VHI TO REPROCESS
 # ============================================================================
 
-def find_vhi_dates_to_reprocess(vhi_config, df, start_date_str, end_date_str):
+def find_vhi_dates_to_reprocess(vhi_config, start_date_str, end_date_str):
     """
     Published VHI items between the two dates that miss an S2-SR item published
     later (see PART B in the docstring at the top).
@@ -354,13 +331,6 @@ def find_vhi_dates_to_reprocess(vhi_config, df, start_date_str, end_date_str):
         new_s2_ids = sorted(s2_id for s2_id in later_s2_ids if s2_id not in used_s2_ids)
         if not new_s2_ids:
             print(f"  All of them are in NDVI_INDEX_LIST — no reprocess")
-            continue
-
-        # Wait until all S2-SR dates of the time window are complete
-        incomplete_dates = get_incomplete_s2_dates(df, vhi_config["s2_collection_name"], window_start, date_str)
-        if incomplete_dates:
-            print(f"  Not in NDVI_INDEX_LIST: {new_s2_ids}, but incomplete S2-SR date(s) in time window "
-                  f"{incomplete_dates} — reprocess later")
             continue
 
         print(f"  Not in NDVI_INDEX_LIST: {new_s2_ids} — VHI {date_str} has to be reprocessed")
@@ -432,7 +402,6 @@ def main():
     still_missing_dates = []
     vhi_not_enabled_dates = []
     no_s2_dates = []
-    s2_incomplete_dates = []
     ready_dates = []
 
     for date_str, remark in rows_to_check:
@@ -475,14 +444,8 @@ def main():
             continue
         print(f"  S2-SR check: at least one S2-SR item from {window_start} to {date_str}")
 
-        # 4. An S2-SR date in the time window is incomplete -> step0 would not be ready
-        incomplete_dates = get_incomplete_s2_dates(df, vhi_config["s2_collection_name"], window_start, date_str)
-        if incomplete_dates:
-            print(f"  S2-SR check: incomplete S2-SR date(s) in time window {incomplete_dates} — entry kept, no processing triggered")
-            s2_incomplete_dates.append(date_str)
-            continue
-
-        # 5. Everything VHI needs is there
+        # 4. Everything VHI needs is there
+        #    (incomplete S2-SR dates in the time window count as "no data", see step0_functions.py)
         print(f"  {date_str}: VHI can be processed")
         ready_dates.append(date_str)
 
@@ -496,7 +459,7 @@ def main():
     if vhi_enabled:
         print(f"\n{'-' * 60}")
         print(f"Checking published VHI from {cutoff} to {today} for S2-SR items published later ...")
-        dates_to_reprocess = find_vhi_dates_to_reprocess(vhi_config, df, cutoff, today)
+        dates_to_reprocess = find_vhi_dates_to_reprocess(vhi_config, cutoff, today)
 
     result = "true" if (ready_dates or dates_to_reprocess) else "false"
     reprocess_dates_str = ",".join(dates_to_reprocess.keys())
@@ -509,7 +472,6 @@ def main():
     if not vhi_enabled:
         print(f"LST available, VHI not enabled:         {vhi_not_enabled_dates if vhi_not_enabled_dates else 'none'}")
     print(f"No S2-SR in time window:                {no_s2_dates if no_s2_dates else 'none'}")
-    print(f"Incomplete S2-SR date in time window:   {s2_incomplete_dates if s2_incomplete_dates else 'none'}")
     print(f"VHI to process:                         {ready_dates if ready_dates else 'none'}")
     if dates_to_reprocess:
         print("VHI to reprocess (new S2-SR in window):")
