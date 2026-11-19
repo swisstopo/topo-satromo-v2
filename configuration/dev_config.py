@@ -117,12 +117,10 @@ PRODUCT_VHI_HIST = {
     "LST_reference_ch02": "s3://s3-topo-satromo-prod/data/LST_REFERENCE/2004-2020_LST_MSGch02_M/LST_statistics_M{month:02d}_MSG_ch02_2004-2020_11am.nc",  # 2004-2015
     "vegetation_masks": "s3://s3-topo-satromo-prod/data/MASKS/Vegetation/",
     "LST_current_data": "https://data.geo.admin.ch/ch.meteoschweiz.landoberflaechentemperatur",
-    # step1_collection decides where the historic VHI is published (host and login are taken from it)
-    "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
-    # "step1_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_vhi_v200",
+    "step1_collection": "https://sys-data.int.bgdi.ch/#/collections/ch.swisstopo.swisseo_vhi_v200", # INT
+    # "step1_collection": "https://data.geo.admin.ch/#/collections/ch.swisstopo.swisseo_vhi_v200", # PROD
     # No "step0_collection" on purpose: the inputs are Landsat C2 L2 scenes (Planetary Computer, via util/ref_ndvi_landsat)
-    # and the MeteoSwiss MSG LST, not a STAC collection. A step0_collection key would make satromo_processor.py run this product.
-    # Historic only
+    # A step0_collection key would make satromo_processor.py run this product.
     "first_month": "1991-01-01",  # first item: 1991-01-01t235959
     "last_month": "2015-12-01",  # last item: 2015-12-01t235959, from 2016 onwards the daily Sentinel-2 VHI
     "forest_mask_name": "forest_mask_2056_habitatv1-0_2022_CLCplus_2021.tif",  # oldest habitat mask, 10 m
