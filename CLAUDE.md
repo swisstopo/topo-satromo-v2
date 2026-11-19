@@ -19,7 +19,7 @@ step0_functions.py       # Availability checking and STAC/S3 querying logic
 main_functions/          # Shared modules: auth, coregistration, terrain, STAC publish, mosaic, warn regions
 util/                    # Manually run tools: util_*.py (STAC/S3 maintenance, reprocessing) + one folder per
                          #   reference/derived dataset (ref_lst, ref_ndvi_landsat, ref_ndvi_s2_forest,
-                         #   vhi_gapfill_forest, vhi_historic_landsat_monthly); no deeper subfolders, output/ is git-ignored
+                         #   vhi_gapfill_forest, vhi_historic_landsat_monthly, vhi_percentiles); no deeper subfolders, output/ is git-ignored
 step0_processors/        # Shared step0 helpers (step0_utils.py), not per-product generators
 step1_processors/        # step1_processor_s2_sr.py: full S2 ARD (download, mosaic, cloud mask, co-register, terrain)
                          # step1_processor_vhi.py: VHI from S2-SR NDVI and MeteoSwiss LST (forest + vegetation, 10 m)
